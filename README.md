@@ -11,7 +11,7 @@ A modified version of NequIP is an E(3)-equivariant graph neural network archite
 - **JIT compilation**: Full JAX JIT support for fast training and inference
 - **Scan-based training**: Optional `jax.lax.scan` for reduced Python overhead
 - **EMA weights**: Exponential moving average for stable training
-- **separated layer normalization***: to stabilize training 
+- **separated layer normalization**: to stabilize training 
 
 ## Features
 

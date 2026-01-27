@@ -71,7 +71,7 @@ pip install -e .
 3. Run training:
 
 ```bash
-python train_nequip.py
+python -m bam_nequip.train_nequip
 ```
 
 ### Model Architecture

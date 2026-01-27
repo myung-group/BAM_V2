@@ -186,3 +186,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [e3nn-jax](https://github.com/e3nn/e3nn-jax) for equivariant neural network primitives
 - [jraph](https://github.com/deepmind/jraph) for graph neural network utilities
 - Original [NequIP](https://github.com/mir-group/nequip) implementation
+- [mariogeiger/nequip-jax](https://github.com/mariogeiger/nequip-jax): Another basic implementation of a NequIP style model in JAX.
+- [teddykoker/nequip-eqx](https://github.com/teddykoker/nequip-eqx): Better and simple implementation of a NequIP style model in JAX and equinox

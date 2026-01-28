@@ -131,14 +131,14 @@ We use the same hyperparameters as [1], which can be viewed in [`configs/3bpa.ym
     
 Resulting energy (E) and force (F) RMSE in meV and meV/Å respectively.
 
-| Code     | [`nequip`](https://github.com/mir-group/nequip) | [`mace`](https://github.com/ACEsuit/mace)  | `BAM-nequip` (this repo) |
-|--------------|--------------|-------------------|---|
-| 300 K E      | 3.3 (0.1)    | 3.1 (0.1)         | 3.7
-| 300 K F | 10.8 (0.2)   | 11.3 (0.2)        | **9.6**
-| 600 K E | 11.2 (0.1)   | 11.3 (0.3)       | **11.1**
-| 600 K F | 26.4 (0.1)   | 27.3 (0.3)        | **23.5**
-| 1200 K E | 38.5 (1.6)   | 40.8 (1.3)        | **33.5**
-| 1200 K F | 76.2 (1.1)   | 86.4 (1.5)        | **67.6**
+| Code     | [`nequip`](https://github.com/mir-group/nequip) | [`mace`](https://github.com/ACEsuit/mace)  | `BAM-nequip` (this repo) | `BAM-race` (this repo) |
+|--------------|--------------|-------------------|---|---|
+| 300 K E      | 3.3 (0.1)    | 3.1 (0.1)         | 3.7 | **3.2** |
+| 300 K F | 10.8 (0.2)   | 11.3 (0.2)        | 9.6  | **8.8** |
+| 600 K E | 11.2 (0.1)   | 11.3 (0.3)       | 11.1 |  **10.1** |
+| 600 K F | 26.4 (0.1)   | 27.3 (0.3)        | 23.5 | **22.3** |
+| 1200 K E | 38.5 (1.6)   | 40.8 (1.3)        | 33.5 | **31.4**|
+| 1200 K F | 76.2 (1.1)   | 86.4 (1.5)        | **67.6** |  72.9  |
 
 ### Example: Testing Equivariance
 

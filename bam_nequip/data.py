@@ -17,9 +17,9 @@ def preprocess_graph(
 ) -> jraph.GraphsTuple:
     """Preprocess ase.Atoms object into a jraph.GraphsTuple, with optional targets"""
     src, dst = matscipy.neighbours.neighbour_list("ij", atoms, cutoff)
-    forces = atoms.get_forces().astype(np.float32) if targets else None
+    forces = atoms.get_forces() if targets else None
     energy = (
-        np.array([atoms.get_potential_energy()]).astype(np.float32) if targets else None
+        np.array([atoms.get_potential_energy()]) if targets else None
     )
     return jraph.GraphsTuple(
         n_node=np.array([len(atoms)]).astype(np.int32),
@@ -28,7 +28,7 @@ def preprocess_graph(
             "species": np.array(
                 [atom_indices[n] for n in atoms.get_atomic_numbers()],
             ).astype(np.int32),
-            "positions": atoms.positions.astype(np.float32),
+            "positions": atoms.positions,
             "forces": forces,
         },
         edges=None,

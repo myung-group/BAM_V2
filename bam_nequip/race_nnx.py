@@ -13,8 +13,8 @@ import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import jraph
-from nequip_nnx import bessel_basis, polynomial_cutoff, separated_layer_norm, MLP
-from linear_nnx import Linear as e3nn_nnx_Linear
+from bam_nequip.nequip_nnx import bessel_basis, polynomial_cutoff, separated_layer_norm, MLP
+from bam_nequip.linear_nnx import Linear as e3nn_nnx_Linear
 
 
 class RACEConvolution(nnx.Module):

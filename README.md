@@ -2,111 +2,47 @@
 
 A JAX/Flax implementation of NequIP (Neural Equivariant Interatomic Potentials) using the Flax NNX API and e3nn-jax for equivariant operations.
 
-## Overview
-
-A modified version of NequIP is an E(3)-equivariant graph neural network architecture for learning interatomic potentials. This implementation provides:
-
-- **Flax NNX API**: Modern, Pythonic neural network implementation
-- **e3nn-jax**: Efficient equivariant operations using spherical harmonics
-- **JIT compilation**: Full JAX JIT support for fast training and inference
-- **Scan-based training**: Optional `jax.lax.scan` for reduced Python overhead
-- **EMA weights**: Exponential moving average for stable training
-- **separated layer normalization**: to stabilize training 
-
-## Features
-
-- E(3)-equivariant message passing with spherical harmonics
-- Bessel radial basis functions with polynomial cutoff
-- Per-species embeddings and skip connections
-- Separated Layer normalization for equivariant features
-- Huber loss for robust training
-- Learning rate scheduling with reduce-on-plateau
-- Checkpoint saving/loading
-
-## Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/myung-group/BAM-nequip.git
-cd BAM-nequip
-
-# Install dependencies
-pip install -e .
-```
-
-### Requirements
-
-- Python >= 3.12
-- JAX >= 0.8.0
-- Flax >= 0.12.0
-- e3nn-jax >= 0.20.8
-- jraph >= 0.0.6
-- optax >= 0.2.5
-- ASE >= 3.27.0
-- matscipy >= 1.2.0
-
-## Usage
+### Overview
+To achieve state-of-the-art performance, we created a separate branch to explore multiple code development approaches.
 
 ### Training
+Trained for 2000 epochs using the following inputs.
 
-1. Prepare your dataset in extended XYZ format with energy and forces.
-
-2. Create a configuration file (see `input_nequip.json` for an example):
+1. Input
 
 ```json
 {
-    "cutoff": 5.0,
-    "train_path": "data/train.xyz",
+    "cutoff" : 5.0,
+    "train_path": "../example-3BPA_300K/dataset/train_300K.xyz",
+    "test_path": "../example-3BPA_300K/dataset/test_300K.xyz",
+    "valid_frac": 0.1,
     "atomic_numbers": [1, 6, 7, 8],
-    "atom_energies": [-13.587, -1029.489, -1484.981, -2041.982],
+    "atom_energies" : [-13.587222780835477, -1029.4889999855063, -1484.9814568572233, -2041.9816003861047],
     "hidden_size": 128,
     "lmax": 3,
     "n_layers": 5,
+    "radial_basis_size": 8,
+    "radial_mlp_size": 64,
+    "radial_mlp_layers": 3,
+    "radial_polynomial_p": 2.0,
+    "mlp_init_scale": 4.0,
+    "learning_rate": 0.01,
+    "lr_schedule_patience": 20,
+    "lr_schedule_factor": 0.8,
+    "lr_schedule_min_scale": 0.001,
     "batch_size": 5,
-    "n_epochs": 1000,
-    "learning_rate": 0.01
+    "n_epochs": 2000,
+    "energy_weight": 1.0,
+    "force_weight": 1.0,
+    "log_every": 100,
+    "ema_decay": 0.99,
+    "use_scan": false,
+    "grad_clip": 1.0,
+    "restart": false
 }
 ```
 
-3. Run training:
-
-```bash
-python -m bam_nequip.train_nequip
-```
-
-### Model Architecture
-
-The model consists of:
-
-1. **Species embedding**: Linear projection of one-hot encoded atomic species
-2. **Interaction layers**: Equivariant convolutions with:
-   - Separated Linear transformation of node features
-   - Tensor product with spherical harmonics of edge vectors
-   - Radial MLP for distance-dependent weights
-   - Gated nonlinearity
-   - Per-species skip connections
-3. **Readout**: Linear projections to scalar per-atom energies
-
-### Configuration Options
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `cutoff` | Radial cutoff distance (Å) | 5.0 |
-| `hidden_size` | Hidden feature dimension | 128 |
-| `lmax` | Maximum angular momentum | 3 |
-| `n_layers` | Number of interaction layers | 5 |
-| `radial_basis_size` | Number of Bessel basis functions | 8 |
-| `radial_mlp_size` | Hidden size of radial MLP | 64 |
-| `radial_mlp_layers` | Number of radial MLP layers | 3 |
-| `learning_rate` | Initial learning rate | 0.01 |
-| `energy_weight` | Loss weight for energy | 1.0 |
-| `force_weight` | Loss weight for forces | 1.0 |
-| `use_scan` | Use jax.lax.scan for training | true |
-| `grad_clip` | Gradient clipping norm | 1.0 |
-| `ema_decay` | EMA decay rate | 0.99 |
-
-
-### Comparison with other codes
+### Comparison of Results
 
 In order to verify correctness of the implementation, we compare performance on
 the 3BPA dataset to two different PyTorch NequIP implementations: 
@@ -131,34 +67,16 @@ We use the same hyperparameters as [1], which can be viewed in [`configs/3bpa.ym
     
 Resulting energy (E) and force (F) RMSE in meV and meV/Å respectively.
 
-| Code     | [`nequip`](https://github.com/mir-group/nequip) | [`mace`](https://github.com/ACEsuit/mace)  | `BAM-nequip` (this repo) | `BAM-race` (this repo) |
-|--------------|--------------|-------------------|---|---|
-| 300 K E      | 3.3 (0.1)    | 3.1 (0.1)         | 3.7 | **3.2** |
-| 300 K F | 10.8 (0.2)   | 11.3 (0.2)        | 9.6  | **8.8** |
-| 600 K E | 11.2 (0.1)   | 11.3 (0.3)       | 11.1 |  **10.1** |
-| 600 K F | 26.4 (0.1)   | 27.3 (0.3)        | 23.5 | **22.3** |
-| 1200 K E | 38.5 (1.6)   | 40.8 (1.3)        | 33.5 | **31.4**|
-| 1200 K F | 76.2 (1.1)   | 86.4 (1.5)        | **67.6** |  72.9  |
+| Code     | `RACE` (race_nnx.py) | `RACE` (race_nnx_2.py) | `MACE` (Highest score) | 
+|--------------|------|-----------|-----------|
+| 300 K E      | 4.52 | *3.69*   | **3.0** |
+| 300 K F      | *8.92*  | 9.62   |  **8.8** |
+| 600 K E      | 10.64 |  *10.63* |  **9.7** |
+| 600 K F      | *22.38* | 23.01  |  **21.8**  |
+| 1200 K E     | *31.26* | 33.44  |  **29.8**  |
+| 1200 K F     | 75.31 | *66.83* |   **62.0** |
 
-### Example: Testing Equivariance
 
-```python
-from nequip_nnx import Nequip
-from flax import nnx
-
-# Create model
-model = Nequip(
-    n_species=4,
-    lmax=3,
-    cutoff=5.0,
-    hidden_size=128,
-    n_layers=3,
-    rngs=nnx.Rngs(42),
-)
-
-# Run inference
-energies, forces = model(graph_data)
-```
 
 ## Citation
 

@@ -17,6 +17,58 @@ from .nequip_nnx import bessel_basis, polynomial_cutoff, separated_layer_norm, M
 from .linear_nnx import Linear as e3nn_nnx_Linear
 
 
+class RACEXReadout(nnx.Module):
+    """RACE x_node_feature's readout layer with equivariant message passing."""
+
+    def __init__(
+        self,
+        hidden_irreps: e3nn.Irreps,
+        output_irreps: e3nn.Irreps,
+        x_irreps: e3nn.Irreps,
+        rngs: nnx.Rngs,
+    ):
+        self.x_readout1 = e3nn_nnx_Linear(
+            irreps_in=x_irreps,
+            irreps_out=hidden_irreps,
+            biases=True, # willow
+            rngs=rngs,
+        )
+        self.x_readout2 = e3nn_nnx_Linear(
+            irreps_in=hidden_irreps,
+            irreps_out=hidden_irreps//2,
+            biases=True, # willow
+            rngs=rngs,
+            force_irreps_out=True,
+        )
+        self.x_readout3 = e3nn_nnx_Linear(
+            irreps_in=hidden_irreps//2,
+            irreps_out=output_irreps,
+            biases=True, # willow
+            rngs=rngs,
+            force_irreps_out=True,
+        )
+
+    def __call__(
+        self,
+        x_feats: e3nn.IrrepsArray,
+    ) -> e3nn.IrrepsArray:
+
+        x_feats_norm = separated_layer_norm (x_feats)
+        #x_energy = self.x_readout(data.nodes["species"], x_feats_norm)
+        x_features = self.x_readout1(x_feats_norm)
+        x_features = self.x_readout2(x_features)
+        x_features = e3nn.gate(
+            x_features,
+            even_act=jax.nn.silu,
+            odd_act=jax.nn.sigmoid,
+            #odd_act=jax.nn.tanh,
+            even_gate_act=jax.nn.silu,
+        )
+        #x_features = e3nn.scalar_activation(x_features, [jax.nn.silu])
+        x_energy = self.x_readout3(x_features)
+
+        return x_energy
+
 class RACEConvolution(nnx.Module):
     """RACE convolution layer with equivariant message passing."""
 
@@ -228,25 +280,11 @@ class RACE(nnx.Module):
         sh_irreps = e3nn.s2_irreps(lmax)
         hidden_irreps = hidden_size * e3nn.s2_irreps(lmax)
 
-        self.x_readout1 = e3nn_nnx_Linear(
-            irreps_in=x_irreps,
-            irreps_out=e3nn.Irreps("64x0e"),
-            biases=True, # willow
+        self.x_readout = RACEXReadout(
+            hidden_irreps=e3nn.Irreps("64x0e"),
+            output_irreps=e3nn.Irreps("0e"),
+            x_irreps=x_irreps,
             rngs=rngs,
-        )
-        self.x_readout2 = e3nn_nnx_Linear(
-            irreps_in=e3nn.Irreps("64x0e"),
-            irreps_out=e3nn.Irreps("32x0e"),
-            biases=True, # willow
-            rngs=rngs,
-            force_irreps_out=True,
-        )
-        self.x_readout3 = e3nn_nnx_Linear(
-            irreps_in=e3nn.Irreps("32x0e"),
-            irreps_out=e3nn.Irreps("0e"),
-            biases=True, # willow
-            rngs=rngs,
-            force_irreps_out=True,
         )
         self.species_embedding = e3nn_nnx_Linear(
             irreps_in=e3nn.Irreps(f"{n_species}x0e"),
@@ -293,12 +331,7 @@ class RACE(nnx.Module):
         features = self.species_embedding (features)
         x_feats = self.x_linear(data.nodes["species"], features)
 
-        x_feats_norm = separated_layer_norm (x_feats)
-        #x_energy = self.x_readout(data.nodes["species"], x_feats_norm)
-        x_features = self.x_readout1(x_feats_norm)
-        x_features = self.x_readout2(x_features)
-        x_features = e3nn.scalar_activation(x_features, [jax.nn.silu])
-        x_energy = self.x_readout3(x_features)
+        x_energy = self.x_readout(x_feats)
 
         r = positions[data.senders] - positions[data.receivers]
 

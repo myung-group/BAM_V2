@@ -16,7 +16,7 @@ import numpy as np
 
 from bam_nequip.data import DataLoader, Dataset
 from bam_nequip.nequip_nnx import Nequip
-
+from bam_nequip.race_nnx import RACE
 
 jax.config.update("jax_enable_x64", False)
 
@@ -551,7 +551,7 @@ def train(config: Dict):
 
     # Create model
     rngs = nnx.Rngs(config.get('seed', 42))
-    model = Nequip(
+    model = RACE(
         n_species=len(config["atomic_numbers"]),
         hidden_size=config["hidden_size"],
         lmax=config["lmax"],
@@ -985,7 +985,7 @@ if __name__ == "__main__":
     import json
     from pathlib import Path
 
-    config_path = Path('input_nequip.json')
+    config_path = Path('input.json')
     if config_path.exists():
         print(f"Loading config from {config_path}")
         with open(config_path) as f:

@@ -12,7 +12,7 @@ Trained for 2000 epochs using the following inputs.
 
 ```json
 {
-    "cutoff" : 5.0,
+    "cutoff" : 6.0,
     "train_path": "../example-3BPA_300K/dataset/train_300K.xyz",
     "test_path": "../example-3BPA_300K/dataset/test_300K.xyz",
     "valid_frac": 0.1,
@@ -30,7 +30,7 @@ Trained for 2000 epochs using the following inputs.
     "lr_schedule_patience": 20,
     "lr_schedule_factor": 0.8,
     "lr_schedule_min_scale": 0.001,
-    "batch_size": 5,
+    "batch_size": 2,
     "n_epochs": 2000,
     "energy_weight": 1.0,
     "force_weight": 1.0,
@@ -67,16 +67,14 @@ We use the same hyperparameters as [1], which can be viewed in [`configs/3bpa.ym
     
 Resulting energy (E) and force (F) RMSE in meV and meV/Å respectively.
 
-| Code     | `RACE` (race_nnx.py) | `RACE` (race_nnx_2.py) | `MACE` (Highest score) | 
+| Code     | `RACE` (race_nnx.py) | `RACE` (race_nnx_4.py) (1100 epoch) | `MACE` (Highest score) | 
 |--------------|------|-----------|-----------|
-| 300 K E      | 4.52 | *3.69*   | **3.0** |
-| 300 K F      | *8.92*  | 9.62   |  **8.8** |
-| 600 K E      | 10.64 |  *10.63* |  **9.7** |
-| 600 K F      | *22.38* | 23.01  |  **21.8**  |
-| 1200 K E     | *31.26* | 33.44  |  **29.8**  |
-| 1200 K F     | 75.31 | *66.83* |   **62.0** |
-
-
+| 300 K E      | 3.52  | *3.29*   | **3.0** |
+| 300 K F      | *8.69*  | **8.58**   | 8.8 |
+| 600 K E      | 10.19 | **9.29**   | *9.7* |
+| 600 K F      | *21.62* | **21.03**  |  21.8  |
+| 1200 K E     | *30.30* | 30.33  |  **29.8**  |
+| 1200 K F     | 65.17 | *63.71* |   **62.0** |
 
 ## Citation
 

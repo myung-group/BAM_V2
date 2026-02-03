@@ -706,9 +706,12 @@ def evaluate_sharded(
                   stress_weight * totals['stress_loss'] / n_g)
 
     return {
-        'energy_rmse': np.sqrt(totals['energy_se'] / n_g),
-        'force_rmse': np.sqrt(totals['force_se'] / (3 * n_a)),
-        'stress_rmse': np.sqrt(totals['stress_se'] / n_g),
+        #'energy_rmse': np.sqrt(totals['energy_se'] / n_g),
+        #'force_rmse': np.sqrt(totals['force_se'] / (3 * n_a)),
+        #'stress_rmse': np.sqrt(totals['stress_se'] / n_g),
+        'energy_mae': totals['energy_sa'] / n_g,
+        'force_mae': totals['force_sa'] / (3 * n_a),
+        'stress_mae': totals['stress_sa'] / n_g,
         'energy_loss': totals['energy_loss'] / n_g,
         'force_loss': totals['force_loss'] / (3 * n_a),
         'stress_loss': totals['stress_loss'] / n_g,
@@ -1078,9 +1081,9 @@ def train_sharded(
                   f"E_LOSS: {val_metrics['energy_loss']:.6f} | "
                   f"F_LOSS: {val_metrics['force_loss']:.6f} | "
                   f"S_LOSS: {val_metrics['stress_loss']:.6f} | "
-                  f"E_RMSE: {val_metrics['energy_rmse']:.6f} | "
-                  f"F_RMSE: {val_metrics['force_rmse']:.6f} | "
-                  f"S_RMSE: {val_metrics['stress_rmse']:.6f}", file=fout)
+                  f"E_MAE: {val_metrics['energy_mae']:.6f} | "
+                  f"F_MAE: {val_metrics['force_mae']:.6f} | "
+                  f"S_MAE: {val_metrics['stress_mae']:.6f}", file=fout)
 
             # Update LR schedule
             unrep_params = unreplicate_pytree(params)

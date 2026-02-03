@@ -67,14 +67,14 @@ We use the same hyperparameters as [1], which can be viewed in [`configs/3bpa.ym
     
 Resulting energy (E) and force (F) RMSE in meV and meV/Å respectively.
 
-| Code     | `RACE` (race_nnx.py) | `RACE` (race_nnx_4.py) | `MACE` (Highest score) | 
+| Code     | `RACE` (race_nnx.py) | `RACE` (race_nnx_7.py) (nepoch=1000) | `MACE` (Highest score) | 
 |--------------|------|-----------|-----------|
-| 300 K E      | 3.52  | *3.48*   | **3.0** |
-| 300 K F      | *8.69*  | **8.43**   | 8.8 |
-| 600 K E      | 10.19 | **9.32**   | *9.7* |
-| 600 K F      | *21.62* | **20.72**  |  21.8  |
-| 1200 K E     | 30.30 | *30.12*  |  **29.8**  |
-| 1200 K F     | 65.17 | *63.07* |   **62.0** |
+| 300 K E      | 3.33  | *3.28*   | **3.0** |
+| 300 K F      | *8.87*  | **8.60**   | 8.8 |
+| 600 K E      | **9.06** | *9.53*   | 9.7 |
+| 600 K F      | *21.71* | **21.07**  |  21.8  |
+| 1200 K E     | *29.06* | **28.29**  |  29.8  |
+| 1200 K F     | 65.07 | **60.77** |   *62.0* |
 
 ## Citation
 

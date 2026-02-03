@@ -225,7 +225,7 @@ class RACE(nnx.Module):
         self,
         n_species: int,
         lmax: int = 3,
-        cutoff: float = 5.0,
+        cutoff: float = 6.0,
         hidden_size: int = 128,
         n_layers: int = 5,
         radial_basis_size: int = 8,
@@ -247,7 +247,7 @@ class RACE(nnx.Module):
         self.radial_basis_size = radial_basis_size
         self.radial_polynomial_p = radial_polynomial_p
         self.n_layers = n_layers
-
+        print(f"R_cut: {self.cutoff}") 
         # Store trainable scale parameters
         self.shift = nnx.Param(jnp.array(shift))
         self.scale = nnx.Param(jnp.array(scale))

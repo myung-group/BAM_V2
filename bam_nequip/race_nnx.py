@@ -170,7 +170,7 @@ class RACE(nnx.Module):
         self,
         n_species: int,
         lmax: int = 3,
-        cutoff: float = 5.0,
+        cutoff: float = 6.0,
         hidden_size: int = 128,
         n_layers: int = 5,
         radial_basis_size: int = 8,
@@ -188,6 +188,7 @@ class RACE(nnx.Module):
         # Store static configuration
         self.lmax = lmax
         self.cutoff = cutoff
+        print(f"R_cut: {self.cutoff}")
         self.n_species = n_species
         self.radial_basis_size = radial_basis_size
         self.radial_polynomial_p = radial_polynomial_p

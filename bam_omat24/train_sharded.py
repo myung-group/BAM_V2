@@ -433,9 +433,12 @@ def evaluate_sharded(
                   force_weight * totals['force_loss'] / (3* n_a) +
                   stress_weight * totals['stress_loss'] / n_g )
     return {
-        'energy_rmse': np.sqrt(totals['energy_se'] / n_g),
-        'force_rmse': np.sqrt(totals['force_se'] / (3 * n_a)),
-        'stress_rmse': np.sqrt(totals['stress_se'] / n_g),
+        #'energy_rmse': np.sqrt(totals['energy_se'] / n_g),
+        #'force_rmse': np.sqrt(totals['force_se'] / (3 * n_a)),
+        #'stress_rmse': np.sqrt(totals['stress_se'] / n_g),
+        'energy_mae': totals['energy_ae'] / n_g,
+        'force_mae': totals['force_ae'] / (3 * n_a),
+        'stress_mae': totals['stress_ae'] / n_g,
         'energy_loss': totals['energy_loss'] / n_g,
         'force_loss': totals['force_loss'] / (3 * n_a),
         'stress_loss': totals['stress_loss'] / n_g,
@@ -660,9 +663,9 @@ def train_sharded(config: Dict, train_files_pkl: List[str], valid_files_pkl: Lis
                   f"E_LOSS: {val_metrics['energy_loss']:.6f} | "
                   f"F_LOSS: {val_metrics['force_loss']:.6f} | "
                   f"S_LOSS: {val_metrics['stress_loss']:.6f} | "
-                  f"E_RMSE: {val_metrics['energy_rmse']:.6f} | "
-                  f"F_RMSE: {val_metrics['force_rmse']:.6f} | "
-                  f"S_RMSE: {val_metrics['stress_rmse']:.6f}", file=fout)
+                  f"E_MAE: {val_metrics['energy_mae']:.6f} | "
+                  f"F_MAE: {val_metrics['force_mae']:.6f} | "
+                  f"S_MAE: {val_metrics['stress_mae']:.6f}", file=fout)
 
             # Update LR schedule
             unrep_params = unreplicate_pytree(params)
@@ -715,6 +718,7 @@ def train_sharded(config: Dict, train_files_pkl: List[str], valid_files_pkl: Lis
 if __name__ == "__main__":
     import json
     from natsort import natsorted
+    from bam_omat24.atom_energies import ATOM_ENERGIES
 
     print("=" * 70)
     print("JAX Sharded Training (Multi-GPU)")
@@ -725,12 +729,9 @@ if __name__ == "__main__":
     print("=" * 70)
 
     # Load config
-    lines = open('atom_energies.dat', 'r').readlines()
-    atom_energies = [float(line.split()[1]) for line in lines]
-
     with open('input_omat24.json') as f:
         config = json.load(f)
-    config['atom_energies'] = atom_energies
+    config['atom_energies'] = ATOM_ENERGIES
 
     train_path = Path('/home/willow/Python/BAM-nequip-main/omat24_1M/train')
     valid_path = Path('/home/willow/Python/BAM-nequip-main/omat24_1M/val')

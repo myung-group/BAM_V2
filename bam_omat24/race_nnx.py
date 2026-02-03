@@ -280,7 +280,7 @@ class RACE(nnx.Module):
         )
 
         layers = []
-        x_readouts = []
+        #x_readouts = []
         for i in range(n_layers):
             layer = RACEConvolution(
                 input_irreps=input_irreps if i == 0 else hidden_irreps,
@@ -296,7 +296,7 @@ class RACE(nnx.Module):
                 rngs=rngs,
             )
             layers.append(layer)
-
+            '''
             x_readout = RACEXReadout(
                 hidden_irreps=e3nn.Irreps("64x0e"), # 256
                 output_irreps=e3nn.Irreps("0e"),
@@ -305,9 +305,9 @@ class RACE(nnx.Module):
                 rngs=rngs,
             )
             x_readouts.append(x_readout)
-
+            '''
         self.layers = nnx.List(layers)
-        self.x_readouts = nnx.List(x_readouts)
+        #self.x_readouts = nnx.List(x_readouts)
 
 
     def node_energies(self,
@@ -398,11 +398,11 @@ class RACE(nnx.Module):
                 data.senders,
                 data.receivers,
             )
-            x_energy = x_readout(
-                data.nodes["species"],
-                x_feats)
-            outputs += [node_energies.array[:,0]
-                        +x_energy.array.squeeze()]
+            #x_energy = x_readout(
+            #    data.nodes["species"],
+            #    x_feats)
+            outputs += [node_energies.array[:,0]]
+            #            +x_energy.array.squeeze()]
 
         node_energies = jnp.sum(
             jnp.stack(outputs, axis=1),
@@ -471,6 +471,7 @@ class RACE(nnx.Module):
             # For padded batches, use jraph's mask (last graph is padding)
             node_mask = jraph.get_node_padding_mask(data)[:, None]
             grad = jnp.where(node_mask, grad, 0.0)
+            node_energies = jnp.where(node_mask, node_energies, 0.0)
         # For single graphs, no masking needed (all nodes are valid)
 
         # Handle any NaN forces from numerical issues
@@ -515,6 +516,7 @@ if __name__ == "__main__":
     # Example usage
     import numpy as np
     import pickle
+    from bam_omat24.atom_energies import ATOM_ENERGIES
     #from ase.io import read
 
     print("=" * 70)
@@ -526,16 +528,10 @@ if __name__ == "__main__":
         graphset = pickle.load (f)
     data = graphset[0]
 
-    lines = open('atom_energies.dat', 'r').readlines()
-    atom_energies = []
-    for line in lines:
-        key = line.split()
-        atom_energies.append (float(key[1]))
-
     # Create model
     rngs = nnx.Rngs(42)
     model = RACE(
-        n_species=len(atom_energies),
+        n_species=len(ATOM_ENERGIES),
         lmax=3,
         hidden_size=128,
         n_layers=3,
@@ -546,7 +542,7 @@ if __name__ == "__main__":
         shift = 0.0,
         scale = 1.0,
         avg_n_neighbors=25,
-        atom_energies=atom_energies,
+        atom_energies=ATOM_ENERGIES,
         l_train=True,
         periodic=True,
         rngs=rngs,

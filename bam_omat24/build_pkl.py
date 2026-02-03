@@ -1,18 +1,18 @@
 import pickle
 from pathlib import Path
-import sys
 import ase
-#import ase.io
 import jraph
 import matscipy.neighbours
 import numpy as np
 from tqdm import tqdm
 from fairchem.core.datasets import AseDBDataset
+from bam_omat24.atom_energies import (
+    ATOM_ENERGIES,
+    ATOMIC_NUMBER_TO_INDEX
+)
 
 def preprocess_graph(
     atoms: ase.Atoms,
-    atom_energies: np.ndarray,
-    atom_indices: dict[int, int],
     default_cutoff: float,
     targets: bool,
 ) -> jraph.GraphsTuple:
@@ -21,18 +21,19 @@ def preprocess_graph(
     cutoff = default_cutoff
     src, dst, Sij = matscipy.neighbours.neighbour_list("ijS", atoms, cutoff)
     if len(src) < 20:
+        cutoff = default_cutoff + 3.0
+        src, dst, Sij = matscipy.neighbours.neighbour_list("ijS", atoms, cutoff)
         print (len(src), atoms.get_atomic_numbers())
-        return None
+        if len(src) == 0:
+            return None
 
     forces = atoms.get_forces().astype(np.float32) if targets else None
     species = np.array(
-                [atom_indices[n] for n in atoms.get_atomic_numbers()],
+                [ATOMIC_NUMBER_TO_INDEX[n] for n in atoms.get_atomic_numbers()],
             ).astype(np.int32)
 
-    graph_e0 = 0.0
-    if atom_energies is not None:
-        node_e0 = atom_energies[species]
-        graph_e0 = node_e0.sum()
+    node_e0 = ATOM_ENERGIES[species]
+    graph_e0 = node_e0.sum()
 
     energy = (
         np.array([atoms.get_potential_energy()-graph_e0]) if targets else None
@@ -47,16 +48,6 @@ def preprocess_graph(
         np.array([atoms.get_stress()])
     )
 
-    '''
-    if len(src) < 20:
-        cutoff = default_cutoff + 3.0
-        src, dst, Sij = matscipy.neighbours.neighbour_list("ijS", atoms, cutoff)
-
-        if len(src) < 20:
-            cutoff = default_cutoff + 6.0
-            src, dst, Sij = matscipy.neighbours.neighbour_list("ijS", atoms, cutoff)
-    '''
-
     globals_cutoff = (
         np.array([cutoff])
     )
@@ -65,9 +56,7 @@ def preprocess_graph(
         n_node=np.array([len(atoms)]).astype(np.int32),
         n_edge=np.array([len(src)]).astype(np.int32),
         nodes={
-            "species": np.array(
-                [atom_indices[n] for n in atoms.get_atomic_numbers()],
-            ).astype(np.int32),
+            "species": species,
             "positions": atoms.positions,
             "forces": forces,
         },
@@ -85,20 +74,9 @@ def preprocess_graph(
         },
     )
 
-def atomic_numbers_to_indices(atomic_numbers: list[int]) -> dict[int, int]:
-    """Convert list of atomic numbers to dictionary of atomic number to index."""
-    return {n: i for i, n in enumerate(sorted(atomic_numbers))}
-
-
 
 if __name__ == "__main__":
     from ase.io import write
-    lines = open('atom_energies.dat', 'r').readlines()
-    atom_energies = []
-    for line in lines:
-        key = line.split()
-        atom_energies.append (float(key[1]))
-    atom_energies = np.array(atom_energies)
 
     config_kwargs = {}
     dir_train = "/home/willow/Python/BAM-nequip-main/omat24_1M/train/"
@@ -120,8 +98,6 @@ if __name__ == "__main__":
     ]
     trainset = AseDBDataset(config=dict(src=trainset_paths,**config_kwargs))
 
-    atomic_numbers = list(np.arange(83)+1) + [89, 90, 91, 92, 93, 94]
-    atomic_indices = atomic_numbers_to_indices(atomic_numbers)
     ndata = len(trainset)
     rng = np.random.RandomState(seed=42)
     perm = rng.permutation(ndata)
@@ -137,17 +113,15 @@ if __name__ == "__main__":
         graphs = [
             preprocess_graph(
                 trainset.get_atoms(perm[id]),
-                atom_energies,
-                atomic_indices,
                 cutoff,
                 True)
             for id in tqdm(range(ist, ied))
         ]
-        '''
+
         safe_graphs = [g for g in graphs if g is not None]
         print ("safe_graphs", len(safe_graphs))
         with open(pkl_path, "wb") as f:
             pickle.dump(safe_graphs, f)
-        '''
+
 
         ipkl += 1

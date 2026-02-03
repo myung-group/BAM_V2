@@ -709,9 +709,9 @@ def evaluate_sharded(
         #'energy_rmse': np.sqrt(totals['energy_se'] / n_g),
         #'force_rmse': np.sqrt(totals['force_se'] / (3 * n_a)),
         #'stress_rmse': np.sqrt(totals['stress_se'] / n_g),
-        'energy_mae': totals['energy_sa'] / n_g,
-        'force_mae': totals['force_sa'] / (3 * n_a),
-        'stress_mae': totals['stress_sa'] / n_g,
+        'energy_mae': totals['energy_ae'] / n_g,
+        'force_mae': totals['force_ae'] / (3 * n_a),
+        'stress_mae': totals['stress_ae'] / n_g,
         'energy_loss': totals['energy_loss'] / n_g,
         'force_loss': totals['force_loss'] / (3 * n_a),
         'stress_loss': totals['stress_loss'] / n_g,
@@ -1134,7 +1134,7 @@ def train_sharded(
 if __name__ == "__main__":
     import json
     from natsort import natsorted
-
+    from bam_omat24.atom_energies import ATOM_ENERGIES
     # Initialize distributed runtime FIRST
     initialize_distributed()
 
@@ -1150,12 +1150,9 @@ if __name__ == "__main__":
         print("=" * 70)
 
     # Load config
-    lines = open('atom_energies.dat', 'r').readlines()
-    atom_energies = [float(line.split()[1]) for line in lines]
-
     with open('input_omat24.json') as f:
         config = json.load(f)
-    config['atom_energies'] = atom_energies
+    config['atom_energies'] = ATOM_ENERGIES
 
     train_path = Path('/home/willow/Python/BAM-nequip-main/omat24_1M/train')
     valid_path = Path('/home/willow/Python/BAM-nequip-main/omat24_1M/val')

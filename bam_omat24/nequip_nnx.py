@@ -564,47 +564,21 @@ if __name__ == "__main__":
     # Example usage
     import numpy as np
     import pickle
+    from bam_omat24.atom_energies import ATOM_ENERGIES
     #from ase.io import read
 
     print("=" * 70)
     print("Nequip-Style Equivariant Potential")
     print("=" * 70)
 
-    """
-    uniq_element = {z: i for i, z in enumerate([1, 6, 7, 8])}
-    #enr_avg_per_element = {i: -654.09 for i in range(4)}
-    enr_avg_per_element = {
-        1: -13.587222780835477,
-        6: -1029.4889999855063,
-        7: -1484.9814568572233,
-        8: -2041.9816003861047,
-    }
-
-    # Load data
-    atoms = read('dataset_3BPA/train_300K.xyz', index=0)
-    graphset = get_graphset(
-        [atoms],
-        cutoff=5.0,
-        nbatch=1,
-        uniq_element=uniq_element,
-        enr_avg_per_element=enr_avg_per_element
-    )
-    """
-    #data = graphset[0]
     with open('omat24_val_0.pkl', 'rb') as f:
         graphset = pickle.load (f)
     data = graphset[0]
 
-    lines = open('atom_energies.dat', 'r').readlines()
-    atom_energies = []
-    for line in lines:
-        key = line.split()
-        atom_energies.append (float(key[1]))
-
     # Create model
     rngs = nnx.Rngs(42)
     model = Nequip(
-        n_species=len(atom_energies),
+        n_species=len(ATOM_ENERGIES),
         lmax=3,
         hidden_size=128,
         n_layers=3,
@@ -615,7 +589,7 @@ if __name__ == "__main__":
         shift = 0.0,
         scale = 1.0,
         avg_n_neighbors=25,
-        atom_energies=atom_energies,
+        atom_energies=ATOM_ENERGIES,
         rngs=rngs,
     )
 

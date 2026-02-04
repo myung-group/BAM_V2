@@ -34,6 +34,7 @@ class RACEXReadout(nnx.Module):
         output_irreps: e3nn.Irreps,
         x_irreps: e3nn.Irreps,
         n_species: int,
+        avg_n_neighbors: float,
         rngs: nnx.Rngs,
     ):
         self.x_readout1 = e3nn_nnx_Linear(
@@ -58,6 +59,7 @@ class RACEXReadout(nnx.Module):
             rngs=rngs,
             force_irreps_out=True,
         )
+        self.avg_n_neighbors = avg_n_neighbors
 
     def __call__(
         self,
@@ -65,7 +67,7 @@ class RACEXReadout(nnx.Module):
         x_feats: e3nn.IrrepsArray,
     ) -> e3nn.IrrepsArray:
 
-        x_feats_norm = separated_layer_norm (x_feats)
+        x_feats_norm = separated_layer_norm (x_feats)/jnp.sqrt(self.avg_n_neighbors)
         x_features = self.x_readout1(species, x_feats_norm)
         x_features = self.x_readout2(x_features)
         x_features = e3nn.gate(
@@ -303,6 +305,7 @@ class RACE(nnx.Module):
                 output_irreps=e3nn.Irreps("0e"),
                 x_irreps=x_irreps,
                 n_species=n_species,
+                avg_n_neighbors=avg_n_neighbors,
                 rngs=rngs,
             )
             x_readouts.append(x_readout)
@@ -312,6 +315,7 @@ class RACE(nnx.Module):
                 output_irreps=e3nn.Irreps("0e"),
                 x_irreps=input_irreps if i == 0 else hidden_irreps,
                 n_species=n_species,
+                avg_n_neighbors=avg_n_neighbors,
                 rngs=rngs,
             )
             f_readouts.append (f_readout)

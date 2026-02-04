@@ -310,7 +310,7 @@ class RACE(nnx.Module):
             f_readout = RACEXReadout(
                 hidden_irreps=e3nn.Irreps("64x0e"), # 256
                 output_irreps=e3nn.Irreps("0e"),
-                x_irreps=irreps if i == 0 else hidden_irreps,
+                x_irreps=input_irreps if i == 0 else hidden_irreps,
                 n_species=n_species,
                 rngs=rngs,
             )

@@ -206,7 +206,7 @@ class RACE(nnx.Module):
         n_species: Number of atom species
         lmax: Maximum angular momentum for spherical harmonics
         cutoff: Radial cutoff distance
-        hidden_size: Hidden feature dimension
+        hidden_irreps: Hidden feature dimension
         n_layers: Number of convolution layers
         radial_basis_size: Number of radial basis functions
         radial_mlp_size: Hidden size of radial MLP
@@ -225,7 +225,7 @@ class RACE(nnx.Module):
         n_species: int,
         lmax: int = 3,
         cutoff: float = 5.0,
-        hidden_size: int = 128,
+        hidden_irreps: str = "64x0e + 64x1o + 64x2e",
         n_layers: int = 5,
         radial_basis_size: int = 8,
         radial_mlp_size: int = 64,
@@ -259,7 +259,8 @@ class RACE(nnx.Module):
         else:
             self.atom_energies = nnx.Param(jnp.zeros(n_species, dtype=jnp.float32))
 
-        input_irreps = e3nn.Irreps(f"{hidden_size}x0e")
+        hidden_irreps = e3nn.Irreps(hidden_irreps)
+        input_irreps = hidden_irreps.filter(keep="0e")
         x_irreps = e3nn.Irreps("1x0e")
         self.x_linear = e3nn_nnx_Linear(
             irreps_in=input_irreps,
@@ -271,7 +272,6 @@ class RACE(nnx.Module):
         )
 
         sh_irreps = e3nn.s2_irreps(lmax)
-        hidden_irreps = hidden_size * e3nn.s2_irreps(lmax)
 
         self.species_embedding = e3nn_nnx_Linear(
             irreps_in=e3nn.Irreps(f"{n_species}x0e"),
@@ -280,7 +280,8 @@ class RACE(nnx.Module):
         )
 
         layers = []
-        #x_readouts = []
+        x_readouts = []
+        f_readouts = []
         for i in range(n_layers):
             layer = RACEConvolution(
                 input_irreps=input_irreps if i == 0 else hidden_irreps,
@@ -296,7 +297,7 @@ class RACE(nnx.Module):
                 rngs=rngs,
             )
             layers.append(layer)
-            '''
+
             x_readout = RACEXReadout(
                 hidden_irreps=e3nn.Irreps("64x0e"), # 256
                 output_irreps=e3nn.Irreps("0e"),
@@ -305,9 +306,19 @@ class RACE(nnx.Module):
                 rngs=rngs,
             )
             x_readouts.append(x_readout)
-            '''
+
+            f_readout = RACEXReadout(
+                hidden_irreps=e3nn.Irreps("64x0e"), # 256
+                output_irreps=e3nn.Irreps("0e"),
+                x_irreps=irreps if i == 0 else hidden_irreps,
+                n_species=n_species,
+                rngs=rngs,
+            )
+            f_readouts.append (f_readout)
+
         self.layers = nnx.List(layers)
-        #self.x_readouts = nnx.List(x_readouts)
+        self.x_readouts = nnx.List(x_readouts)
+        self.f_readouts = nnx.List(f_readouts)
 
 
     def node_energies(self,
@@ -388,7 +399,14 @@ class RACE(nnx.Module):
         )
 
         outputs = []
-        for layer, x_readout in zip(self.layers, self.x_readouts):
+        for (layer, x_readout, f_readout) in zip(
+            self.layers,
+            self.x_readouts,
+            self.f_readouts):
+            f_energy = f_readout(
+                data.nodes["species"],
+                features
+            )
             node_energies, features = layer(
                 features,
                 x_feats,
@@ -398,11 +416,12 @@ class RACE(nnx.Module):
                 data.senders,
                 data.receivers,
             )
-            #x_energy = x_readout(
-            #    data.nodes["species"],
-            #    x_feats)
-            outputs += [node_energies.array[:,0]]
-            #            +x_energy.array.squeeze()]
+            x_energy = x_readout(
+                data.nodes["species"],
+                x_feats)
+            outputs += [node_energies.array[:,0]
+                        + x_energy.array.squeeze()
+                        + f_energy.array.squeeze()]
 
         node_energies = jnp.sum(
             jnp.stack(outputs, axis=1),
@@ -533,7 +552,7 @@ if __name__ == "__main__":
     model = RACE(
         n_species=len(ATOM_ENERGIES),
         lmax=3,
-        hidden_size=128,
+        hidden_irreps="64x0e + 64x1o + 64x2e",
         n_layers=3,
         radial_basis_size=8,
         radial_mlp_size=64,

@@ -262,7 +262,7 @@ class Nequip(nnx.Module):
         n_species: Number of atom species
         lmax: Maximum angular momentum for spherical harmonics
         cutoff: Radial cutoff distance
-        hidden_size: Hidden feature dimension
+        hidden_irreps: Hidden feature dimension
         n_layers: Number of convolution layers
         radial_basis_size: Number of radial basis functions
         radial_mlp_size: Hidden size of radial MLP
@@ -281,7 +281,7 @@ class Nequip(nnx.Module):
         n_species: int,
         lmax: int = 3,
         cutoff: float = 5.0,
-        hidden_size: int = 128,
+        hidden_irreps: str = "64x0e + 64x1o + 64x2e",
         n_layers: int = 5,
         radial_basis_size: int = 8,
         radial_mlp_size: int = 64,
@@ -315,9 +315,9 @@ class Nequip(nnx.Module):
         else:
             self.atom_energies = nnx.Param(jnp.zeros(n_species, dtype=jnp.float32))
 
-        input_irreps = e3nn.Irreps(f"{hidden_size}x0e")
+        hidden_irreps = e3nn.Irreps(hidden_irreps)
+        input_irreps = hidden_irreps.filter(keep="0e")
         sh_irreps = e3nn.s2_irreps(lmax)
-        hidden_irreps = hidden_size * e3nn.s2_irreps(lmax)
 
         self.species_embedding = e3nn_nnx_Linear(
             irreps_in=e3nn.Irreps(f"{n_species}x0e"),

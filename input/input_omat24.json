@@ -1,6 +1,6 @@
 {
     "cutoff" : 6.0,
-    "hidden_size": 128,
+    "hidden_irreps": "128x0e + 128x1o + 128x2e + 128x3o",
     "lmax": 3,
     "n_layers": 5,
     "radial_basis_size": 8,

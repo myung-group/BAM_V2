@@ -892,7 +892,7 @@ def train_sharded(
     model = RACE(
         n_species=len(config["atom_energies"]),
         lmax=config["lmax"],
-        hidden_size=config["hidden_size"],
+        hidden_irreps=config["hidden_irreps"],
         n_layers=config["n_layers"],
         radial_basis_size=config["radial_basis_size"],
         radial_mlp_size=config["radial_mlp_size"],

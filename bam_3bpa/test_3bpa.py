@@ -1,4 +1,4 @@
-"""Improved NequIP training script with scan-based training support.
+"""Improved RACE training script with scan-based training support.
 
 This module provides efficient training using jax.lax.scan for epoch-level
 optimization, reducing Python overhead and improving training throughput.
@@ -14,9 +14,9 @@ import jraph
 import time
 import numpy as np
 
-from bam_nequip.data import DataLoader, Dataset
-from bam_nequip.nequip_nnx import Nequip
-from bam_nequip.train_nequip import TrainState, evaluate, load_checkpoint
+from bam_3bpa.data import DataLoader, Dataset
+from bam_3bpa.race_nnx import RACE
+from bam_3bpa.train_3bpa import TrainState, evaluate, load_checkpoint
 
 jax.config.update("jax_enable_x64", False)
 
@@ -48,10 +48,11 @@ def main_test(config: Dict):
     n_neighbors = 25
     # Create model
     rngs = nnx.Rngs(config.get('seed', 42))
-    model = Nequip(
+    model = RACE(
         n_species=len(config["atomic_numbers"]),
         hidden_size=config["hidden_size"],
         lmax=config["lmax"],
+        cutoff=config["cutoff"],
         n_layers=config["n_layers"],
         radial_basis_size=config["radial_basis_size"],
         radial_mlp_size=config["radial_mlp_size"],
@@ -118,7 +119,7 @@ if __name__ == "__main__":
     import json
     from pathlib import Path
 
-    config_path = Path('input_nequip.json')
+    config_path = Path('input/input_3bpa.json')
     if config_path.exists():
         print(f"Loading config from {config_path}")
         with open(config_path) as f:

@@ -1,4 +1,4 @@
-"""Improved NequIP training script with scan-based training support.
+"""Improved RACE training script with scan-based training support.
 
 This module provides efficient training using jax.lax.scan for epoch-level
 optimization, reducing Python overhead and improving training throughput.
@@ -14,8 +14,8 @@ import jraph
 import time
 import numpy as np
 
-from bam_nequip.data import DataLoader, Dataset
-from bam_nequip.nequip_nnx import Nequip
+from bam_3bpa.data import DataLoader, Dataset
+from bam_3bpa.race_nnx import RACE
 
 
 jax.config.update("jax_enable_x64", False)
@@ -551,9 +551,10 @@ def train(config: Dict):
 
     # Create model
     rngs = nnx.Rngs(config.get('seed', 42))
-    model = Nequip(
+    model = RACE(
         n_species=len(config["atomic_numbers"]),
         hidden_size=config["hidden_size"],
+        cutoff=config["cutoff"],
         lmax=config["lmax"],
         n_layers=config["n_layers"],
         radial_basis_size=config["radial_basis_size"],

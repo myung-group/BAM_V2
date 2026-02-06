@@ -1,6 +1,6 @@
-"""NequIP model implementation using Flax NNX.
+"""RACE model implementation using Flax NNX.
 
-This module implements the NequIP (Neural Equivariant Interatomic Potential) model
+This module implements the RACE model
 using Flax NNX framework with e3nn_jax for equivariant operations.
 """
 
@@ -13,157 +13,18 @@ import flax.nnx as nnx
 import jax
 import jax.numpy as jnp
 import jraph
-
-from bam_nequip.linear_nnx import Linear as e3nn_nnx_Linear
-
-
-def bessel_basis(x: jax.Array, num_basis: int, r_max: float) -> jax.Array:
-    """Compute Bessel radial basis functions.
-
-    Args:
-        x: Distance array of shape (n_edges,)
-        num_basis: Number of basis functions
-        r_max: Cutoff radius
-
-    Returns:
-        Bessel basis values of shape (n_edges, num_basis)
-    """
-    prefactor = 2.0 / r_max
-    bessel_weights = jnp.linspace(1.0, num_basis, num_basis) * jnp.pi
-    x = x[:, None]
-    return prefactor * jnp.where(
-        x == 0.0,
-        bessel_weights / r_max,
-        jnp.sin(bessel_weights * x / r_max) / x,
-    )
+from bam_3bpa.nequip_nnx import bessel_basis, polynomial_cutoff, separated_layer_norm, MLP
+from bam_3bpa.linear_nnx import Linear as e3nn_nnx_Linear
 
 
-def polynomial_cutoff(x: jax.Array, r_max: float, p: float) -> jax.Array:
-    """Compute polynomial cutoff function.
-
-    Args:
-        x: Distance array
-        r_max: Cutoff radius
-        p: Polynomial order
-
-    Returns:
-        Cutoff values (smoothly goes to zero at r_max)
-    """
-    factor = 1.0 / r_max
-    x = x * factor
-    out = 1.0
-    out = out - (((p + 1.0) * (p + 2.0) / 2.0) * jnp.power(x, p))
-    out = out + (p * (p + 2.0) * jnp.power(x, p + 1.0))
-    out = out - ((p * (p + 1.0) / 2) * jnp.power(x, p + 2.0))
-    return out * jnp.where(x < 1.0, 1.0, 0.0)
-
-
-def separated_layer_norm (
-    input: e3nn.IrrepsArray
-)->e3nn.IrrepsArray:
-
-    xi_s = jnp.zeros ( (input.shape[0], 1) )
-    cnt  = 0
-    for (mul, ir), chunk in zip (input.irreps, input.chunks):
-        if not ir.is_scalar():
-            xi = chunk.reshape(-1,mul*ir.dim)
-            xi_s += jnp.sum(xi**2, axis=-1, keepdims=True)
-            cnt  += mul*ir.dim
-    xi_rms = jnp.sqrt ( xi_s/cnt )
-
-    new_chunks = []
-    for (mul, ir), chunk in zip (input.irreps, input.chunks):
-        if ir.is_scalar():
-            xi = chunk.reshape(-1,mul)
-            xi_centered = xi - jnp.mean(xi, axis=-1, keepdims=True)
-            xi_rms = jnp.sqrt (jnp.mean(xi_centered**2, axis=-1, keepdims=True)+1e-6)
-            chunk = (xi_centered/xi_rms).reshape(-1, mul, ir.dim)
-        else:
-            xi = chunk.reshape(-1,mul*ir.dim)
-            chunk = (xi/xi_rms).reshape(-1, mul, ir.dim)
-
-        new_chunks.append(chunk)
-
-    return e3nn.from_chunks(
-        input.irreps,
-        new_chunks,
-        (input.shape[0],)
-    )
-
-class Linear(nnx.Module):
-    """Simple linear layer with optional bias."""
-
-    def __init__(
-        self,
-        in_size: int,
-        out_size: int,
-        use_bias: bool = True,
-        init_scale: float = 1.0,
-        *,
-        rngs: nnx.Rngs,
-    ):
-        scale = math.sqrt(init_scale / in_size)
-        self.weights = nnx.Param(
-            jax.random.normal(rngs.params(), (in_size, out_size)) * scale
-        )
-        self.use_bias = use_bias
-        self.bias: nnx.Param[jax.Array] | None
-        if use_bias:
-            self.bias = nnx.Param(jnp.zeros(out_size))
-        else:
-            self.bias = None
-
-    def __call__(self, x: jax.Array) -> jax.Array:
-        x = jnp.dot(x, self.weights[...])
-        if self.use_bias:
-            x = x + self.bias[...]
-        return x
-
-
-class MLP(nnx.Module):
-    """Multi-layer perceptron with configurable activation."""
-
-    def __init__(
-        self,
-        sizes: Sequence[int],
-        activation: Callable = jax.nn.silu,
-        init_scale: float = 1.0,
-        use_bias: bool = False,
-        *,
-        rngs: nnx.Rngs,
-    ):
-        self.activation = activation
-        layers = []
-
-        for i in range(len(sizes) - 1):
-            layer = Linear(
-                sizes[i],
-                sizes[i + 1],
-                use_bias=use_bias,
-                # don't scale last layer since no activation
-                init_scale=init_scale if i < len(sizes) - 2 else 1.0,
-                rngs=rngs,
-            )
-            layers.append(layer)
-
-        self.layers = nnx.List(layers)
-        #self.layers = layers
-
-    def __call__(self, x: jax.Array) -> jax.Array:
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
-            if i < len(self.layers) - 1:
-                x = self.activation(x)
-        return x
-
-
-class NequipConvolution(nnx.Module):
-    """NequIP convolution layer with equivariant message passing."""
+class RACEConvolution(nnx.Module):
+    """RACE convolution layer with equivariant message passing."""
 
     def __init__(
         self,
         input_irreps: e3nn.Irreps,
         output_irreps: e3nn.Irreps,
+        x_irreps: e3nn.Irreps,
         sh_irreps: e3nn.Irreps,
         n_species: int,
         radial_basis_size: int,
@@ -202,9 +63,17 @@ class NequipConvolution(nnx.Module):
             f"{output_irreps.num_irreps - output_irreps.count('0e')}x0e"
         )
         gated_output_irreps = (output_irreps + gate_irreps).regroup()
+        '''
+        self.full_tp = FullyConnectedTensorProduct (
+                irreps_in1=tp_irreps,
+                irreps_in2=x_irreps,
+                irreps_out=output_irreps,
+                rngs=rngs)
+        '''
 
         self.linear_2 = e3nn_nnx_Linear(
             irreps_in=tp_irreps,
+            #irreps_in=output_irreps,
             irreps_out=gated_output_irreps,
             rngs=rngs,
         )
@@ -219,16 +88,31 @@ class NequipConvolution(nnx.Module):
             rngs=rngs,
         )
 
+        output_irreps_2 = output_irreps//2
+        self.readout1 = e3nn_nnx_Linear(
+            irreps_in=output_irreps,
+            irreps_out=output_irreps_2,
+            biases=True, # willow
+            rngs=rngs,
+        )
+        self.readout = e3nn_nnx_Linear(
+            irreps_in=output_irreps_2,
+            irreps_out=e3nn.Irreps("0e"),
+            biases=True, # willow
+            rngs=rngs,
+        )
+
     def __call__(
         self,
         features: e3nn.IrrepsArray,
+        x_feats: e3nn.IrrepsArray,
         species: jax.Array,
         sh: e3nn.IrrepsArray,
         radial_basis: jax.Array,
         senders: jax.Array,
         receivers: jax.Array,
     ) -> e3nn.IrrepsArray:
-        # follow equiformer_v2
+
         features_norm = separated_layer_norm (features)
         messages = self.linear_1(features_norm)[senders]
         messages = e3nn.tensor_product(messages, sh, filter_ir_out=self.output_irreps)
@@ -239,19 +123,27 @@ class NequipConvolution(nnx.Module):
             messages, dst=receivers, output_size=features.shape[0]
         ) / jnp.sqrt(self.avg_n_neighbors)
 
+        #messages_agg = self.full_tp (messages_agg, x_feats)
+        messages_agg = e3nn.tensor_product(messages_agg, x_feats, filter_ir_out=self.output_irreps)
+
         features = self.linear_2(messages_agg) + self.skip(species, features)
 
-        # follow equiformer
-        return e3nn.gate(
+        features = e3nn.gate(
             features,
             even_act=jax.nn.silu,
             odd_act=jax.nn.sigmoid,
+            #odd_act=jax.nn.tanh,
             even_gate_act=jax.nn.silu,
         )
 
+        node_energies = self.readout1(features)
+        node_energies = self.readout(node_energies)
 
-class Nequip(nnx.Module):
-    """NequIP model for predicting energies and forces.
+        return node_energies, features
+
+
+class RACE(nnx.Module):
+    """RACE model for predicting energies and forces.
 
     Neural Equivariant Interatomic Potential using E(3)-equivariant
     graph neural networks.
@@ -299,6 +191,7 @@ class Nequip(nnx.Module):
         self.n_species = n_species
         self.radial_basis_size = radial_basis_size
         self.radial_polynomial_p = radial_polynomial_p
+        self.n_layers = n_layers
 
         # Store trainable scale parameters
         self.shift = nnx.Param(jnp.array(shift))
@@ -311,6 +204,16 @@ class Nequip(nnx.Module):
             self.atom_energies = nnx.Param(jnp.zeros(n_species, dtype=jnp.float32))
 
         input_irreps = e3nn.Irreps(f"{hidden_size}x0e")
+        x_irreps = e3nn.Irreps("1x0e")
+        self.x_linear = e3nn_nnx_Linear(
+            irreps_in=input_irreps,
+            irreps_out=x_irreps,
+            linear_type="indexed",
+            num_indexed_weights=n_species,
+            force_irreps_out=True,
+            rngs=rngs,
+        )
+
         sh_irreps = e3nn.s2_irreps(lmax)
         hidden_irreps = hidden_size * e3nn.s2_irreps(lmax)
 
@@ -322,9 +225,10 @@ class Nequip(nnx.Module):
 
         layers = []
         for i in range(n_layers):
-            layer = NequipConvolution(
+            layer = RACEConvolution(
                 input_irreps=input_irreps if i == 0 else hidden_irreps,
                 output_irreps=hidden_irreps,
+                x_irreps=x_irreps,
                 sh_irreps=sh_irreps,
                 n_species=n_species,
                 radial_basis_size=radial_basis_size,
@@ -339,19 +243,6 @@ class Nequip(nnx.Module):
         self.layers = nnx.List(layers)
         #self.layers = layers
 
-        hidden_irreps_2 = (hidden_size//2) * e3nn.s2_irreps(lmax)
-        self.readout1 = e3nn_nnx_Linear(
-            irreps_in=hidden_irreps,
-            irreps_out=hidden_irreps_2,
-            biases=True, # willow
-            rngs=rngs,
-        )
-        self.readout = e3nn_nnx_Linear(
-            irreps_in=hidden_irreps_2,
-            irreps_out=e3nn.Irreps("0e"),
-            biases=True, # willow
-            rngs=rngs,
-        )
 
     def node_energies(self, positions: jax.Array, data: jraph.GraphsTuple) -> jax.Array:
         """Compute per-node energies.
@@ -369,6 +260,7 @@ class Nequip(nnx.Module):
             jax.nn.one_hot(data.nodes["species"], self.n_species),
         )
         features = self.species_embedding (features)
+        x_feats = self.x_linear(data.nodes["species"], features)
 
         r = positions[data.senders] - positions[data.receivers]
 
@@ -393,19 +285,21 @@ class Nequip(nnx.Module):
             normalization="component",
         )
 
+        outputs = []
         for layer in self.layers:
-            features = layer(
+            node_energies, features = layer(
                 features,
+                x_feats,
                 data.nodes["species"],
                 sh,
                 radial_basis,
                 data.senders,
                 data.receivers,
             )
+            outputs += [node_energies.array[:,0]]
 
-        features = self.readout1(features)
-        node_energies = self.readout(features)
-
+        node_energies = jnp.sum(jnp.stack(outputs, axis=1), axis=-1, keepdims=True)
+        node_energies = e3nn.IrrepsArray(e3nn.Irreps("0e"), node_energies)
         # scale and shift energies
         node_energies = node_energies * (
             self.scale[...]
@@ -416,7 +310,7 @@ class Nequip(nnx.Module):
             self.atom_energies[...][data.nodes["species"], None]
         )
 
-        return node_energies
+        return node_energies.array
 
     def __call__(self, data: jraph.GraphsTuple) -> tuple[jax.Array, jax.Array]:
         """Compute energies and forces for a batch of graphs.
@@ -431,7 +325,7 @@ class Nequip(nnx.Module):
         """
         # compute forces as gradient of total energy
         def total_energy_fn(positions: jax.Array) -> tuple[jax.Array, jax.Array]:
-            node_energies = self.node_energies(positions, data).array
+            node_energies = self.node_energies(positions, data)
             return jnp.sum(node_energies), node_energies
 
         grad_fn = jax.grad(total_energy_fn, has_aux=True)
@@ -471,143 +365,6 @@ def node_graph_idx(data: jraph.GraphsTuple) -> jnp.ndarray:
     )
     return node_gr_idx
 
-
-def save_model(path: str, model: Nequip, config: dict):
-    """Save a model and its config to a file.
-
-    Args:
-        path: File path to save the model
-        model: NequIP model instance
-        config: Model configuration dictionary
-    """
-    import pickle
-
-    # Get the model state (parameters only)
-    graphdef, state = nnx.split(model)
-
-    # Convert state to a serializable format
-    state_dict = {}
-    for path_tuple, value in state.flat_state().items():
-        # Convert path tuple to string key
-        key = '/'.join(str(p) for p in path_tuple)
-        if hasattr(value, 'value'):
-            state_dict[key] = value.value
-        else:
-            state_dict[key] = value
-
-    with open(path, "wb") as f:
-        config_str = json.dumps(config)
-        f.write((config_str + "\n").encode())
-        # Use pickle for reliable array serialization
-        pickle.dump(state_dict, f)
-
-
-def load_model(path: str) -> tuple[Nequip, dict]:
-    """Load a model and its config from a file.
-
-    Args:
-        path: File path to load the model from
-
-    Returns:
-        Tuple of (model, config)
-    """
-    import pickle
-
-    with open(path, "rb") as f:
-        config = json.loads(f.readline().decode())
-        state_dict = pickle.load(f)
-
-    # Create model with dummy rngs
-    model = Nequip(
-        n_species=len(config["atomic_numbers"]),
-        hidden_size=config["hidden_size"],
-        lmax=config["lmax"],
-        n_layers=config["n_layers"],
-        radial_basis_size=config["radial_basis_size"],
-        radial_mlp_size=config["radial_mlp_size"],
-        radial_mlp_layers=config["radial_mlp_layers"],
-        radial_polynomial_p=config["radial_polynomial_p"],
-        mlp_init_scale=config["mlp_init_scale"],
-        rngs=nnx.Rngs(0),
-    )
-
-    # Get the model's state structure
-    graphdef, state = nnx.split(model)
-    flat_state = state.flat_state()
-
-    # Update with loaded values
-    for path_tuple, var in flat_state.items():
-        key = '/'.join(str(p) for p in path_tuple)
-        if key in state_dict:
-            if hasattr(var, 'value'):
-                var.value = state_dict[key]
-
-    # Reconstruct model
-    state = nnx.State.from_flat_path(flat_state)
-    model = nnx.merge(graphdef, state)
-
-    return model, config
-
-
-# Alternative serialization using orbax (recommended for production)
-def save_model_orbax(path: str, model: Nequip, config: dict):
-    """Save model using orbax checkpointing (more robust).
-
-    Requires: pip install orbax-checkpoint
-
-    Args:
-        path: Directory path to save the checkpoint
-        model: NequIP model instance
-        config: Model configuration dictionary
-    """
-    import orbax.checkpoint as ocp
-
-    _, state = nnx.split(model)
-
-    checkpointer = ocp.StandardCheckpointer()
-    checkpointer.save(
-        path,
-        {
-            "state": state,
-            "config": config,
-        }
-    )
-
-
-def load_model_orbax(path: str) -> tuple[Nequip, dict]:
-    """Load model using orbax checkpointing.
-
-    Args:
-        path: Directory path to load the checkpoint from
-
-    Returns:
-        Tuple of (model, config)
-    """
-    import orbax.checkpoint as ocp
-
-    checkpointer = ocp.StandardCheckpointer()
-    restored = checkpointer.restore(path)
-    config = restored["config"]
-
-    # Create model structure
-    model = Nequip(
-        n_species=len(config["atomic_numbers"]),
-        hidden_size=config["hidden_size"],
-        lmax=config["lmax"],
-        n_layers=config["n_layers"],
-        radial_basis_size=config["radial_basis_size"],
-        radial_mlp_size=config["radial_mlp_size"],
-        radial_mlp_layers=config["radial_mlp_layers"],
-        radial_polynomial_p=config["radial_polynomial_p"],
-        mlp_init_scale=config["mlp_init_scale"],
-        rngs=nnx.Rngs(0),
-    )
-
-    # Merge with restored state
-    graphdef, _ = nnx.split(model)
-    model = nnx.merge(graphdef, restored["state"])
-
-    return model, config
 
 
 # =============================================================================
@@ -707,7 +464,7 @@ if __name__ == "__main__":
     from ase.io import read
 
     print("=" * 70)
-    print("Nequip-Style Equivariant Potential")
+    print("RACE-Style Equivariant Potential")
     print("=" * 70)
 
     uniq_element = {z: i for i, z in enumerate([1, 6, 7, 8])}
@@ -733,7 +490,7 @@ if __name__ == "__main__":
 
     # Create model
     rngs = nnx.Rngs(42)
-    model = Nequip(
+    model = RACE(
         n_species=4,
         lmax=3,
         cutoff=5.0,

@@ -985,7 +985,7 @@ if __name__ == "__main__":
     import json
     from pathlib import Path
 
-    config_path = Path('input_nequip.json')
+    config_path = Path('input/input_3bpa.json')
     if config_path.exists():
         print(f"Loading config from {config_path}")
         with open(config_path) as f:

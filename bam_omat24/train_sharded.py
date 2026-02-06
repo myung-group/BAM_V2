@@ -115,7 +115,7 @@ def compute_loss(
     energy, forces, stress = model(batch)
 
     # Energy loss
-    energy_diff = (energy - batch.globals["energy"])/batch.n_node
+    energy_diff = (energy - batch.globals["energy"])/jnp.maximum(batch.n_node, 1)
     energy_loss = huber_loss(energy_diff, delta=huber_delta)
     energy_loss = jnp.sum(energy_loss * graph_mask) / n_graphs
     energy_mse = jnp.sum(energy_diff ** 2 * graph_mask) / n_graphs
@@ -171,13 +171,15 @@ def squeeze_batch(batch: jraph.GraphsTuple) -> jraph.GraphsTuple:
     def squeeze_dict(d):
         if d is None:
             return None
-        return {k: squeeze_array(v) for k, v in d.items()}
+        # For globals, ensure proper squeezing of all arrays
+        return {k: jnp.squeeze(v) if hasattr(v, 'shape') and 1 in v.shape[:2] else v
+                for k, v in d.items()}
 
     return jraph.GraphsTuple(
         n_node=squeeze_array(batch.n_node),
         n_edge=squeeze_array(batch.n_edge),
-        nodes=squeeze_dict(batch.nodes),
-        edges=squeeze_dict(batch.edges),
+        nodes=squeeze_dict(batch.nodes) if isinstance(batch.nodes, dict) else squeeze_array(batch.nodes),
+        edges=squeeze_dict(batch.edges) if isinstance(batch.edges, dict) else squeeze_array(batch.edges),
         globals=squeeze_dict(batch.globals),
         senders=squeeze_array(batch.senders),
         receivers=squeeze_array(batch.receivers),
@@ -195,7 +197,8 @@ def make_sharded_train_step(
     force_weight: float = 1.0,
     stress_weight: float = 1.0,
     huber_delta: float = 0.1,
-    ema_decay: float = 0.99
+    ema_decay: float = 0.99,
+    freeze_mask: Any = None
 ):
     """Create sharded training step with gradient synchronization.
 
@@ -203,6 +206,11 @@ def make_sharded_train_step(
     - Each device processes its own batch (indexed by leading dimension)
     - Gradients are synchronized via pmean across the 'dp' axis
     - Parameters are updated identically on all devices
+
+    Args:
+        freeze_mask: Optional pytree of bools matching params structure.
+            If provided, EMA is only applied to trainable (False) leaves.
+            Frozen(True) leaves keep their original values in the EMA state.
     """
 
     def per_device_step(graphdef, params, opt_state, schedule_state, ema_params, step, batch):
@@ -231,24 +239,24 @@ def make_sharded_train_step(
             updates, new_opt = optimizer.update(grads, opt_state, params)
             updates = optax.tree_utils.tree_scale(schedule_state.scale, updates)
             new_p = optax.apply_updates(params, updates)
-            new_ema = jax.tree.map(
-                lambda ema, p: ema_decay * ema + (1 - ema_decay) * p,
-                ema_params, new_p
-            )
+            if freeze_mask is not None:
+                # Only apply EMA to trainable params; frozen params keep current values
+                new_ema = jax.tree.map(
+                    lambda ema, p, m: jnp.where(
+                        m, #
+                        ema, # Freeze
+                        ema_decay * ema + (1 - ema_decay) * p),
+                        ema_params, new_p, freeze_mask
+                )
+            else:
+                new_ema = jax.tree.map(
+                    lambda ema, p: ema_decay * ema + (1 - ema_decay) * p,
+                    ema_params, new_p
+                )
             return new_p, new_opt, new_ema
 
         # Use jax.lax.cond for JAX-traceable conditional
         new_params, new_opt_state, new_ema_params = apply_update(None)
-        '''
-        jax.lax.cond(
-            #grad_norm < 1.0,  # condition
-            frc_mse < 10.0,
-            apply_update,     # true branch
-            skip_update,      # false branch
-            operand=None      # dummy operand
-        )
-        '''
-
         metrics = {
             'loss': loss,
             'grad_norm': grad_norm,
@@ -308,7 +316,7 @@ def make_sharded_evaluate_step(mesh: Mesh, huber_delta: float):
         model = nnx.merge(graphdef, params)
         energy, forces, stress = model(batch)
 
-        energy_diff = (energy - batch.globals["energy"])/batch.n_node
+        energy_diff = (energy - batch.globals["energy"])/jnp.maximum(batch.n_node,1)
         energy_loss = huber_loss(energy_diff, delta=huber_delta)
         forces_diff = forces - batch.nodes["forces"]
         force_loss = huber_loss(forces_diff, delta=huber_delta)
@@ -559,7 +567,6 @@ def train_sharded(config: Dict, train_files_pkl: List[str], valid_files_pkl: Lis
 
     # Training loop
     best_state = None
-    #n_val = 0
 
     for epoch in range(config["n_epochs"]):
         epoch_start = time.time()
@@ -633,12 +640,6 @@ def train_sharded(config: Dict, train_files_pkl: List[str], valid_files_pkl: Lis
                   f"F_LOSS: {force_loss:.6f} | "
                   f"S_LOSS: {stress_loss:.6f} | "
                   f"Grad: {acc_grad/max(acc_graphs,1):.4f}", file=fout)
-
-            # Reset accumulators
-            acc_energy_loss, acc_force_loss, acc_stress_loss = 0., 0., 0.
-            acc_graphs, acc_atoms, acc_grad = 0., 0., 0.
-            dataset_start = time.time()
-
 
             # Validation (sharded across all GPUs)
             val_start = time.time()

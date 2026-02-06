@@ -120,7 +120,7 @@ results from Batatia et al. in ["MACE: Higher Order Equivariant Message
 Passing Neural Networks for Fast and Accurate Force
 Fields"](https://arxiv.org/abs/2206.07697), using a version of their [`mace`](https://github.com/ACEsuit/mace) repository.
 
-We use the same hyperparameters as [1], which can be viewed in [`configs/3bpa.yml`](configs/3bpa.yml), with the following exceptions:
+We use the same hyperparameters as [1], which can be viewed in [`input/input_3bpa.json`](input/input_3bpa.json), with the following exceptions:
 
  * Instead of hidden irreps of `64x0e + 64x0o + 64x1o + 64x1e + 64x2e + 64x2o +
     64x3o + 64x3e`, we opt for `128x0e + 128x1o + 128x2e + 128x3o` for simplicity

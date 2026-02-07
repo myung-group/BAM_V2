@@ -230,9 +230,11 @@ class BucketedDataLoader(nnx.Object):
                 curr_idx += 1
                 graphs.append(curr_graph)
 
-            self.bucket_idx = curr_idx
-
-            return self.collate_fn(graphs, self.batch_size)
+            if len(graphs) > 0:
+                self.bucket_idx = curr_idx
+                return self.collate_fn(graphs, self.batch_size)
+            else:
+                raise StopIteration
 
         raise StopIteration
 

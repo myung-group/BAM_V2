@@ -76,6 +76,18 @@ Resulting energy (E) and force (F) RMSE in meV and meV/Å respectively.
 | 1200 K E     | *29.06* | **27.71**  |  29.8  |
 | 1200 K F     | 65.07 | **59.59** |   *62.0* |
 
+Resulting energy (E) and force (F) RMSE in meV and meV/Å respectively.
+
+| Code       | `RACE` (race_nnx_7.py) | `RACE` (Paper) | `MACE` (Paper) | `VISNet` (Paper) | 
+|------------|------|----------|-----------|-----------|
+| Aspirin E  | *2.15* | 3.3 | 2.2 | **1.9** |
+| Aspirin F  | *7.14* | 9.6 | **6.6** | **6.6** |
+| Ethanol E  | 0.82 | 0.8 | *0.4* | **0.3** |
+| Ethanol F  | 2.52 | 3.6 | **2.1** |  *2.3*  |
+| Toluene E  | 1.05 | 0.6 | *0.5* |  **0.3**  |
+| Toluene F  | 2.27 | 2.7 | *1.5* |   **1.1** |
+
+
 ## Citation
 
 If you use this code, please cite the original NequIP paper:

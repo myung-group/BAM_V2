@@ -425,7 +425,7 @@ class Nequip(nnx.Module):
         sh_irreps = e3nn.s2_irreps(lmax)
 
         self.species_embedding = e3nn_nnx_Linear(
-            irreps_in=e3nn.Irreps(f"{n_species+1}x0e"),
+            irreps_in=e3nn.Irreps(f"{n_species}x0e"),
             irreps_out=input_irreps,
             rngs=rngs,
         )
@@ -484,7 +484,7 @@ class Nequip(nnx.Module):
             Per-node energies of shape (n_atoms, 1)
         """
         # Compute edge features using shared utility
-        features, radial_basis, sh, bonds_per_node = compute_node_edge_features(
+        features, radial_basis, sh = compute_node_edge_features(
             positions=positions,
             cell=cell,
             cutoff=cutoff,
@@ -541,8 +541,11 @@ class Nequip(nnx.Module):
         assert "species" in data.nodes, "Nodes must have 'species'"
         
         n_graphs = data.n_node.shape[0]
-        node_mask = jraph.get_node_padding_mask(data)
-
+        if n_graphs > 1:
+            node_mask = jraph.get_node_padding_mask(data)
+        else:
+            node_mask = jnp.ones (data.nodes['positions'].shape[0])
+            
         if self.periodic:
             assert "cell" in data.globals, "Periodic systems require 'cell' in globals"
             assert "cutoff" in data.globals, "Periodic systems require 'cutoff' in globals"
@@ -639,7 +642,7 @@ if __name__ == "__main__":
     import pickle
     from bam_omat24.atom_energies import ATOM_ENERGIES
 
-    logging.basicConfig(level=logging.INFO)
+    #logging.basicConfig(level=logging.INFO)
     
     print("=" * 70)
     print("Nequip-Style Equivariant Potential")

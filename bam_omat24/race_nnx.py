@@ -17,11 +17,12 @@ import jax
 import jax.numpy as jnp
 import jraph
 
-from bam_omat24.nequip_nnx import (
+from bam_omat24.utils import (
     separated_layer_norm,
     MLP,
     node_graph_idx,
     compute_node_edge_features,
+    energy_forces_stress,
 )
 from bam_omat24.linear_nnx import Linear as e3nn_nnx_Linear
 
@@ -427,92 +428,10 @@ class RACE(nnx.Module):
                           (Voigt: xx, yy, zz, yz, xz, xy)
                           Zero for molecular systems.
         """
-        # Input validation
-        assert data.nodes is not None, "Graph must have nodes"
-        assert "positions" in data.nodes, "Nodes must have 'positions'"
-        assert "species" in data.nodes, "Nodes must have 'species'"
-        
-        n_graphs = data.n_node.shape[0]
-        if n_graphs > 1:
-            node_mask = jraph.get_node_padding_mask(data)
-        else:
-            node_mask = jnp.ones (data.nodes['positions'].shape[0])
-
-        if self.periodic:
-            assert "cell" in data.globals, "Periodic systems require 'cell' in globals"
-            assert "cutoff" in data.globals, "Periodic systems require 'cutoff' in globals"
-            
-            # Periodic: differentiate w.r.t. positions AND cell
-            def total_energy_fn(
-                positions: jax.Array,
-                cell: jax.Array,
-                cutoff: jax.Array
-            ) -> Tuple[jax.Array, jax.Array]:
-                node_energies = self.node_energies(positions, cell, cutoff, data)
-                node_energies = jnp.where(node_mask[:, None], node_energies, 0.0)
-                return jnp.sum(node_energies), node_energies
-
-            grad_fn = jax.grad(total_energy_fn, argnums=(0, 1), has_aux=True)
-            (grad, cellgrad), node_energies = grad_fn(
-                data.nodes["positions"],
-                data.globals["cell"],
-                data.globals["cutoff"]
-            )
-        else:
-            # Molecular: differentiate w.r.t. positions only
-            def total_energy_fn(positions: jax.Array) -> Tuple[jax.Array, jax.Array]:
-                node_energies = self.node_energies(positions, None, None, data)
-                node_energies = jnp.where(node_mask[:, None], node_energies, 0.0)
-                return jnp.sum(node_energies), node_energies
-
-            grad_fn = jax.grad(total_energy_fn, has_aux=True)
-            grad, node_energies = grad_fn(data.nodes["positions"])
-
-        if not self.l_train:
-            # Add isolated atom energies to each node as prior
-            node_energies = node_energies + jax.lax.stop_gradient(
-                self.atom_energies[...][data.nodes["species"], None]
-            )
-
-        # Apply mask to gradients for padded graphs
-        if n_graphs > 1:
-            grad = jnp.where(node_mask[:, None], grad, 0.0)
-
-        # Handle any NaN forces from numerical issues
-        grad = jnp.where(jnp.isnan(grad), 0.0, grad)
-
-        # Compute total energies across each subgraph
-        graph_energies = jraph.segment_sum(
-            node_energies,
-            node_graph_idx(data),
-            num_segments=n_graphs,
-            indices_are_sorted=True,
+        return energy_forces_stress(
+            self.node_energies, data, self.periodic,
+            self.l_train, self.atom_energies[...],
         )
-
-        if self.periodic:
-            # Stress for periodic systems
-            cellgrad = jnp.where(jnp.isnan(cellgrad), 0.0, cellgrad)
-
-            volume = data.globals["volume"]
-            volume = jnp.where(volume > 0.0, volume, 1.0)
-            stress_cell = (
-                jnp.transpose(cellgrad, (0, 2, 1)) @ data.globals["cell"]
-            )
-
-            stress_grad = jnp.einsum("iu,iv->iuv", grad, data.nodes["positions"])
-            stress_grad = jraph.segment_sum(
-                stress_grad,
-                node_graph_idx(data),
-                num_segments=n_graphs,
-                indices_are_sorted=True,
-            )
-            virial = (stress_cell + stress_grad).reshape(-1, 9)[:, [0, 4, 8, 5, 2, 1]]
-            stress = virial / volume[:, None]
-        else:
-            # No stress for molecular systems
-            stress = jnp.zeros((n_graphs, 6))
-
-        return graph_energies[:, 0], -grad, stress
 
 
 if __name__ == "__main__":

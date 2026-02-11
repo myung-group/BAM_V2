@@ -30,15 +30,15 @@ from pathlib import Path
 
 from bam_omat24.data_nnx import Dataset, BucketedDataLoader, MultiDeviceDataLoader
 from bam_omat24.race_nnx import RACE
-from bam_omat24.train_sharded import (
-    setup_mesh,
+from bam_omat24.data_nnx import setup_mesh
+from bam_omat24.training_utils import (
     replicate,
     replicate_pytree,
     unreplicate_pytree,
     make_sharded_train_step,
     evaluate_sharded,
     save_checkpoint,
-    load_checkpoint
+    load_checkpoint,
 )
 from bam_omat24.finetuning_nnx import (
     FineTuningPotential,

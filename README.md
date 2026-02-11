@@ -1,15 +1,14 @@
-# BAM-NequIP
+# BAM(V2)
 
-A JAX/Flax implementation of NequIP (Neural Equivariant Interatomic Potentials) using the Flax NNX API and e3nn-jax for equivariant operations.
+A JAX/Flax implementation of RACE and NequIP (Neural Equivariant Interatomic Potentials) using the Flax NNX API and e3nn-jax for equivariant operations.
 
 ## Overview
 
-A modified version of NequIP is an E(3)-equivariant graph neural network architecture for learning interatomic potentials. This implementation provides:
+A modified version of RACE is an E(3)-equivariant graph neural network architecture for learning interatomic potentials. This implementation provides:
 
 - **Flax NNX API**: Modern, Pythonic neural network implementation
 - **e3nn-jax**: Efficient equivariant operations using spherical harmonics
 - **JIT compilation**: Full JAX JIT support for fast training and inference
-- **Scan-based training**: Optional `jax.lax.scan` for reduced Python overhead
 - **EMA weights**: Exponential moving average for stable training
 - **separated layer normalization**: to stabilize training
 
@@ -27,8 +26,8 @@ A modified version of NequIP is an E(3)-equivariant graph neural network archite
 
 ```bash
 # Clone the repository
-git clone https://github.com/myung-group/BAM-nequip.git
-cd BAM-nequip
+git clone https://github.com/myung-group/BAM_V2.git
+cd BAM_V2
 
 # Install dependencies
 pip install -e .
@@ -50,7 +49,7 @@ pip install -e .
 ### Training
 
 1. Prepare your dataset in extended XYZ format with energy and forces.
-2. Create a configuration file (see `input_nequip.json` for an example):
+2. Create a configuration file (see `input/input_3bpa.json` for an example):
 
 ```json
 {
@@ -109,13 +108,13 @@ The model consists of:
 ### Comparison with other codes
 
 In order to verify correctness of the implementation, we compare performance on
-the 3BPA dataset to two different PyTorch NequIP implementations: 
+the 3BPA dataset to two different PyTorch NequIP implementations:
 
 1. The results from Musaelian et al. in ["Learning local equivariant
 
 representations for large-scale atomistic
 dynamics"]([https://www.nature.com/articles/s41467-023-36329-y](https://www.nature.com/articles/s41467-023-36329-y)), using a version
-of their `[nequip](https://github.com/mir-group/nequip)` repository.  
+of their `[nequip](https://github.com/mir-group/nequip)` repository.
 2. The
 results from Batatia et al. in ["MACE: Higher Order Equivariant Message
 Passing Neural Networks for Fast and Accurate Force
@@ -126,7 +125,7 @@ We use the same hyperparameters as [1], which can be viewed in `[input/input_3bp
 - Instead of hidden irreps of `64x0e + 64x0o + 64x1o + 64x1e + 64x2e + 64x2o +  64x3o + 64x3e`, we opt for `128x0e + 128x1o + 128x2e + 128x3o` for simplicity
  with the same feature dimensions.
 - We use Kaiming normal, i.e. sampling from $\mathcal{N}(0, \mathrm{std})$ with $\mathrm{std} =
- \sqrt{\frac{4.0}{\mathrm{fan_in}}}$. 
+ \sqrt{\frac{4.0}{\mathrm{fan_in}}}$.
 - Isolated atom energies are added to each predicted node energy.
 
 Resulting energy (E) and force (F) RMSE in meV and meV/Å respectively.

@@ -76,21 +76,22 @@ def compute_loss(
     energy, forces, stress = model(batch)
 
     # Energy loss
-    energy_diff = (energy - batch.globals["energy"])/jnp.maximum(batch.n_node, 1)
+    n_node = jnp.maximum(batch.n_node, 1)
+    energy_diff = (energy-batch.globals["energy"]) * graph_mask/n_node
     energy_loss = huber_loss(energy_diff, delta=huber_delta)
-    energy_loss = jnp.sum(energy_loss * graph_mask) / n_graphs
-    energy_mse = jnp.sum(energy_diff ** 2 * graph_mask) / n_graphs
+    energy_loss = jnp.sum(energy_loss) / n_graphs
+    energy_mse = jnp.sum(energy_diff ** 2) / n_graphs
 
     # Force loss
-    forces_diff = forces - batch.nodes["forces"]
+    forces_diff = (forces - batch.nodes["forces"]) * node_mask[:, None]
     force_loss = huber_loss(forces_diff, delta=huber_delta)
-    force_loss = jnp.sum(force_loss * node_mask[:, None]) / (3 * n_atoms)
-    force_mse = jnp.sum(forces_diff ** 2 * node_mask[:, None]) / (3 * n_atoms)
+    force_loss = jnp.sum(force_loss) / (3 * n_atoms)
+    force_mse = jnp.sum(forces_diff ** 2) / (3 * n_atoms)
 
     # Stress loss
     stress_diff = (stress - batch.globals["stress"]) * graph_mask[:, None]
-    stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta) * graph_mask[:, None]) / n_graphs
-    stress_mse = jnp.sum(stress_diff ** 2 * graph_mask[:, None]) / n_graphs
+    stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta) ) / n_graphs
+    stress_mse = jnp.sum(stress_diff ** 2) / n_graphs
 
     total_loss = energy_weight * energy_loss + force_weight * force_loss + stress_weight * stress_loss
 
@@ -275,23 +276,36 @@ def make_sharded_evaluate_step(mesh: Mesh, huber_delta: float):
         model = nnx.merge(graphdef, params)
         energy, forces, stress = model(batch)
 
-        energy_diff = (energy - batch.globals["energy"])/jnp.maximum(batch.n_node,1)
+        vmax_E = 5.0
+        n_node = jnp.maximum(batch.n_node, 1)
+        tgt_energy_per_node = vmax_E*jnp.tanh(batch.globals["energy"] / n_node / vmax_E)
+        prd_energy_per_node = vmax_E*jnp.tanh(energy /n_node / vmax_E)
+        energy_diff = (prd_energy_per_node - tgt_energy_per_node) * graph_mask
         energy_loss = huber_loss(energy_diff, delta=huber_delta)
-        forces_diff = forces - batch.nodes["forces"]
+
+        vmax_F = 10.0
+        tgt_forces = vmax_F*jnp.tanh (batch.nodes["forces"] / vmax_F)
+        prd_forces = vmax_F*jnp.tanh (forces / vmax_F)
+        forces_diff = (prd_forces - tgt_forces) * node_mask[:, None]
         force_loss = huber_loss(forces_diff, delta=huber_delta)
-        stress_diff = (stress - batch.globals["stress"]) * graph_mask[:, None]
+        
+        vmax_S = 0.5
+        tgt_stress = vmax_S * jnp.tanh (batch.globals["stress"] / vmax_S)
+        prd_stress = vmax_S * jnp.tanh (stress / vmax_S)
+        stress_diff = (prd_stress - tgt_stress) * graph_mask[:, None]
         stress_loss = huber_loss(stress_diff, delta=huber_delta)
+        
         # Return sums weighted by actual counts for proper aggregation
         return {
-            'energy_loss': jnp.sum(energy_loss * graph_mask),
-            'force_loss': jnp.sum(force_loss * node_mask[:, None]),
-            'stress_loss': jnp.sum(stress_loss * graph_mask[:, None]),
-            'energy_se': jnp.sum(energy_diff ** 2 * graph_mask),
-            'force_se': jnp.sum(forces_diff ** 2 * node_mask[:, None]),
-            'stress_se': jnp.sum(stress_diff ** 2 * graph_mask[:, None]),
-            'energy_ae': jnp.sum(jnp.abs(energy_diff) * graph_mask),
-            'force_ae': jnp.sum(jnp.abs(forces_diff) * node_mask[:, None]),
-            'stress_ae': jnp.sum(jnp.abs(stress_diff) * graph_mask[:, None]),
+            'energy_loss': jnp.sum(energy_loss),
+            'force_loss': jnp.sum(force_loss),
+            'stress_loss': jnp.sum(stress_loss),
+            'energy_se': jnp.sum(energy_diff ** 2),
+            'force_se': jnp.sum(forces_diff ** 2),
+            'stress_se': jnp.sum(stress_diff ** 2),
+            'energy_ae': jnp.sum(jnp.abs(energy_diff)),
+            'force_ae': jnp.sum(jnp.abs(forces_diff)),
+            'stress_ae': jnp.sum(jnp.abs(stress_diff)),
             'n_graphs': graph_mask.sum(),  # Actual count (not max with 1)
             'n_atoms': node_mask.sum(),    # Actual count
         }

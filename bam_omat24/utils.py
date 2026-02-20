@@ -279,7 +279,7 @@ def energy_forces_stress(
     Shared implementation used by Nequip, RACE, and FineTuningPotential.
 
     Args:
-        node_energy_fn: (positions, cell, cutoff, data) -> node_energies
+        node_energy_fn: (positions, cell, cutoff, data) -> dict(node_energies, node_features)
         data: Graph data structure
         periodic: Whether system is periodic
         l_train: Whether in training mode (affects atom energy handling)
@@ -310,7 +310,8 @@ def energy_forces_stress(
             cell: jax.Array,
             cutoff: jax.Array
         ) -> Tuple[jax.Array, jax.Array]:
-            ne = node_energy_fn(positions, cell, cutoff, data).reshape(-1)
+            results = node_energy_fn(positions, cell, cutoff, data)
+            ne = results["node_energies"].reshape(-1)
             ne = jnp.where(node_mask, ne, 0.0)
             return jnp.sum(ne), ne
 
@@ -322,7 +323,8 @@ def energy_forces_stress(
         )
     else:
         def total_energy_fn(positions: jax.Array) -> Tuple[jax.Array, jax.Array]:
-            ne = node_energy_fn(positions, None, None, data).reshape(-1)
+            results = node_energy_fn(positions, None, None, data)
+            ne = results["node_energies"].reshape(-1)
             ne = jnp.where(node_mask, ne, 0.0)
             return jnp.sum(ne), ne
 

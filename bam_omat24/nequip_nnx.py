@@ -282,7 +282,12 @@ class Nequip(nnx.Module):
         # Scale and shift energies
         node_energies = node_energies * self.scale[...] + self.shift[...]
 
-        return node_energies.array
+        return {
+            'node_energies': node_energies.array,
+            'node_features': features,
+            'sh': sh,
+            'radial_basis': radial_basis,
+        }
 
     def __call__(
         self, data: jraph.GraphsTuple

@@ -16,9 +16,8 @@
     "n_epochs": 10,
     "energy_weight": 1.0,
     "force_weight": 5.0,
-    "stress_weight": 1.0,
-    "huber_weight": 0.02,
-    "log_every": 100,
+    "stress_weight": 0.1,
+    "huber_weight": 0.05,
     "ema_decay": 0.99,
     "grad_clip": 1.0,
     "restart": false

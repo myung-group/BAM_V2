@@ -107,7 +107,6 @@ def train_finetuning_sharded(
         delta_scale=1.0,
         delta_shift=0.0,
         strategy='delta_1', # [delta_0, delta_1, delta_2]
-        freeze_foundation=True,
         rngs=rngs,
     )
 
@@ -138,6 +137,7 @@ def train_finetuning_sharded(
         lambda path, _: is_freeze(path),
         params
     )
+
     optimizer = optax.chain(
         optax.clip_by_global_norm(1.0),
         optax.amsgrad(config["learning_rate"]),

@@ -69,7 +69,10 @@ class RACEXReadout(nnx.Module):
         species: jax.Array,
         x_feats: e3nn.IrrepsArray,
     ) -> e3nn.IrrepsArray:
-        x_feats_norm = separated_layer_norm(x_feats) / jnp.sqrt(self.avg_n_neighbors)
+        if x_feats.irreps.dim > 1:
+            x_feats_norm = separated_layer_norm(x_feats) / jnp.sqrt(self.avg_n_neighbors)
+        else:
+            x_feats_norm = x_feats / jnp.sqrt(self.avg_n_neighbors)
         x_features = self.x_readout1(species, x_feats_norm)
         x_features = self.x_readout2(x_features)
         x_features = e3nn.gate(
@@ -408,7 +411,12 @@ class RACE(nnx.Module):
         # Scale and shift energies
         node_energies = node_energies * self.scale[...] + self.shift[...]
 
-        return node_energies.array
+        return {
+            'node_energies': node_energies.array,
+            'node_features': features,
+            'sh': sh,
+            'radial_basis': radial_basis,
+        }
 
     def __call__(
         self, data: jraph.GraphsTuple

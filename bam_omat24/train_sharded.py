@@ -17,6 +17,7 @@ import numpy as np
 from pathlib import Path
 
 from bam_omat24.data_nnx import Dataset, BucketedDataLoader, MultiDeviceDataLoader, setup_mesh
+from bam_omat24.nequip_nnx import Nequip
 from bam_omat24.race_nnx import RACE
 from bam_omat24.training_utils import (
     replicate,
@@ -53,7 +54,8 @@ def train_sharded(config: Dict, train_files_pkl: List[str], valid_files_pkl: Lis
     model_rngs = nnx.Rngs(seed)      # For model parameter initialization only
     rngs = nnx.Rngs(seed + 1)        # For data loading (shuffling) only
 
-    model = RACE(
+    model_name = config.get('model', 'RACE').upper()
+    model_kwargs = dict(
         n_species=len(config["atom_energies"]),
         lmax=config["lmax"],
         hidden_irreps=config["hidden_irreps"],
@@ -68,10 +70,15 @@ def train_sharded(config: Dict, train_files_pkl: List[str], valid_files_pkl: Lis
         avg_n_neighbors=25.0,
         atom_energies=config["atom_energies"],
         l_train=True,
-        rngs=model_rngs  # Dedicated rngs for model init
+        rngs=model_rngs,
     )
 
-    graphdef, params = nnx.split(model, nnx.Param)
+    if model_name == 'RACE':
+        model = RACE(**model_kwargs)
+    else:
+        model = Nequip (**model_kwargs)
+
+    graphdef, params = nnx.split(model)
     ema_params = params
 
     n_params = sum(x.size for x in jax.tree.leaves(params))
@@ -116,11 +123,12 @@ def train_sharded(config: Dict, train_files_pkl: List[str], valid_files_pkl: Lis
     best_val_loss = float('inf')
     if config.get('restart', False) and Path('ckpt_best.pkl').exists():
         ckpt = load_checkpoint('ckpt_best.pkl')
-        params = replicate_pytree(ckpt['params'], mesh)
+        params = replicate_pytree(ckpt['ema_params'], mesh)
         ema_params = replicate_pytree(ckpt['ema_params'], mesh)
         opt_state = replicate_pytree(ckpt['opt_state'], mesh)
         schedule_state = replicate_pytree(ckpt['schedule_state'], mesh)
         step = replicate(jnp.array(ckpt.get('step', 0)), mesh)
+        # if you want, you can comment the next line to set best_val_loss = inf
         best_val_loss = ckpt.get('best_val_loss', float('inf'))
         print(f"Resumed from step {ckpt.get('step', 0)}", file=fout)
 

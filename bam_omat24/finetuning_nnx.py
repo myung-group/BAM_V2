@@ -18,16 +18,11 @@ from typing import Tuple
 import jax
 import jax.numpy as jnp
 from flax import nnx
-#from flax.nnx.nn import initializers
 
 import jraph
-import e3nn_jax as e3nn
-import optax
-from optax import transforms
-freeze = transforms.freeze
 
 from bam_omat24.nequip_nnx import NequipConvolution
-from bam_omat24.utils import node_graph_idx, compute_node_edge_features, energy_forces_stress
+from bam_omat24.utils import energy_forces_stress
 from bam_omat24.race_nnx import RACE
 from bam_omat24.linear_nnx import Linear as e3nn_nnx_Linear
 
@@ -50,7 +45,6 @@ class FineTuningPotential(nnx.Module):
     Args:
         foundation_model: Pre-trained DFT-level model
         strategy: Fine-tuning strategy ['delta_0', 'delta_1', 'delta_2']
-        freeze_foundation: Whether to freeze foundation model weights
         rngs: Random number generator state
     """
 
@@ -63,12 +57,9 @@ class FineTuningPotential(nnx.Module):
         strategy: str = 'delta',
         delta_scale: float = 1.0,
         delta_shift: float = 0.0,
-        freeze_foundation: bool = True,
         rngs: nnx.Rngs = nnx.Rngs(0)
     ):
         self.strategy = strategy
-        self.freeze_foundation = freeze_foundation
-
         # Store foundation model
         self.foundation = foundation_model
 
@@ -111,134 +102,6 @@ class FineTuningPotential(nnx.Module):
                 rngs=rngs
             )
 
-    def _compute_foundation_features(
-        self,
-        positions: jax.Array,
-        cell: jax.Array,
-        cutoff: jax.Array,
-        data: jraph.GraphsTuple
-    ) -> Tuple[e3nn.IrrepsArray, jax.Array, e3nn.IrrepsArray]:
-        """
-        Compute features from foundation model WITH gradient flow to positions.
-
-        This method recomputes the forward pass through the foundation model
-        but only for extracting features - the parameters are not updated.
-
-        Returns:
-            Tuple of (node_features, radial_basis, sh)
-        """
-        foundation = self.foundation
-
-        # Compute edge features (this maintains gradient flow to positions)
-        features, radial_basis, sh = compute_node_edge_features(
-            positions=positions,
-            cell=cell,
-            cutoff=cutoff,
-            data=data,
-            n_species=foundation.n_species,
-            model_cutoff=foundation.cutoff,
-            radial_basis_size=foundation.radial_basis_size,
-            radial_polynomial_p=foundation.radial_polynomial_p,
-            lmax=foundation.lmax,
-            periodic=foundation.periodic,
-        )
-
-        features = foundation.species_embedding(features)
-        x_feats = foundation.x_linear(data.nodes["species"], features)
-
-        # Pass through all layers (foundation parameters are frozen via filter)
-        for layer in foundation.layers:
-            _, features = layer(
-                features,
-                x_feats,
-                data.nodes["species"],
-                sh,
-                radial_basis,
-                data.senders,
-                data.receivers,
-            )
-
-        return features, radial_basis, sh
-
-    def get_foundation_energy_and_features(
-        self,
-        positions: jax.Array,
-        cell: jax.Array,
-        cutoff: jax.Array,
-        data: jraph.GraphsTuple
-    ) -> Tuple[jax.Array, e3nn.IrrepsArray]:
-        """
-        Extract intermediate features and energy from foundation model.
-
-        Args:
-            positions: Atomic positions of shape (n_atoms, 3)
-            cell: (n_graph, 3, 3) for periodic, None for molecular
-            cutoff: (n_graph,) for periodic, None for molecular
-            data: Graph data structure
-
-        Returns:
-            Tuple of (node_energies, node_features, radial_basis, sh)
-        """
-        foundation = self.foundation
-
-        # Compute edge features
-        features, radial_basis, sh = compute_node_edge_features(
-            positions=positions,
-            cell=cell,
-            cutoff=cutoff,
-            data=data,
-            n_species=foundation.n_species,
-            model_cutoff=foundation.cutoff,
-            radial_basis_size=foundation.radial_basis_size,
-            radial_polynomial_p=foundation.radial_polynomial_p,
-            lmax=foundation.lmax,
-            periodic=foundation.periodic,
-        )
-
-        features = foundation.species_embedding(features)
-        x_feats = foundation.x_linear(data.nodes["species"], features)
-
-        outputs = []
-        for (layer, x_readout, f_readout) in zip(
-            foundation.layers,
-            foundation.x_readouts,
-            foundation.f_readouts
-        ):
-            f_energy = f_readout(
-                data.nodes["species"],
-                features
-            )
-            node_energies, features = layer(
-                features,
-                x_feats,
-                data.nodes["species"],
-                sh,
-                radial_basis,
-                data.senders,
-                data.receivers,
-            )
-            x_energy = x_readout(
-                data.nodes["species"],
-                x_feats
-            )
-            outputs += [
-                node_energies.array[:, 0]
-                + x_energy.array.squeeze()
-                + f_energy.array.squeeze()
-            ]
-
-        node_energies = jnp.sum(
-            jnp.stack(outputs, axis=1),
-            axis=-1,
-            keepdims=True
-        )
-        node_energies = e3nn.IrrepsArray(e3nn.Irreps("0e"), node_energies)
-
-        # Scale and shift energies
-        node_energies = node_energies * foundation.scale[...] + foundation.shift[...]
-
-        return node_energies.array.squeeze(), features
-
     def node_energies(
         self,
         positions: jax.Array,
@@ -262,23 +125,10 @@ class FineTuningPotential(nnx.Module):
             Per-node energies of shape (n_atoms,)
         """
         # Get foundation energy WITH stop_gradient (frozen)
-        #foundation_energy = jax.lax.stop_gradient(
-        #    self.get_foundation_energy_and_features(
-        #        positions, cell, cutoff, data
-        #    )
-        #)
-        foundation_energy, node_features = (
-            self.get_foundation_energy_and_features(
-                positions, cell, cutoff, data
-            )
-        )
-
-        # Recompute features WITH gradient flow to positions
-        # This allows delta network to contribute to forces
-        #node_features, radial_basis, sh = self._compute_foundation_features(
-        #    positions, cell, cutoff, data
-        #)
-
+        results = self.foundation.node_energies(positions, cell, cutoff, data)
+        foundation_energy = results["node_energies"]
+        node_features = results["node_features"]
+        
         if self.strategy == 'delta_1':
             # Compute delta correction with gradient flow
             node_delta_features = self.delta_readout(
@@ -290,6 +140,9 @@ class FineTuningPotential(nnx.Module):
 
         elif self.strategy == 'delta_2':
             # Adapt features then compute delta
+            sh = results['sh']
+            radial_basis = results['radial_basis']
+
             adapted_node_features = self.feature_adapter(
                 node_features,
                 data.nodes["species"],
@@ -315,9 +168,10 @@ class FineTuningPotential(nnx.Module):
         node_delta_energies = (
             node_delta_energies * self.delta_scale[...]
             + self.delta_shift[...]
-        ).squeeze()
+        )
 
-        return foundation_energy + node_delta_energies
+        return {'node_energies': foundation_energy + node_delta_energies}
+
 
     def __call__(
         self,
@@ -423,8 +277,7 @@ if __name__ == "__main__":
         mlp_init_scale=4.0,
         delta_scale=1.0,
         delta_shift=0.0,
-        strategy='delta_1', # [delta_0, delta_1, delta_2]
-        freeze_foundation=True,
+        strategy='delta_2', # [delta_0, delta_1, delta_2]
         rngs=rngs,
     )
 

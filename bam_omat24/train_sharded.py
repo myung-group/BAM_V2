@@ -238,7 +238,7 @@ def train_sharded(config: Dict, train_files_pkl: List[str], valid_files_pkl: Lis
             # Update LR schedule
             unrep_params = unreplicate_pytree(params)
             unrep_schedule = unreplicate_pytree(schedule_state)
-            _, new_schedule = schedule.update(
+            _, new_schedule = unrrep_schedule.update(
                 updates=unrep_params,
                 state=unrep_schedule,
                 value=val_loss

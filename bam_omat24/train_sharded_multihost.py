@@ -323,7 +323,7 @@ def train_sharded(
             # Update LR schedule
             unrep_params = unreplicate_pytree(params)
             unrep_schedule = unreplicate_pytree(schedule_state)
-            _, new_schedule = schedule.update(
+            _, new_schedule = unrep_schedule.update(
                 updates=unrep_params,
                 state=unrep_schedule,
                 value=val_loss

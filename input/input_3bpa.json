@@ -21,6 +21,7 @@
     "n_epochs": 1500,
     "energy_weight": 1.0,
     "force_weight": 1.0,
+    "huber_delta" : 0.1,
     "log_every": 100,
     "ema_decay": 0.99,
     "use_scan": false,

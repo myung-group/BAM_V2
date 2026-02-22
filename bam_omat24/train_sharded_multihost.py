@@ -213,6 +213,7 @@ def train_sharded(
 
     # Training loop
     best_state = None
+    no_improvement_count = 0
 
     for epoch in range(config["n_epochs"]):
         epoch_start = time.time()
@@ -323,7 +324,7 @@ def train_sharded(
             # Update LR schedule
             unrep_params = unreplicate_pytree(params)
             unrep_schedule = unreplicate_pytree(schedule_state)
-            _, new_schedule = unrep_schedule.update(
+            _, new_schedule = schedule.update(
                 updates=unrep_params,
                 state=unrep_schedule,
                 value=val_loss
@@ -334,6 +335,7 @@ def train_sharded(
             if val_loss < best_val_loss:
                 improvement = best_val_loss - val_loss
                 best_val_loss = val_loss
+                no_improvement_count = 0
                 best_state = {
                     'params': unrep_params,
                     'ema_params': unrep_ema,
@@ -348,7 +350,8 @@ def train_sharded(
                 if jax.process_index() == 0:
                     save_checkpoint(best_state, 'ckpt_best.pkl')
             else:
-                print(f"  No improvement for {new_schedule.plateau_count} evaluations "
+                no_improvement_count += 1
+                print(f"  No improvement for {no_improvement_count} evaluations "
                       f"(best: {best_val_loss:.6f})", file=fout)
 
         epoch_time = time.time() - epoch_start

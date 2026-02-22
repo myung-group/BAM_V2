@@ -190,6 +190,7 @@ def train_finetuning_sharded(
 
     # Training loop
     best_state = None
+    no_improvement_count = 0
     #n_val = 0
 
     for epoch in range(config["n_epochs"]):
@@ -313,6 +314,7 @@ def train_finetuning_sharded(
             if val_loss < best_val_loss:
                 improvement = best_val_loss - val_loss
                 best_val_loss = val_loss
+                no_improvement_count = 0
                 best_state = {
                     'params': unrep_params,
                     'ema_params': unrep_ema,
@@ -327,7 +329,8 @@ def train_finetuning_sharded(
                 save_checkpoint(best_state, 'ckpt_ft_best.pkl')
                 print("  Checkpoint saved to ckpt_ft_best.pkl", file=fout)
             else:
-                print(f"  No improvement for {new_schedule.plateau_count} evaluations "
+                no_improvement_count += 1
+                print(f"  No improvement for {no_improvement_count} evaluations "
                       f"(best: {best_val_loss:.6f})", file=fout)
 
 

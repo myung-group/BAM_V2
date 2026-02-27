@@ -48,10 +48,6 @@ from bam_omat24.training_utils import (
     load_checkpoint,
 )
 
-# Training entry points
-from bam_omat24.train_sharded import train_sharded
-from bam_omat24.train_finetuning_sharded import train_finetuning_sharded
-
 __all__ = [
     # Models
     "Nequip",
@@ -90,7 +86,4 @@ __all__ = [
     "evaluate_sharded",
     "save_checkpoint",
     "load_checkpoint",
-    # Training entry points
-    "train_sharded",
-    "train_finetuning_sharded",
 ]

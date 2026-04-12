@@ -99,6 +99,7 @@ class FineTuningPotential(nnx.Module):
         last_shift_layer.bias = nnx.Param(jnp.zeros(1))
 
         # Variation heads (ft_ prefix → trainable via freeze_mask)
+        # Initialize with foundation's pretrained logvar parameters
         hidden_irreps = self.foundation.hidden_irreps
         self.ft_frc_logvar = e3nn_nnx_Linear(
             irreps_in=hidden_irreps,
@@ -119,6 +120,19 @@ class FineTuningPotential(nnx.Module):
             biases=False,
             rngs=rngs,
         )
+
+        # Copy pretrained weights from foundation if available
+        def _copy_params(src: nnx.Module, dst: nnx.Module):
+            """Copy all nnx.Param values from src to dst."""
+            _, src_state = nnx.split(src, nnx.Param)
+            nnx.update(dst, src_state)
+
+        if hasattr(self.foundation, 'frc_logvar'):
+            _copy_params(self.foundation.frc_logvar, self.ft_frc_logvar)
+        if hasattr(self.foundation, 'energy_logvar'):
+            _copy_params(self.foundation.energy_logvar, self.ft_energy_logvar)
+        if hasattr(self.foundation, 'stress_logvar'):
+            _copy_params(self.foundation.stress_logvar, self.ft_stress_logvar)
 
     def node_energies(
         self,

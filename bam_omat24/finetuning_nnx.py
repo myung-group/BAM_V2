@@ -12,17 +12,17 @@ References:
 """
 
 
-from typing import Tuple
+from typing import Tuple, Dict
 
 
+import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
 from flax import nnx
 
 import jraph
 
-from bam_omat24.nequip_nnx import NequipConvolution
-from bam_omat24.utils import energy_forces_stress
+from bam_omat24.utils import energy_forces_stress, MLP
 from bam_omat24.race_nnx import RACE
 from bam_omat24.linear_nnx import Linear as e3nn_nnx_Linear
 
@@ -34,51 +34,30 @@ from bam_omat24.linear_nnx import Linear as e3nn_nnx_Linear
 
 class FineTuningPotential(nnx.Module):
     """
-    FineTuning potential combining foundation model with a multi-fidelity scheme.
+    FineTuning potential combining foundation model with an affine transformation.
 
-    E_ref = E_foundation + scale * ΔE
-    Strategies: The computation depends on the strategy:
-        - delta_0: ΔE = nnx.Linear(node_feats.filter(keep='0e'))
-        - delta_1: ΔE = nnx.Linear(e3nn.Linear(node_feats))
-        - delta_2: ΔE = nnx.Linear(e3nn.Linear(Convolution(node_feats)))
+    E_tgt = MLP_scale(node_feats)*E_foundation + MLP_shift(node_feats)
 
     Args:
         foundation_model: Pre-trained DFT-level model
-        strategy: Fine-tuning strategy ['delta_0', 'delta_1', 'delta_2']
         rngs: Random number generator state
     """
 
     def __init__(
         self,
         foundation_model: RACE,
-        radial_mlp_size: int = 8,
-        radial_mlp_layers: int = 3,
         mlp_init_scale: float = 4.0,
-        strategy: str = 'delta',
-        delta_scale: float = 1.0,
-        delta_shift: float = 0.0,
+        mlp_hidden_size: int = 64,
+        mlp_hidden_layers: int = 2,
         rngs: nnx.Rngs = nnx.Rngs(0)
     ):
-        self.strategy = strategy
         # Store foundation model
         self.foundation = foundation_model
 
         # Initialize strategy-specific components
         output_irreps = self.foundation.hidden_irreps.filter(keep='0e')
 
-        self.delta_linear_readout = nnx.Linear(
-            in_features=output_irreps.dim,
-            out_features=1,
-            #kernel_init=initializers.zeros_init(),
-            use_bias=True,
-            rngs=rngs
-        )
-
-        self.delta_scale = nnx.Param(jnp.array(delta_scale))
-        self.delta_shift = nnx.Param(jnp.array(delta_shift))
-
-        if strategy in ['delta_1', 'delta_2']:
-            self.delta_readout = e3nn_nnx_Linear(
+        self.ft_readout = e3nn_nnx_Linear(
                 irreps_in=self.foundation.hidden_irreps,
                 irreps_out=output_irreps,
                 linear_type="indexed",
@@ -88,19 +67,58 @@ class FineTuningPotential(nnx.Module):
                 rngs=rngs,
             )
 
-        if strategy == 'delta_2':
-            self.feature_adapter = NequipConvolution(
-                input_irreps=self.foundation.hidden_irreps,
-                output_irreps=self.foundation.hidden_irreps,
-                sh_irreps=self.foundation.sh_irreps,
-                n_species=self.foundation.n_species,
-                radial_basis_size=self.foundation.radial_basis_size,
-                radial_mlp_size=radial_mlp_size,
-                radial_mlp_layers=radial_mlp_layers,
-                mlp_init_scale=mlp_init_scale,
-                avg_n_neighbors=self.foundation._avg_n_neighbors_value,
-                rngs=rngs
-            )
+
+        # feature-dependent affine transformation
+        # new_node_energy = scale(features) * foundation_energy + shift(features)
+        scalar_dim = output_irreps.dim
+        scale_sizes = [scalar_dim] + [mlp_hidden_size] * mlp_hidden_layers + [1]
+        shift_sizes = [scalar_dim] + [mlp_hidden_size] * mlp_hidden_layers + [1]
+
+        self.ft_scale_mlp = MLP(
+            sizes=scale_sizes,
+            init_scale=mlp_init_scale,
+            use_bias=True,
+            rngs=rngs,
+        )
+        self.ft_shift_mlp = MLP(
+            sizes=shift_sizes,
+            init_scale=mlp_init_scale,
+            use_bias=True,
+            rngs=rngs,
+        )
+
+        # Zero-init last layer kernels so output = bias at initialization
+        # Scale MLP: bias=1 → initial scale is 1
+        # Shift MLP: bias=0 → initial shift is 0
+        last_scale_layer = self.ft_scale_mlp.layers[-1]
+        last_scale_layer.weights = nnx.Param(jnp.zeros_like(last_scale_layer.weights[...]))
+        last_scale_layer.bias = nnx.Param(jnp.ones(1))
+
+        last_shift_layer = self.ft_shift_mlp.layers[-1]
+        last_shift_layer.weights = nnx.Param(jnp.zeros_like(last_shift_layer.weights[...]))
+        last_shift_layer.bias = nnx.Param(jnp.zeros(1))
+
+        # Variation heads (ft_ prefix → trainable via freeze_mask)
+        hidden_irreps = self.foundation.hidden_irreps
+        self.ft_frc_logvar = e3nn_nnx_Linear(
+            irreps_in=hidden_irreps,
+            irreps_out=e3nn.Irreps("6x0e"),
+            biases=False,
+            rngs=rngs,
+        )
+        self.ft_energy_logvar = e3nn_nnx_Linear(
+            irreps_in=hidden_irreps,
+            irreps_out=e3nn.Irreps("1x0e"),
+            biases=False,
+            rngs=rngs,
+        )
+        # 6x6 lower triangular: 6 diagonal + 15 off-diagonal = 21 params
+        self.ft_stress_logvar = e3nn_nnx_Linear(
+            irreps_in=hidden_irreps,
+            irreps_out=e3nn.Irreps("21x0e"),
+            biases=False,
+            rngs=rngs,
+        )
 
     def node_energies(
         self,
@@ -108,7 +126,7 @@ class FineTuningPotential(nnx.Module):
         cell: jax.Array,
         cutoff: jax.Array,
         data: jraph.GraphsTuple
-    ) -> jax.Array:
+    ) -> Dict:
         """
         Compute per-node energies with proper gradient flow.
 
@@ -128,70 +146,57 @@ class FineTuningPotential(nnx.Module):
         results = self.foundation.node_energies(positions, cell, cutoff, data)
         foundation_energy = results["node_energies"]
         node_features = results["node_features"]
-        
-        if self.strategy == 'delta_1':
-            # Compute delta correction with gradient flow
-            node_delta_features = self.delta_readout(
-                data.nodes["species"], node_features
-            )
-            node_delta_energies = self.delta_linear_readout(
-                node_delta_features.array
-            )
 
-        elif self.strategy == 'delta_2':
-            # Adapt features then compute delta
-            sh = results['sh']
-            radial_basis = results['radial_basis']
 
-            adapted_node_features = self.feature_adapter(
-                node_features,
+        # Feature-dependent affine transformation of foundation energy
+        scalar_features = self.ft_readout(
                 data.nodes["species"],
-                sh,
-                radial_basis,
-                data.senders,
-                data.receivers
+                node_features
             )
+        #scalar_features = node_features.filter(keep="0e").array
+        scale = self.ft_scale_mlp(scalar_features.array)  # (n_atoms, 1)
+        shift = self.ft_shift_mlp(scalar_features.array)  # (n_atoms, 1)
+        node_energies = scale * foundation_energy + shift
 
-            node_delta_features = self.delta_readout(
-                data.nodes["species"], adapted_node_features
-            )
-            node_delta_energies = self.delta_linear_readout(
-                node_delta_features.array
-            )
 
-        else:  # self.strategy == 'delta_0'
-            node_delta_features = node_features.filter(keep="0e")
-            node_delta_energies = self.delta_linear_readout(
-                node_delta_features.array
-            )
+        # Variation heads (own ft_ parameters, trainable)
+        # Force variation: 3x3 Cholesky L
+        frc_logvar = self.ft_frc_logvar(node_features)
+        frc_var = jnp.hstack([
+            jax.nn.softplus(frc_logvar.array[:, :3]) + 0.04,
+            frc_logvar.array[:, 3:]
+        ])
+        # Energy variation: per-atom sigma
+        energy_var = jax.nn.softplus(
+            self.ft_energy_logvar(node_features).array
+        ) + 0.04
+        # Stress variation: 6x6 Cholesky L_s
+        stress_raw = self.ft_stress_logvar(node_features).array
+        stress_var = jnp.concatenate([
+            jax.nn.softplus(stress_raw[:, :6]) + 0.04,
+            stress_raw[:, 6:]
+        ], axis=-1)
 
-        node_delta_energies = (
-            node_delta_energies * self.delta_scale[...]
-            + self.delta_shift[...]
-        )
-
-        return {'node_energies': foundation_energy + node_delta_energies}
+        return {'node_energies': node_energies,
+                'frc_variation': frc_var,
+                'energy_variation': energy_var,
+                'stress_variation': stress_var}
 
 
     def __call__(
         self,
         data: jraph.GraphsTuple
-    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+    ) -> Dict:
         """
         Compute (fine-tuning) energy predictions with forces and stress.
 
-        E_ref = E_foundation + scale * ΔE
-
-        The computation depends on the strategy:
-        - delta_0: ΔE = nnx.Linear(node_feats.filter(keep='0e'))
-        - delta_1: ΔE = nnx.Linear(e3nn.Linear(node_feats))
-        - delta_2: ΔE = nnx.Linear(e3nn.Linear(Convolution(node_feats)))
+        E_ref = MLP_scale * E_foundation + MLP_shift
 
         Args:
             data: Graph data structure
 
         Returns:
-            Tuple of (graph_energies, forces, stress)
+            Dict (graph_energies, forces, stress)
         """
         return energy_forces_stress(
             self.node_energies, data, self.foundation.periodic,
@@ -203,7 +208,7 @@ class FineTuningPotential(nnx.Module):
 # Parameter Filtering Utilities
 # =============================================================================
 
-def filter_delta_params(params: nnx.State) -> Tuple[nnx.State, nnx.State]:
+def filter_ft_params(params: nnx.State) -> Tuple[nnx.State, nnx.State]:
     """
     Filter to train only delta network parameters.
 
@@ -221,7 +226,7 @@ def filter_delta_params(params: nnx.State) -> Tuple[nnx.State, nnx.State]:
     flat = params.flat_state()
     for path, value in flat:
         path_str = str(path).lower()
-        if 'delta_' in path_str or 'feature_adapter' in path_str:
+        if 'ft_' in path_str: # or 'delta_3' in path_str:
             trainable[path] = value
         else:
             frozen[path] = value
@@ -272,12 +277,9 @@ if __name__ == "__main__":
     print("\n1. Testing Delta Learning strategy...")
     delta_model = FineTuningPotential(
         foundation_model=foundation,
-        radial_mlp_size=64,
-        radial_mlp_layers=3,
         mlp_init_scale=4.0,
-        delta_scale=1.0,
-        delta_shift=0.0,
-        strategy='delta_2', # [delta_0, delta_1, delta_2]
+        mlp_hidden_size=64,
+        mlp_hidden_layers=2,
         rngs=rngs,
     )
 
@@ -286,7 +288,7 @@ if __name__ == "__main__":
     print(f"   Total parameters: {n_params:,}")
 
     # Count trainable vs frozen
-    trainable, frozen = filter_delta_params(params)
+    trainable, frozen = filter_ft_params(params)
     n_trainable = sum(x.size for x in jax.tree.leaves(trainable))
     n_frozen = sum(x.size for x in jax.tree.leaves(frozen))
     print(f"   Trainable: {n_trainable:,}, Frozen: {n_frozen:,}")

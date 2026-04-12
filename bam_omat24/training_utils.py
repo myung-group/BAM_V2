@@ -56,6 +56,49 @@ def huber_loss(x: jnp.ndarray, delta: float = 1.0) -> jnp.ndarray:
     return jnp.where(abs_x <= delta, 0.5 * x ** 2, delta * (abs_x - 0.5 * delta))
 
 
+def _build_force_L(frc_var: jnp.ndarray) -> jnp.ndarray:
+    """Build 3x3 lower triangular Cholesky L from 6 parameters per atom.
+
+    frc_var: (n_atoms, 6) where [:, :3] are positive diagonal (via exp),
+             [:, 3:] are off-diagonal.
+    Returns: (n_atoms, 3, 3) lower triangular matrices.
+
+    L = [[σ1,  0,  0 ],
+         [σ6, σ2,  0 ],
+         [σ5, σ4, σ3]]
+    """
+    n = frc_var.shape[0]
+    L = jnp.zeros((n, 3, 3))
+    L = L.at[:, 0, 0].set(frc_var[:, 0])
+    L = L.at[:, 1, 1].set(frc_var[:, 1])
+    L = L.at[:, 2, 2].set(frc_var[:, 2])
+    L = L.at[:, 2, 1].set(frc_var[:, 3])
+    L = L.at[:, 2, 0].set(frc_var[:, 4])
+    L = L.at[:, 1, 0].set(frc_var[:, 5])
+    return L
+
+
+def _build_stress_L(stress_var: jnp.ndarray) -> jnp.ndarray:
+    """Build 6x6 lower triangular Cholesky L from 21 parameters per graph.
+
+    stress_var: (n_graphs, 21) where [:, :6] are positive diagonal (via exp),
+                [:, 6:] are off-diagonal (row-major lower triangle).
+    Returns: (n_graphs, 6, 6) lower triangular matrices.
+    """
+    n = stress_var.shape[0]
+    L = jnp.zeros((n, 6, 6))
+    # Diagonal (first 6 values, already positive via exp)
+    for i in range(6):
+        L = L.at[:, i, i].set(stress_var[:, i])
+    # Off-diagonal (next 15 values, row-major lower triangle)
+    idx = 6
+    for i in range(1, 6):
+        for j in range(i):
+            L = L.at[:, i, j].set(stress_var[:, idx])
+            idx += 1
+    return L
+
+
 def compute_loss(
     graphdef: nnx.GraphDef,
     params: nnx.State,
@@ -63,9 +106,15 @@ def compute_loss(
     energy_weight: float,
     force_weight: float,
     stress_weight: float,
-    huber_delta: float
+    huber_delta: float,
+    loss_type: str = 'huber',
 ) -> Tuple[jnp.ndarray, Dict]:
-    """Compute loss for a single batch (no device dimension)."""
+    """Compute training loss for a single batch (no device dimension).
+
+    Args:
+        loss_type: 'huber' for plain Huber loss, 'nll' for Huber-based NLL
+                   with Cholesky-parameterized covariances.
+    """
     graph_mask = jraph.get_graph_padding_mask(batch)
     node_mask = jraph.get_node_padding_mask(batch)
 
@@ -73,38 +122,112 @@ def compute_loss(
     n_atoms = jnp.maximum(node_mask.sum(), 1)
 
     model = nnx.merge(graphdef, params)
-    energy, forces, stress = model(batch)
+    results = model(batch)
+    energy = results['energy']
+    forces = results['forces']
+    stress = results['stress']
 
-    # Energy loss
     n_node = jnp.maximum(batch.n_node, 1)
-    energy_diff = (energy-batch.globals["energy"]) * graph_mask/n_node
-    energy_loss = huber_loss(energy_diff, delta=huber_delta)
-    energy_loss = jnp.sum(energy_loss) / n_graphs
-    energy_mse = jnp.sum(energy_diff ** 2) / n_graphs
-
-    # Force loss
-    forces_diff = (forces - batch.nodes["forces"]) * node_mask[:, None]
-    force_loss = huber_loss(forces_diff, delta=huber_delta)
-    force_loss = jnp.sum(force_loss) / (3 * n_atoms)
-    force_mse = jnp.sum(forces_diff ** 2) / (3 * n_atoms)
-
-    # Stress loss
+    energy_diff = (energy - batch.globals["energy"]) * graph_mask / n_node
+    force_diff = (forces - batch.nodes["forces"]) * node_mask[:, None]
     stress_diff = (stress - batch.globals["stress"]) * graph_mask[:, None]
-    stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta) ) / n_graphs
+
+    if loss_type == 'nll':
+        frc_var = results['force_variation']          # (n_atoms, 6)
+        energy_var = results.get('energy_variation')  # (n_graphs, 1) or None
+        stress_var = results.get('stress_variation')  # (n_graphs, 21) or None
+
+        # ---- Energy NLL ----
+        if energy_var is not None:
+            energy_sigma = energy_var.squeeze(-1) * graph_mask + (1.0 - graph_mask)
+            energy_z = energy_diff / energy_sigma
+            energy_loss = jnp.sum(huber_loss(energy_z, delta=huber_delta)) / n_graphs
+            energy_log_det = 2.0 * jnp.sum(jnp.log(energy_sigma) * graph_mask) / n_graphs
+        else:
+            energy_loss = jnp.sum(huber_loss(energy_diff, delta=huber_delta)) / n_graphs
+            energy_log_det = 0.0
+
+        # ---- Force NLL (3x3 Cholesky per atom) ----
+        frc_L = _build_force_L(frc_var)
+        frc_z = jax.vmap(
+            lambda L, d: jax.scipy.linalg.solve_triangular(L, d, lower=True)
+        )(frc_L, force_diff)
+        force_loss = jnp.sum(huber_loss(frc_z, delta=huber_delta)) / (3 * n_atoms)
+        frc_diag = jnp.diagonal(frc_L, axis1=-2, axis2=-1)
+        force_log_det = 2.0 * jnp.sum(
+            jnp.log(frc_diag) * node_mask[:, None]
+        ) / (3 * n_atoms)
+
+        # ---- Stress NLL (6x6 Cholesky per graph) ----
+        if stress_var is not None:
+            stress_L = _build_stress_L(stress_var)
+            stress_z = jax.vmap(
+                lambda L, d: jax.scipy.linalg.solve_triangular(L, d, lower=True)
+            )(stress_L, stress_diff)
+            stress_loss = jnp.sum(huber_loss(stress_z, delta=huber_delta)) / n_graphs
+            stress_diag = jnp.diagonal(stress_L, axis1=-2, axis2=-1)
+            stress_log_det = 2.0 * jnp.sum(
+                jnp.log(stress_diag) * graph_mask[:, None]
+            ) / n_graphs
+        else:
+            stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta)) / n_graphs
+            stress_log_det = 0.0
+
+        # Constant offset C = -min(log-det) to guarantee total_loss ≥ 0.
+        # Per-term floors when all Cholesky diagonals = MIN_VAR:
+        #   energy:  2·log(d)          (1 σ per config)
+        #   force:   2·log(d)          (3 diag per atom, n_atoms cancels)
+        #   stress:  12·log(d)         (6 diag per config)
+        MIN_VAR = 0.04
+        log_min_var = jnp.log(MIN_VAR)
+        nll_const = -2.0 * log_min_var                       # force (always present)
+        if energy_var is not None:
+            nll_const = nll_const - 2.0 * log_min_var        # + energy offset
+        if stress_var is not None:
+            nll_const = nll_const - 12.0 * log_min_var       # + stress offset
+
+        total_loss = (
+            energy_weight * energy_loss
+            + force_weight * force_loss
+            + stress_weight * stress_loss
+            + energy_log_det + force_log_det + stress_log_det
+            + nll_const
+        )
+
+        aux = {
+            'energy_loss': energy_loss + energy_log_det,
+            'force_loss': force_loss + force_log_det,
+            'stress_loss': stress_loss + stress_log_det,
+        }
+
+    else:  # 'huber' — plain Huber loss (no variance / NLL)
+        energy_loss = jnp.sum(huber_loss(energy_diff, delta=huber_delta)) / n_graphs
+        force_loss = jnp.sum(huber_loss(force_diff, delta=huber_delta)) / (3 * n_atoms)
+        stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta)) / n_graphs
+
+        total_loss = (
+            energy_weight * energy_loss
+            + force_weight * force_loss
+            + stress_weight * stress_loss
+        )
+
+        aux = {
+            'energy_loss': energy_loss,
+            'force_loss': force_loss,
+            'stress_loss': stress_loss,
+        }
+
+    energy_mse = jnp.sum(energy_diff ** 2) / n_graphs
+    force_mse = jnp.sum(force_diff ** 2) / (3 * n_atoms)
     stress_mse = jnp.sum(stress_diff ** 2) / n_graphs
 
-    total_loss = energy_weight * energy_loss + force_weight * force_loss + stress_weight * stress_loss
-
-    aux = {
-        'energy_loss': energy_loss,
-        'force_loss': force_loss,
-        'stress_loss': stress_loss,
+    aux.update({
         'energy_mse': energy_mse,
         'force_mse': force_mse,
         'stress_mse': stress_mse,
         'n_graphs': n_graphs,
         'n_atoms': n_atoms,
-    }
+    })
 
     return total_loss, aux
 
@@ -160,7 +283,8 @@ def make_sharded_train_step(
     stress_weight: float = 1.0,
     huber_delta: float = 0.1,
     ema_decay: float = 0.99,
-    freeze_mask: Any = None
+    freeze_mask: Any = None,
+    loss_type: str = 'huber',
 ):
     """Create sharded training step with gradient synchronization.
 
@@ -173,6 +297,7 @@ def make_sharded_train_step(
         freeze_mask: Optional pytree of bools matching params structure.
             If provided, EMA is only applied to trainable (False) leaves.
             Frozen(True) leaves keep their original values in the EMA state.
+        loss_type: 'huber' for plain Huber loss, 'nll' for Huber-based NLL.
     """
 
     def per_device_step(graphdef, params, opt_state, schedule_state, ema_params, step, batch):
@@ -182,7 +307,8 @@ def make_sharded_train_step(
         def loss_fn(params):
             return compute_loss(
                 graphdef, params, batch,
-                energy_weight, force_weight, stress_weight, huber_delta
+                energy_weight, force_weight, stress_weight, huber_delta,
+                loss_type=loss_type,
             )
 
         # Compute gradients locally
@@ -288,13 +414,13 @@ def make_sharded_evaluate_step(mesh: Mesh, huber_delta: float):
         prd_forces = vmax_F*jnp.tanh (forces / vmax_F)
         forces_diff = (prd_forces - tgt_forces) * node_mask[:, None]
         force_loss = huber_loss(forces_diff, delta=huber_delta)
-        
+
         vmax_S = 0.5
         tgt_stress = vmax_S * jnp.tanh (batch.globals["stress"] / vmax_S)
         prd_stress = vmax_S * jnp.tanh (stress / vmax_S)
         stress_diff = (prd_stress - tgt_stress) * graph_mask[:, None]
         stress_loss = huber_loss(stress_diff, delta=huber_delta)
-        
+
         # Return sums weighted by actual counts for proper aggregation
         return {
             'energy_loss': jnp.sum(energy_loss),

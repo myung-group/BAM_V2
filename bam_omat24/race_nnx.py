@@ -9,7 +9,7 @@ Changes from original:
 
 """
 
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Dict
 
 import e3nn_jax as e3nn
 import flax.nnx as nnx
@@ -20,7 +20,6 @@ import jraph
 from bam_omat24.utils import (
     separated_layer_norm,
     MLP,
-    node_graph_idx,
     compute_node_edge_features,
     energy_forces_stress,
 )
@@ -257,11 +256,11 @@ class RACE(nnx.Module):
         self.radial_basis_size = radial_basis_size
         self.radial_polynomial_p = radial_polynomial_p
         self.l_train = l_train
-        
+
         # Store trainable scale parameters
         self.shift = nnx.Param(jnp.array(shift))
         self.scale = nnx.Param(jnp.array(scale))
-        
+
         self.avg_n_neighbors = nnx.Param(jnp.array(avg_n_neighbors))
         self._avg_n_neighbors_value = avg_n_neighbors  # Keep float for sub-module init
 
@@ -273,7 +272,7 @@ class RACE(nnx.Module):
         self.hidden_irreps = e3nn.Irreps(hidden_irreps)
         input_irreps = self.hidden_irreps.filter(keep="0e")
         x_irreps = e3nn.Irreps("1x0e")
-        
+
         self.x_linear = e3nn_nnx_Linear(
             irreps_in=input_irreps,
             irreps_out=x_irreps,
@@ -313,7 +312,7 @@ class RACE(nnx.Module):
             # FIX: Use derived readout_hidden_irreps instead of hardcoded "64x0e"
             readout_hidden_irreps = self.hidden_irreps.filter(keep="0e")
             x_readout = RACEXReadout(
-                hidden_irreps=readout_hidden_irreps, #e3nn.Irreps("64x0e"), 
+                hidden_irreps=readout_hidden_irreps, #e3nn.Irreps("64x0e"),
                 output_irreps=e3nn.Irreps("0e"),
                 x_irreps=x_irreps,
                 n_species=n_species,
@@ -323,7 +322,7 @@ class RACE(nnx.Module):
             x_readouts.append(x_readout)
 
             f_readout = RACEXReadout(
-                hidden_irreps=readout_hidden_irreps, #e3nn.Irreps("64x0e"), 
+                hidden_irreps=readout_hidden_irreps, #e3nn.Irreps("64x0e"),
                 output_irreps=e3nn.Irreps("0e"),
                 x_irreps=input_irreps if i == 0 else self.hidden_irreps,
                 n_species=n_species,
@@ -335,6 +334,27 @@ class RACE(nnx.Module):
         self.layers = nnx.List(layers)
         self.x_readouts = nnx.List(x_readouts)
         self.f_readouts = nnx.List(f_readouts)
+        self.frc_logvar = e3nn_nnx_Linear (
+            irreps_in=hidden_irreps,
+            irreps_out=e3nn.Irreps("6x0e"),
+            biases=False,
+            rngs=rngs,
+        )
+
+        self.energy_logvar = e3nn_nnx_Linear(
+            irreps_in=hidden_irreps,
+            irreps_out=e3nn.Irreps("1x0e"),
+            biases=False,
+            rngs=rngs,
+        )
+
+        # 6x6 lower triangular: 6 diagonal + 15 off-diagonal = 21 params
+        self.stress_logvar = e3nn_nnx_Linear(
+            irreps_in=hidden_irreps,
+            irreps_out=e3nn.Irreps("21x0e"),
+            biases=False,
+            rngs=rngs,
+        )
 
     def node_energies(
         self,
@@ -342,7 +362,7 @@ class RACE(nnx.Module):
         cell: jax.Array,
         cutoff: jax.Array,
         data: jraph.GraphsTuple
-    ) -> jax.Array:
+    ) -> Dict:
         """Compute per-node energies.
 
         Args:
@@ -411,16 +431,36 @@ class RACE(nnx.Module):
         # Scale and shift energies
         node_energies = node_energies * self.scale[...] + self.shift[...]
 
+        # Force variation: 6 params for 3x3 lower triangular Cholesky L_f
+        # [diag0, diag1, diag2, off0, off1, off2] -> softplus on diagonal, min 0.04
+        frc_logvar = self.frc_logvar (features)
+        frc_var = jnp.hstack([
+            jax.nn.softplus(frc_logvar.array[:,:3]) + 0.04,
+            frc_logvar.array[:,3:]
+        ])
+
+        # Energy variation: per-atom sigma, min 0.04
+        energy_var = jax.nn.softplus(self.energy_logvar(features).array) + 0.04  # (n_atoms, 1)
+
+        # Stress variation: 21 params for 6x6 lower triangular Cholesky L_s
+        # First 6 = diagonal (softplus, min 0.04), next 15 = off-diagonal
+        stress_raw = self.stress_logvar(features).array  # (n_atoms, 21)
+        stress_var = jnp.concatenate([
+            jax.nn.softplus(stress_raw[:, :6]) + 0.04,
+            stress_raw[:, 6:]
+        ], axis=-1)
+
         return {
             'node_energies': node_energies.array,
             'node_features': features,
-            'sh': sh,
-            'radial_basis': radial_basis,
+            'frc_variation': frc_var,
+            'energy_variation': energy_var,
+            'stress_variation': stress_var,
         }
 
     def __call__(
         self, data: jraph.GraphsTuple
-    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+    ) -> Dict:
         """Compute energies and forces for a batch of graphs.
 
         Args:
@@ -482,11 +522,12 @@ if __name__ == "__main__":
     print(f"\nNumber of parameters: {n_params:,}")
 
     # Run forward pass
-    energies, forces, stress = model(data)
-    print(f"Energies shape: {energies.shape}")
-    print(f"Forces shape: {forces.shape}")
-    print(f"Total energy: {energies[0]:.6f}")
-    print(f"Force magnitude: {np.linalg.norm(forces, axis=-1).mean():.6f}")
-    print(f"Stress: {stress}")
+    #energies, forces, stress = model(data)
+    result = model(data)
+    print(f"Energies shape: {result['energy'].shape}")
+    print(f"Forces shape: {result['forces'].shape}")
+    print(f"Total energy: {result['energy'][0]:.6f}")
+    print(f"Force magnitude: {np.linalg.norm(result['forces'], axis=-1).mean():.6f}")
+    print(f"Stress: {result['stress']}")
     print(f"Target energies: {data.globals['energy']}")
     print(f"Target stress: {data.globals['stress']} eV/A^3")

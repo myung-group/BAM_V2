@@ -143,6 +143,7 @@ def _build_pretrain_components(config: Dict, mesh, n_devices: int, fout):
     force_weight  = config.get('force_weight',  1.0)
     stress_weight = config.get('stress_weight', 1.0)
     huber_delta   = config.get('huber_delta',   0.02)
+    loss_type     = config.get('loss_type',     'huber')
 
     train_step = make_sharded_train_step(
         optimizer     = optimizer,
@@ -152,6 +153,7 @@ def _build_pretrain_components(config: Dict, mesh, n_devices: int, fout):
         stress_weight = stress_weight,
         huber_delta   = huber_delta,
         ema_decay     = config.get('ema_decay', 0.99),
+        loss_type     = loss_type,
     )
 
     return (graphdef, params, ema_params, optimizer, schedule,
@@ -215,9 +217,9 @@ def _build_finetune_components(config: Dict, mesh, n_devices: int, fout):
     print(f"   Trainable: {n_trainable:,}  |  Frozen: {n_frozen:,}")
     print(f"Model parameters: {n_params:,}", file=fout)
 
-    # ── Freeze mask (only delta / adapter layers are trainable) ───────────────
+    # ── Freeze mask (only ft_ layers are trainable) ────────────────────────────
     def _is_frozen(path):
-        return not ('delta_' in str(path).lower() or 'feature_adapter' in str(path).lower())
+        return not ('ft_' in str(path).lower())
 
     freeze_mask = jax.tree_util.tree_map_with_path(
         lambda path, _: _is_frozen(path), params
@@ -238,6 +240,7 @@ def _build_finetune_components(config: Dict, mesh, n_devices: int, fout):
     force_weight  = config.get('force_weight',  1.0)
     stress_weight = config.get('stress_weight', 1.0)
     huber_delta   = config.get('huber_delta',   0.02)
+    loss_type     = config.get('loss_type',     'huber')
 
     train_step = make_sharded_train_step(
         optimizer     = optimizer,
@@ -248,6 +251,7 @@ def _build_finetune_components(config: Dict, mesh, n_devices: int, fout):
         huber_delta   = huber_delta,
         ema_decay     = config.get('ema_decay', 0.99),
         freeze_mask   = freeze_mask,
+        loss_type     = loss_type,
     )
 
     return (graphdef, params, ema_params, optimizer, schedule,

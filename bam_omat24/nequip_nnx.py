@@ -6,7 +6,7 @@ using Flax NNX framework with e3nn_jax for equivariant operations.
 """
 
 
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Dict
 
 import e3nn_jax as e3nn
 import flax.nnx as nnx
@@ -16,13 +16,9 @@ import jraph
 
 from bam_omat24.linear_nnx import Linear as e3nn_nnx_Linear
 from bam_omat24.utils import (
-    bessel_basis,
-    polynomial_cutoff,
     separated_layer_norm,
-    DenseLinear,
     MLP,
     compute_node_edge_features,
-    node_graph_idx,
     energy_forces_stress,
 )
 
@@ -175,7 +171,7 @@ class Nequip(nnx.Module):
         self.radial_basis_size = radial_basis_size
         self.radial_polynomial_p = radial_polynomial_p
         self.l_train = l_train
-        
+
         # Store trainable scale parameters
         self.shift = nnx.Param(jnp.array(shift))
         self.scale = nnx.Param(jnp.array(scale))
@@ -218,7 +214,7 @@ class Nequip(nnx.Module):
         # Extract scalar dimension for readout
         hidden_scalar_dim = self.hidden_irreps.filter(keep="0e").dim
         hidden_irreps_2 = e3nn.Irreps(f"{hidden_scalar_dim // 2}x0e")
-        
+
         self.readout1 = e3nn_nnx_Linear(
             irreps_in=self.hidden_irreps,
             irreps_out=hidden_irreps_2,
@@ -232,13 +228,34 @@ class Nequip(nnx.Module):
             rngs=rngs,
         )
 
+        # Variation heads (from full hidden_irreps, same as RACE)
+        self.frc_logvar = e3nn_nnx_Linear(
+            irreps_in=self.hidden_irreps,
+            irreps_out=e3nn.Irreps("6x0e"),
+            biases=False,
+            rngs=rngs,
+        )
+        self.energy_logvar = e3nn_nnx_Linear(
+            irreps_in=self.hidden_irreps,
+            irreps_out=e3nn.Irreps("1x0e"),
+            biases=False,
+            rngs=rngs,
+        )
+        # 6x6 lower triangular: 6 diagonal + 15 off-diagonal = 21 params
+        self.stress_logvar = e3nn_nnx_Linear(
+            irreps_in=self.hidden_irreps,
+            irreps_out=e3nn.Irreps("21x0e"),
+            biases=False,
+            rngs=rngs,
+        )
+
     def node_energies(
         self,
         positions: jax.Array,
         cell: jax.Array,
         cutoff: jax.Array,
         data: jraph.GraphsTuple
-    ) -> jax.Array:
+    ) -> Dict:
         """Compute per-node energies.
 
         Args:
@@ -276,6 +293,25 @@ class Nequip(nnx.Module):
                 data.receivers,
             )
 
+        # Variation heads (from full hidden_irreps, before readout)
+        # Force variation: 6 params for 3x3 lower triangular Cholesky L_f
+        frc_logvar = self.frc_logvar(features)
+        frc_var = jnp.hstack([
+            jax.nn.softplus(frc_logvar.array[:, :3]) + 0.04,
+            frc_logvar.array[:, 3:]
+        ])
+
+        # Energy variation: per-atom sigma, min 0.04
+        energy_var = jax.nn.softplus(self.energy_logvar(features).array) + 0.04
+
+        # Stress variation: 21 params for 6x6 lower triangular Cholesky L_s
+        stress_raw = self.stress_logvar(features).array
+        stress_var = jnp.concatenate([
+            jax.nn.softplus(stress_raw[:, :6]) + 0.04,
+            stress_raw[:, 6:]
+        ], axis=-1)
+
+        # Energy readout
         features = self.readout1(features)
         node_energies = self.readout(features)
 
@@ -285,13 +321,14 @@ class Nequip(nnx.Module):
         return {
             'node_energies': node_energies.array,
             'node_features': features,
-            'sh': sh,
-            'radial_basis': radial_basis,
+            'frc_variation': frc_var,
+            'energy_variation': energy_var,
+            'stress_variation': stress_var,
         }
 
     def __call__(
         self, data: jraph.GraphsTuple
-    ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+    ) -> Dict:
         """Compute energies and forces for a batch of graphs.
 
         Args:
@@ -320,7 +357,7 @@ if __name__ == "__main__":
     from bam_omat24.atom_energies import ATOM_ENERGIES
 
     #logging.basicConfig(level=logging.INFO)
-    
+
     print("=" * 70)
     print("Nequip-Style Equivariant Potential")
     print("=" * 70)
@@ -354,7 +391,10 @@ if __name__ == "__main__":
     print(f"\nNumber of parameters: {n_params:,}")
 
     # Run forward pass
-    energies, forces, stress = model(data)
+    results = model(data)
+    energies = results['energy']
+    forces = results['forces']
+    stress = results['stress']
     print(f"Energies shape: {energies.shape}")
     print(f"Forces shape: {forces.shape}")
     print(f"Total energy: {energies[0]:.6f}")

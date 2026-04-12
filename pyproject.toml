@@ -3,8 +3,8 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "BAM-nequip"
-version = "0.1.0.dev0"
+name = "BAM_RACE"
+version = "0.2.0"
 description = "Uncertainty Quantification of Bayesian Deep Learning ab initio Potential"
 readme = "README.md"
 license = "MIT"
@@ -33,8 +33,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/myung-group/BAM-nequip"
-Repository = "https://github.com/myung-group/BAM-nequip"
+Homepage = "https://github.com/myung-group/BAM_V2"
+Repository = "https://github.com/myung-group/BAM_V2"
 
 [tool.setuptools.packages.find]
 include = ["bam_3bpa*", "bam_omat24*"]

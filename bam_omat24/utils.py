@@ -5,7 +5,7 @@ nequip_nnx, race_nnx, and finetuning_nnx.
 """
 
 import math
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Callable, Optional, Sequence, Tuple, Dict
 
 import e3nn_jax as e3nn
 import flax.nnx as nnx
@@ -273,7 +273,7 @@ def energy_forces_stress(
     periodic: bool,
     l_train: bool,
     atom_energies: jax.Array,
-) -> Tuple[jax.Array, jax.Array, jax.Array]:
+) -> Dict:
     """Compute graph energies, forces, and stress from a node energy function.
 
     Shared implementation used by Nequip, RACE, and FineTuningPotential.
@@ -309,27 +309,49 @@ def energy_forces_stress(
             positions: jax.Array,
             cell: jax.Array,
             cutoff: jax.Array
-        ) -> Tuple[jax.Array, jax.Array]:
+        ) -> Tuple[jax.Array, dict]:
             results = node_energy_fn(positions, cell, cutoff, data)
             ne = results["node_energies"].reshape(-1)
-            ne = jnp.where(node_mask, ne, 0.0)
-            return jnp.sum(ne), ne
+            ne = ne*node_mask #jnp.where(node_mask, ne, 0.0)
+            aux = {
+                'node_energies': ne,
+                'frc_variation': results.get('frc_variation'),
+                'energy_variation': results.get('energy_variation'),
+                'stress_variation': results.get('stress_variation'),
+            }
+            return jnp.sum(ne), aux
 
         grad_fn = jax.grad(total_energy_fn, argnums=(0, 1), has_aux=True)
-        (grad, cellgrad), node_energies = grad_fn(
+        (grad, cellgrad), aux = grad_fn(
             data.nodes["positions"],
             data.globals["cell"],
             data.globals["cutoff"],
         )
+        node_energies = aux['node_energies']
+        frc_variation = aux['frc_variation']
+        energy_variation = aux['energy_variation']
+        stress_variation = aux['stress_variation']
     else:
-        def total_energy_fn(positions: jax.Array) -> Tuple[jax.Array, jax.Array]:
+        def total_energy_fn(
+            positions: jax.Array
+        ) -> Tuple[jax.Array, dict]:
             results = node_energy_fn(positions, None, None, data)
             ne = results["node_energies"].reshape(-1)
-            ne = jnp.where(node_mask, ne, 0.0)
-            return jnp.sum(ne), ne
+            ne = ne*node_mask #jnp.where(node_mask, ne, 0.0)
+            aux = {
+                'node_energies': ne,
+                'frc_variation': results.get('frc_variation'),
+                'energy_variation': results.get('energy_variation'),
+                'stress_variation': results.get('stress_variation'),
+            }
+            return jnp.sum(ne), aux
 
         grad_fn = jax.grad(total_energy_fn, has_aux=True)
-        grad, node_energies = grad_fn(data.nodes["positions"])
+        grad, aux = grad_fn(data.nodes["positions"])
+        node_energies = aux['node_energies']
+        frc_variation = aux['frc_variation']
+        energy_variation = aux['energy_variation']
+        stress_variation = aux['stress_variation']
 
     if not l_train:
         node_energies = node_energies + jax.lax.stop_gradient(
@@ -338,6 +360,15 @@ def energy_forces_stress(
 
     if n_graphs > 1:
         grad = jnp.where(node_mask[:, None], grad, 0.0)
+        frc_variation = jnp.where(node_mask[:,None], frc_variation, 1.0)
+        if energy_variation is not None:
+            energy_variation = jnp.where(node_mask[:, None], energy_variation, 0.0)
+        if stress_variation is not None:
+            # Neutral: diagonal=1.0, off-diagonal=0.0 -> identity-like L
+            neutral = jnp.concatenate([jnp.ones(6), jnp.zeros(15)])
+            stress_variation = jnp.where(
+                node_mask[:, None], stress_variation, neutral[None, :]
+            )
 
     grad = jnp.where(jnp.isnan(grad), 0.0, grad)
 
@@ -369,4 +400,27 @@ def energy_forces_stress(
     else:
         stress = jnp.zeros((n_graphs, 6))
 
-    return graph_energies, -grad, stress
+
+    # Aggregate per-atom variations to per-graph
+    _node_idx = node_graph_idx(data)
+    if energy_variation is not None:
+        # Per-atom log_sigma (n_atoms, 1) → per-graph mean (n_graphs, 1)
+        energy_variation = jraph.segment_mean(
+            energy_variation, _node_idx, num_segments=n_graphs,
+            indices_are_sorted=True,
+        )
+    if stress_variation is not None:
+        # Per-atom log_sigma (n_atoms, 6) → per-graph mean (n_graphs, 6)
+        stress_variation = jraph.segment_mean(
+            stress_variation, _node_idx, num_segments=n_graphs,
+            indices_are_sorted=True,
+        )
+
+    return {
+        'energy': graph_energies,
+        'forces': -jnp.array(grad),
+        'stress': stress,
+        'force_variation': frc_variation,
+        'energy_variation': energy_variation,
+        'stress_variation': stress_variation,
+    }

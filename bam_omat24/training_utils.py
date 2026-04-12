@@ -400,25 +400,26 @@ def make_sharded_evaluate_step(mesh: Mesh, huber_delta: float):
         node_mask = jraph.get_node_padding_mask(batch)
 
         model = nnx.merge(graphdef, params)
-        energy, forces, stress = model(batch)
+        results = model(batch)
+        energy = results['energy']
+        forces = results['forces']
+        stress = results['stress']
 
         vmax_E = 5.0
         n_node = jnp.maximum(batch.n_node, 1)
-        tgt_energy_per_node = vmax_E*jnp.tanh(batch.globals["energy"] / n_node / vmax_E)
-        prd_energy_per_node = vmax_E*jnp.tanh(energy /n_node / vmax_E)
-        energy_diff = (prd_energy_per_node - tgt_energy_per_node) * graph_mask
+        tgt_energy_per_node = batch.globals["energy"] / n_node
+        prd_energy_per_node = energy /n_node
+        energy_diff = vmax_E * jnp.tanh((prd_energy_per_node - tgt_energy_per_node) / vmax_E) * graph_mask
         energy_loss = huber_loss(energy_diff, delta=huber_delta)
 
         vmax_F = 10.0
-        tgt_forces = vmax_F*jnp.tanh (batch.nodes["forces"] / vmax_F)
-        prd_forces = vmax_F*jnp.tanh (forces / vmax_F)
-        forces_diff = (prd_forces - tgt_forces) * node_mask[:, None]
+        forces_diff = forces - batch.nodes["forces"]
+        forces_diff = vmax_F * jnp.tanh((forces_diff) / vmax_F) * node_mask[:, None]
         force_loss = huber_loss(forces_diff, delta=huber_delta)
 
         vmax_S = 0.5
-        tgt_stress = vmax_S * jnp.tanh (batch.globals["stress"] / vmax_S)
-        prd_stress = vmax_S * jnp.tanh (stress / vmax_S)
-        stress_diff = (prd_stress - tgt_stress) * graph_mask[:, None]
+        stress_diff = stress - batch.globals["stress"]
+        stress_diff = vmax_S * jnp.tanh (stress_diff / vmax_S) * graph_mask[:, None]
         stress_loss = huber_loss(stress_diff, delta=huber_delta)
 
         # Return sums weighted by actual counts for proper aggregation

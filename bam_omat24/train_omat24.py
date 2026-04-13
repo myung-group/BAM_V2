@@ -162,7 +162,7 @@ def _build_pretrain_components(config: Dict, mesh, n_devices: int, fout):
 
 def _build_finetune_components(config: Dict, mesh, n_devices: int, fout):
     """Build model, optimizer, and train_step for finetune mode."""
-    from bam_omat24.finetuning_nnx import FineTuningPotential, filter_delta_params
+    from bam_omat24.finetuning_nnx import FineTuningPotential, filter_ft_params
 
     seed       = config.get('seed', 42)
     model_rngs = nnx.Rngs(seed)
@@ -210,7 +210,7 @@ def _build_finetune_components(config: Dict, mesh, n_devices: int, fout):
     ema_params       = params
 
     n_params         = sum(x.size for x in jax.tree.leaves(params))
-    trainable, frozen = filter_delta_params(params)
+    trainable, frozen = filter_ft_params(params)
     n_trainable      = sum(x.size for x in jax.tree.leaves(trainable))
     n_frozen         = sum(x.size for x in jax.tree.leaves(frozen))
     print(f"   Total parameters : {n_params:,}")

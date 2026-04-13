@@ -3,7 +3,7 @@
 # Models
 from bam_omat24.nequip_nnx import Nequip
 from bam_omat24.race_nnx import RACE
-from bam_omat24.finetuning_nnx import FineTuningPotential, filter_delta_params
+from bam_omat24.finetuning_nnx import FineTuningPotential, filter_ft_params
 
 # Model building blocks
 from bam_omat24.utils import (
@@ -53,7 +53,7 @@ __all__ = [
     "Nequip",
     "RACE",
     "FineTuningPotential",
-    "filter_delta_params",
+    "filter_ft_params",
     # Model building blocks
     "bessel_basis",
     "polynomial_cutoff",

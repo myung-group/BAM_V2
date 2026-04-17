@@ -25,6 +25,7 @@ Usage:
 # DETERMINISM: Set BEFORE importing JAX if needed
 # ============================================================================
 import os
+os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_enable_triton_gemm=false"
 # os.environ["XLA_FLAGS"] = os.environ.get("XLA_FLAGS", "") + " --xla_gpu_deterministic_ops=true"
 # os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
 
@@ -145,6 +146,7 @@ def _build_pretrain_components(config: Dict, mesh, n_devices: int, fout):
     huber_delta   = config.get('huber_delta',   0.02)
     loss_type     = config.get('loss_type',     'huber')
 
+    periodic = config.get('periodic', True)
     train_step = make_sharded_train_step(
         optimizer     = optimizer,
         mesh          = mesh,
@@ -154,6 +156,7 @@ def _build_pretrain_components(config: Dict, mesh, n_devices: int, fout):
         huber_delta   = huber_delta,
         ema_decay     = config.get('ema_decay', 0.99),
         loss_type     = loss_type,
+        periodic      = periodic,
     )
 
     return (graphdef, params, ema_params, optimizer, schedule,
@@ -242,6 +245,7 @@ def _build_finetune_components(config: Dict, mesh, n_devices: int, fout):
     huber_delta   = config.get('huber_delta',   0.02)
     loss_type     = config.get('loss_type',     'huber')
 
+    periodic = config.get('periodic', True)
     train_step = make_sharded_train_step(
         optimizer     = optimizer,
         mesh          = mesh,
@@ -252,6 +256,7 @@ def _build_finetune_components(config: Dict, mesh, n_devices: int, fout):
         ema_decay     = config.get('ema_decay', 0.99),
         freeze_mask   = freeze_mask,
         loss_type     = loss_type,
+        periodic      = periodic,
     )
 
     return (graphdef, params, ema_params, optimizer, schedule,
@@ -271,6 +276,7 @@ def train(config: Dict, train_files_pkl: List[str], valid_files_pkl: List[str]):
     """
     mode         = config.get('mode', 'pretrain').lower()
     is_multihost = bool(config.get('multihost', False))
+    loss_type    = config.get('loss_type', 'huber')
 
     assert mode in ('pretrain', 'finetune'), \
         f"Unknown mode '{mode}'. Choose from: pretrain, finetune."
@@ -335,6 +341,11 @@ def train(config: Dict, train_files_pkl: List[str], valid_files_pkl: List[str]):
 
     seed = config.get('seed', 42)
 
+    # ── Build eval_step once (avoids re-JIT on every validation call) ─────────
+    from bam_omat24.training_utils import make_sharded_evaluate_step
+    periodic = config.get('periodic', True)
+    eval_step = make_sharded_evaluate_step(mesh, huber_delta=huber_delta, loss_type=loss_type, periodic=periodic)
+
     # ── Training loop ──────────────────────────────────────────────────────────
     best_state           = None
     no_improvement_count = 0
@@ -376,6 +387,7 @@ def train(config: Dict, train_files_pkl: List[str], valid_files_pkl: List[str]):
 
                 n_g = float(metrics['n_graphs'])
                 n_a = float(metrics['n_atoms'])
+                #acc_total_loss += float(metrics['loss']) * n_g 
                 acc_energy_loss += float(metrics['energy_loss']) * n_g
                 acc_force_loss  += float(metrics['force_loss'])  * 3 * n_a
                 acc_stress_loss += float(metrics['stress_loss']) * n_g
@@ -390,8 +402,9 @@ def train(config: Dict, train_files_pkl: List[str], valid_files_pkl: List[str]):
                     f = acc_force_loss  / max(3 * acc_atoms, 1)
                     s = acc_stress_loss / max(acc_graphs, 1)
                     t = energy_weight * e + force_weight * f + stress_weight * s
+                    #t = acc_total_loss /max (acc_graphs, 1)
                     print(f"step {current_step} LOSS: {t:.6f} "
-                          f"E_LOSS: {e:.6f} F_LOSS: {f:.6f}", file=fout)
+                          f"E_LOSS: {e:.6f} F_LOSS: {f:.6f} S_LOSS: {s:.6f}", file=fout)
 
             # ── Per-pkl train summary ─────────────────────────────────────────
             unrep_schedule = unreplicate_pytree(schedule_state)
@@ -418,7 +431,7 @@ def train(config: Dict, train_files_pkl: List[str], valid_files_pkl: List[str]):
 
             val_metrics = evaluate_sharded(
                 graphdef      = graphdef,
-                params        = unrep_ema,
+                params        = ema_params,
                 files_pkl     = valid_files_pkl,
                 batch_size    = config['batch_size'],
                 n_devices     = n_devices,
@@ -427,6 +440,9 @@ def train(config: Dict, train_files_pkl: List[str], valid_files_pkl: List[str]):
                 force_weight  = force_weight,
                 stress_weight = stress_weight,
                 huber_delta   = huber_delta,
+                loss_type     = loss_type,
+                eval_step     = eval_step,
+                params_already_replicated = True,
             )
             val_time = time.time() - val_start
             val_loss = val_metrics['total_loss']

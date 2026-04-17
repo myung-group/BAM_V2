@@ -364,10 +364,9 @@ def energy_forces_stress(
         if energy_variation is not None:
             energy_variation = jnp.where(node_mask[:, None], energy_variation, 0.0)
         if stress_variation is not None:
-            # Neutral: diagonal=1.0, off-diagonal=0.0 -> identity-like L
-            neutral = jnp.concatenate([jnp.ones(6), jnp.zeros(15)])
+            # Neutral: sigma=1.0 for all 6 Voigt components
             stress_variation = jnp.where(
-                node_mask[:, None], stress_variation, neutral[None, :]
+                node_mask[:, None], stress_variation, 1.0
             )
 
     grad = jnp.where(jnp.isnan(grad), 0.0, grad)

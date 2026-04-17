@@ -108,12 +108,14 @@ def compute_loss(
     stress_weight: float,
     huber_delta: float,
     loss_type: str = 'huber',
+    periodic: bool = True,
 ) -> Tuple[jnp.ndarray, Dict]:
     """Compute training loss for a single batch (no device dimension).
 
     Args:
         loss_type: 'huber' for plain Huber loss, 'nll' for Huber-based NLL
                    with Cholesky-parameterized covariances.
+        periodic: Whether system is periodic. If False, stress loss is skipped.
     """
     graph_mask = jraph.get_graph_padding_mask(batch)
     node_mask = jraph.get_node_padding_mask(batch)
@@ -125,17 +127,26 @@ def compute_loss(
     results = model(batch)
     energy = results['energy']
     forces = results['forces']
-    stress = results['stress']
+
+    vmax_E = 5.0
+    vmax_F = 10.0
 
     n_node = jnp.maximum(batch.n_node, 1)
     energy_diff = (energy - batch.globals["energy"]) * graph_mask / n_node
     force_diff = (forces - batch.nodes["forces"]) * node_mask[:, None]
-    stress_diff = (stress - batch.globals["stress"]) * graph_mask[:, None]
 
+    energy_diff = vmax_E * jnp.tanh(energy_diff/vmax_E)
+    force_diff = vmax_F * jnp.tanh(force_diff/vmax_F)
+
+    if periodic:
+        stress = results['stress']
+        vmax_S = 0.5
+        stress_diff = (stress - batch.globals["stress"]) * graph_mask[:, None]
+        stress_diff = vmax_S * jnp.tanh(stress_diff/vmax_S)
     if loss_type == 'nll':
         frc_var = results['force_variation']          # (n_atoms, 6)
         energy_var = results.get('energy_variation')  # (n_graphs, 1) or None
-        stress_var = results.get('stress_variation')  # (n_graphs, 21) or None
+        stress_var = results.get('stress_variation') if periodic else None
 
         # ---- Energy NLL ----
         if energy_var is not None:
@@ -158,52 +169,54 @@ def compute_loss(
             jnp.log(frc_diag) * node_mask[:, None]
         ) / (3 * n_atoms)
 
-        # ---- Stress NLL (6x6 Cholesky per graph) ----
-        if stress_var is not None:
-            stress_L = _build_stress_L(stress_var)
-            stress_z = jax.vmap(
-                lambda L, d: jax.scipy.linalg.solve_triangular(L, d, lower=True)
-            )(stress_L, stress_diff)
-            stress_loss = jnp.sum(huber_loss(stress_z, delta=huber_delta)) / n_graphs
-            stress_diag = jnp.diagonal(stress_L, axis1=-2, axis2=-1)
-            stress_log_det = 2.0 * jnp.sum(
-                jnp.log(stress_diag) * graph_mask[:, None]
-            ) / n_graphs
+        # ---- Stress NLL (diagonal covariance per graph) ----
+        if periodic:
+            if stress_var is not None:
+                stress_sigma = stress_var * graph_mask[:, None] + (1.0 - graph_mask[:, None])
+                stress_z = stress_diff / stress_sigma
+                stress_loss = jnp.sum(huber_loss(stress_z, delta=huber_delta)) / n_graphs
+                stress_log_det = 2.0 * jnp.sum(
+                    jnp.log(stress_sigma) * graph_mask[:, None]
+                ) / n_graphs
+            else:
+                stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta)) / n_graphs
+                stress_log_det = 0.0
         else:
-            stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta)) / n_graphs
+            stress_loss = 0.0
             stress_log_det = 0.0
 
-        # Constant offset C = -min(log-det) to guarantee total_loss ≥ 0.
-        # Per-term floors when all Cholesky diagonals = MIN_VAR:
+        # Per-term constant offsets to guarantee each loss ≥ 0.
+        # Floor of log-det when all Cholesky diagonals = MIN_VAR:
         #   energy:  2·log(d)          (1 σ per config)
         #   force:   2·log(d)          (3 diag per atom, n_atoms cancels)
         #   stress:  12·log(d)         (6 diag per config)
         MIN_VAR = 0.04
         log_min_var = jnp.log(MIN_VAR)
-        nll_const = -2.0 * log_min_var                       # force (always present)
-        if energy_var is not None:
-            nll_const = nll_const - 2.0 * log_min_var        # + energy offset
-        if stress_var is not None:
-            nll_const = nll_const - 12.0 * log_min_var       # + stress offset
+        energy_const = -2.0 * log_min_var if energy_var is not None else 0.0
+        force_const  = -2.0 * log_min_var   # force always present
+        stress_const = -12.0 * log_min_var if (periodic and stress_var is not None) else 0.0
+
+        # Each individual loss is now ≥ 0
+        energy_nll = energy_loss + energy_log_det + energy_const
+        force_nll  = force_loss  + force_log_det  + force_const
+        stress_nll = stress_loss + stress_log_det + stress_const
 
         total_loss = (
-            energy_weight * energy_loss
-            + force_weight * force_loss
-            + stress_weight * stress_loss
-            + energy_log_det + force_log_det + stress_log_det
-            + nll_const
+            energy_weight * energy_nll
+            + force_weight * force_nll
+            + stress_weight * stress_nll
         )
 
         aux = {
-            'energy_loss': energy_loss + energy_log_det,
-            'force_loss': force_loss + force_log_det,
-            'stress_loss': stress_loss + stress_log_det,
+            'energy_loss': energy_nll,
+            'force_loss': force_nll,
+            'stress_loss': stress_nll,
         }
 
     else:  # 'huber' — plain Huber loss (no variance / NLL)
         energy_loss = jnp.sum(huber_loss(energy_diff, delta=huber_delta)) / n_graphs
         force_loss = jnp.sum(huber_loss(force_diff, delta=huber_delta)) / (3 * n_atoms)
-        stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta)) / n_graphs
+        stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta)) / n_graphs if periodic else 0.0
 
         total_loss = (
             energy_weight * energy_loss
@@ -219,7 +232,7 @@ def compute_loss(
 
     energy_mse = jnp.sum(energy_diff ** 2) / n_graphs
     force_mse = jnp.sum(force_diff ** 2) / (3 * n_atoms)
-    stress_mse = jnp.sum(stress_diff ** 2) / n_graphs
+    stress_mse = jnp.sum(stress_diff ** 2) / n_graphs if periodic else 0.0
 
     aux.update({
         'energy_mse': energy_mse,
@@ -285,6 +298,7 @@ def make_sharded_train_step(
     ema_decay: float = 0.99,
     freeze_mask: Any = None,
     loss_type: str = 'huber',
+    periodic: bool = True,
 ):
     """Create sharded training step with gradient synchronization.
 
@@ -308,7 +322,7 @@ def make_sharded_train_step(
             return compute_loss(
                 graphdef, params, batch,
                 energy_weight, force_weight, stress_weight, huber_delta,
-                loss_type=loss_type,
+                loss_type=loss_type, periodic=periodic,
             )
 
         # Compute gradients locally
@@ -383,7 +397,7 @@ def make_sharded_train_step(
 # Sharded Evaluation
 # =============================================================================
 
-def make_sharded_evaluate_step(mesh: Mesh, huber_delta: float):
+def make_sharded_evaluate_step(mesh: Mesh, huber_delta: float, loss_type: str = 'huber', periodic: bool = True):
     """Create sharded evaluation function that runs on all GPUs.
 
     Each device evaluates its own batch, then results are summed across devices.
@@ -399,44 +413,115 @@ def make_sharded_evaluate_step(mesh: Mesh, huber_delta: float):
         graph_mask = jraph.get_graph_padding_mask(batch)
         node_mask = jraph.get_node_padding_mask(batch)
 
+        n_graphs = jnp.maximum(graph_mask.sum(), 1)
+        n_atoms = jnp.maximum(node_mask.sum(), 1)
+
         model = nnx.merge(graphdef, params)
         results = model(batch)
         energy = results['energy']
         forces = results['forces']
-        stress = results['stress']
 
         vmax_E = 5.0
-        n_node = jnp.maximum(batch.n_node, 1)
-        tgt_energy_per_node = batch.globals["energy"] / n_node
-        prd_energy_per_node = energy /n_node
-        energy_diff = vmax_E * jnp.tanh((prd_energy_per_node - tgt_energy_per_node) / vmax_E) * graph_mask
-        energy_loss = huber_loss(energy_diff, delta=huber_delta)
-
         vmax_F = 10.0
-        forces_diff = forces - batch.nodes["forces"]
-        forces_diff = vmax_F * jnp.tanh((forces_diff) / vmax_F) * node_mask[:, None]
-        force_loss = huber_loss(forces_diff, delta=huber_delta)
 
-        vmax_S = 0.5
-        stress_diff = stress - batch.globals["stress"]
-        stress_diff = vmax_S * jnp.tanh (stress_diff / vmax_S) * graph_mask[:, None]
-        stress_loss = huber_loss(stress_diff, delta=huber_delta)
+        n_node = jnp.maximum(batch.n_node, 1)
+        energy_diff = (energy - batch.globals["energy"]) * graph_mask / n_node
+        forces_diff = (forces - batch.nodes["forces"]) * node_mask[:, None]
 
-        # Return sums weighted by actual counts for proper aggregation
-        return {
-            'energy_loss': jnp.sum(energy_loss),
-            'force_loss': jnp.sum(force_loss),
-            'stress_loss': jnp.sum(stress_loss),
-            'energy_se': jnp.sum(energy_diff ** 2),
-            'force_se': jnp.sum(forces_diff ** 2),
-            'stress_se': jnp.sum(stress_diff ** 2),
-            'energy_ae': jnp.sum(jnp.abs(energy_diff)),
-            'force_ae': jnp.sum(jnp.abs(forces_diff)),
-            'stress_ae': jnp.sum(jnp.abs(stress_diff)),
-            'n_graphs': graph_mask.sum(),  # Actual count (not max with 1)
-            'n_atoms': node_mask.sum(),    # Actual count
-        }
+        energy_diff = vmax_E * jnp.tanh(energy_diff/vmax_E)
+        forces_diff = vmax_F * jnp.tanh(forces_diff/vmax_F)
 
+        if periodic:
+            stress = results['stress']
+            vmax_S = 0.5
+            stress_diff = (stress - batch.globals["stress"]) * graph_mask[:, None]
+            stress_diff = vmax_S * jnp.tanh(stress_diff/vmax_S)
+
+        if loss_type == 'nll':
+            frc_var = results['force_variation']          # (n_atoms, 6)
+            energy_var = results.get('energy_variation')  # (n_graphs, 1) or None
+            stress_var = results.get('stress_variation') if periodic else None
+
+            # ---- Energy NLL ----
+            if energy_var is not None:
+                energy_sigma = energy_var.squeeze(-1) * graph_mask + (1.0 - graph_mask)
+                energy_z = energy_diff / energy_sigma
+                energy_loss = jnp.sum(huber_loss(energy_z, delta=huber_delta))
+                energy_log_det = 2.0 * jnp.sum(jnp.log(energy_sigma) * graph_mask)
+            else:
+                energy_loss = jnp.sum(huber_loss(energy_diff, delta=huber_delta))
+                energy_log_det = 0.0
+
+
+            # ---- Force NLL (3x3 Cholesky per atom) ----
+            frc_L = _build_force_L(frc_var)
+            frc_z = jax.vmap(
+                lambda L, d: jax.scipy.linalg.solve_triangular(L, d, lower=True)
+            )(frc_L, forces_diff)
+            force_loss = jnp.sum(huber_loss(frc_z, delta=huber_delta))
+            frc_diag = jnp.diagonal(frc_L, axis1=-2, axis2=-1)
+            force_log_det = 2.0 * jnp.sum(
+                jnp.log(frc_diag) * node_mask[:, None]
+            )
+
+            # ---- Stress NLL (diagonal covariance per graph) ----
+            if periodic:
+                if stress_var is not None:
+                    stress_sigma = stress_var * graph_mask[:, None] + (1.0 - graph_mask[:, None])
+                    stress_z = stress_diff / stress_sigma
+                    stress_loss = jnp.sum(huber_loss(stress_z, delta=huber_delta))
+                    stress_log_det = 2.0 * jnp.sum(
+                        jnp.log(stress_sigma) * graph_mask[:, None]
+                    )
+                else:
+                    stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta))
+                    stress_log_det = 0.0
+            else:
+                stress_loss = 0.0
+                stress_log_det = 0.0
+
+            # Per-term constant offsets to guarantee each loss ≥ 0.
+            # Scaled by n_graphs/n_atoms so they normalize correctly after psum.
+            MIN_VAR = 0.04
+            log_min_var = jnp.log(MIN_VAR)
+            energy_const = -2.0 * log_min_var * n_graphs if energy_var is not None else 0.0
+            force_const  = -2.0 * log_min_var * (3 * n_atoms)
+            stress_const = -12.0 * log_min_var * n_graphs if (periodic and stress_var is not None) else 0.0
+
+            # Each individual loss is now ≥ 0 after downstream normalization
+            energy_nll = energy_loss + energy_log_det + energy_const
+            force_nll  = force_loss  + force_log_det  + force_const
+            stress_nll = stress_loss + stress_log_det + stress_const
+            aux = {
+                'energy_loss' : energy_nll,
+                'force_loss' : force_nll,
+                'stress_loss' : stress_nll,
+            }
+        else:
+            energy_loss = jnp.sum(huber_loss(energy_diff, delta=huber_delta))
+            force_loss = jnp.sum(huber_loss(forces_diff, delta=huber_delta))
+            stress_loss = jnp.sum(huber_loss(stress_diff, delta=huber_delta)) if periodic else 0.0
+            aux = {
+                'energy_loss' : energy_loss,
+                'force_loss' : force_loss,
+                'stress_loss' : stress_loss,
+            }
+
+        aux.update ({
+            'energy_se' : jnp.sum(energy_diff**2),
+            'force_se' : jnp.sum(forces_diff**2),
+            'stress_se' : jnp.sum(stress_diff**2) if periodic else 0.0,
+            'energy_ae' : jnp.sum(jnp.abs(energy_diff)),
+            'force_ae' : jnp.sum(jnp.abs(forces_diff)),
+            'stress_ae' : jnp.sum(jnp.abs(stress_diff)) if periodic else 0.0,
+            'n_graphs' : n_graphs,
+            'n_atoms' : n_atoms
+        })
+
+        
+        return aux 
+        
+    
     def eval_and_reduce(graphdef, params, batch):
         """Evaluate on each device and sum results across devices."""
         local_metrics = eval_single_device(graphdef, params, batch)
@@ -468,13 +553,18 @@ def evaluate_sharded(
     energy_weight: float = 1.0,
     force_weight: float = 1.0,
     stress_weight: float = 1.0,
-    huber_delta: float = 0.02
+    huber_delta: float = 0.02,
+    loss_type: str = 'huber',
+    eval_step=None,
+    params_already_replicated: bool = False,
+    periodic: bool = True,
 ) -> Dict:
     """Evaluate model on validation set using all GPUs.
 
     Args:
         graphdef: Model graph definition
-        params: Model parameters (unreplicated)
+        params: Model parameters (unreplicated, or replicated if
+                params_already_replicated=True)
         files_pkl: List of validation data files
         batch_size: Batch size per device
         n_devices: Number of devices
@@ -483,12 +573,19 @@ def evaluate_sharded(
         force_weight: Weight for forces in loss
         stress_weight: Weight for stress in loss
         huber_delta: Huber loss delta
+        loss_type: 'huber' or 'nll'
+        eval_step: Pre-built sharded eval function (avoids re-JIT).
+                   If None, one is created internally.
+        params_already_replicated: If True, skip replicate_pytree on params.
+        periodic: Whether system is periodic. If False, stress loss is skipped.
 
     Returns:
         Dictionary with evaluation metrics
     """
-    # Replicate params for sharded computation
-    params_replicated = replicate_pytree(params, mesh)
+    if params_already_replicated:
+        params_replicated = params
+    else:
+        params_replicated = replicate_pytree(params, mesh)
 
     # Initialize accumulators
     totals = {
@@ -505,8 +602,8 @@ def evaluate_sharded(
         'n_atoms': 0.0
     }
 
-    # Create sharded evaluation function
-    eval_step = make_sharded_evaluate_step(mesh, huber_delta=huber_delta)
+    if eval_step is None:
+        eval_step = make_sharded_evaluate_step(mesh, huber_delta=huber_delta, loss_type=loss_type, periodic=periodic)
 
     for fname in files_pkl:
         dataset = Dataset(file_path=fname)
@@ -544,6 +641,8 @@ def evaluate_sharded(
         'energy_mae': totals['energy_ae'] / n_g,
         'force_mae': totals['force_ae'] / (3 * n_a),
         'stress_mae': totals['stress_ae'] / n_g,
+        'energy_rmse': np.sqrt(totals['energy_se']/n_g),
+        'force_rmse': np.sqrt(totals['force_se']/(3 * n_a)),
         'energy_loss': totals['energy_loss'] / n_g,
         'force_loss': totals['force_loss'] / (3 * n_a),
         'stress_loss': totals['stress_loss'] / n_g,

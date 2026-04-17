@@ -241,10 +241,10 @@ class Nequip(nnx.Module):
             biases=False,
             rngs=rngs,
         )
-        # 6x6 lower triangular: 6 diagonal + 15 off-diagonal = 21 params
+        # Diagonal-only stress variance: 6 params (one per Voigt component)
         self.stress_logvar = e3nn_nnx_Linear(
             irreps_in=self.hidden_irreps,
-            irreps_out=e3nn.Irreps("21x0e"),
+            irreps_out=e3nn.Irreps("6x0e"),
             biases=False,
             rngs=rngs,
         )
@@ -304,12 +304,9 @@ class Nequip(nnx.Module):
         # Energy variation: per-atom sigma, min 0.04
         energy_var = jax.nn.softplus(self.energy_logvar(features).array) + 0.04
 
-        # Stress variation: 21 params for 6x6 lower triangular Cholesky L_s
+        # Stress variation: 6 diagonal sigma values (one per Voigt component)
         stress_raw = self.stress_logvar(features).array
-        stress_var = jnp.concatenate([
-            jax.nn.softplus(stress_raw[:, :6]) + 0.04,
-            stress_raw[:, 6:]
-        ], axis=-1)
+        stress_var = jax.nn.softplus(stress_raw) + 0.04
 
         # Energy readout
         features = self.readout1(features)

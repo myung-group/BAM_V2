@@ -17,19 +17,50 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "ase>=3.24.0",
+    "matscipy>=1.2.0",
+    "numpy>=2.2.6",
+    "tqdm>=4.67.1",
+    "natsort>=8.0.0",
+]
+
+[project.optional-dependencies]
+# JAX backend: bam_omat24, bam_3bpa
+jax = [
     "jax>=0.8.2",
     "jaxlib>=0.8.2",
     "flax>=0.12.0",
     "optax>=0.2.4",
     "e3nn-jax>=0.20.7",
     "jraph>=0.0.6.dev0",
-    "ase>=3.24.0",
-    "matscipy>=1.2.0",
-    "numpy>=2.2.6",
-    "tqdm>=4.67.1",
+]
+# PyTorch backend with e3nn: bam_torch
+torch = [
+    "torch>=2.10.0",
+    "e3nn>=0.5.0",
+]
+# PyTorch backend with cuequivariance (CUDA-optimized): bam_torch_cue
+torch-cue = [
+    "torch>=2.10.0",
+    "cuequivariance>=0.9.0",
+    "cuequivariance-torch>=0.9.0",
+    "einops>=0.7.0",
+]
+# Install everything
+all = [
+    "jax>=0.8.2",
+    "jaxlib>=0.8.2",
+    "flax>=0.12.0",
+    "optax>=0.2.4",
+    "e3nn-jax>=0.20.7",
+    "jraph>=0.0.6.dev0",
+    "torch>=2.10.0",
+    "e3nn>=0.5.0",
+    "einops>=0.7.0",
 ]
 
 [project.urls]
@@ -37,4 +68,4 @@ Homepage = "https://github.com/myung-group/BAM_V2"
 Repository = "https://github.com/myung-group/BAM_V2"
 
 [tool.setuptools.packages.find]
-include = ["bam_3bpa*", "bam_omat24*"]
+include = ["bam_3bpa*", "bam_omat24*", "bam_torch*", "bam_torch_cue*"]

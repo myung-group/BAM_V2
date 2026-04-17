@@ -8,7 +8,7 @@ E(3)-equivariant graph neural network interatomic potentials with uncertainty qu
 | `bam_torch` | PyTorch | e3nn | GPU training, standard workflows |
 | `bam_torch_cue` | PyTorch | cuequivariance | CUDA-optimized, fastest GPU inference |
 
-All backends implement the same model hierarchy — **NequIP → RACE  — and share the same training interface.
+All backends implement the same model hierarchy — **NequIP → RACE**  — and share the same training interface.
 
 ## Overview
 

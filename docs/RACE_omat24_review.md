@@ -61,7 +61,7 @@ nodes), `energy_forces_stress(..., frc_variation_fill=None)`,
 `evaluate_sharded(..., collate_fn=None)` and in-memory datasets,
 `make_sharded_train_step(..., cov_mode, beta_nll, grad_clip, dynamic_loss_weights)`.
 
-## 3. Numerical verification (`pytest tests`, 15 passed, 2 xfailed)
+## 3. Numerical verification (`pytest tests`, 16 passed, 2 xfailed, ~7 min on GPU)
 
 Measured on a random 3BPA frame with a small RACE (2 layers, 16 channels,
 lmax 2):

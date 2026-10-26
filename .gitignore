@@ -12,3 +12,8 @@ build/
 # Editors
 .vscode/
 .idea/
+
+# training outputs
+runs/
+*.pkl
+*.out

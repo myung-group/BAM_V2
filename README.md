@@ -164,7 +164,7 @@ All three model tiers share the same backbone:
 
 **NequIP**: single readout after all layers.  
 **RACE**: per-layer energy readout accumulated across layers, plus a second tensor product with scalar x-features.  
-**BRACE** (JAX only): adds MACE-style symmetric contractions via `e3nn.reduced_symmetric_tensor_product_basis`.
+**BRACE** (planned, JAX): MACE-style symmetric contractions via `e3nn.reduced_symmetric_tensor_product_basis` — not implemented yet.
 
 **FineTuningPotential** wraps a frozen RACE checkpoint with trainable affine (scale + shift) and variance heads for delta-learning on new systems.
 
@@ -198,6 +198,27 @@ All three model tiers share the same backbone:
 | `use_scan`          | Use `jax.lax.scan` for training    | true    | JAX          |
 | `grad_clip`         | Gradient clipping norm             | 1.0     | all          |
 | `ema_decay`         | EMA decay rate                     | 0.99    | all          |
+
+RACE options added in `bam_omat24` (JAX). Defaults reproduce the original behaviour; see
+`docs/RACE_omat24_review.md` for details.
+
+| Parameter           | Description                                                                 | Default     |
+| ------------------- | --------------------------------------------------------------------------- | ----------- |
+| `x_mode`            | `"species"` (per-element scalar x-feature) or `"node_scalar"` (per-layer projection of the node's own 0e features) | `species` |
+| `cov_mode`          | Force covariance: `"scalar6"` (6 invariant scalars → Cholesky, **not** rotation equivariant) or `"irreps"` (`1x0e + 1x2e`, Σ = (aI + B)², equivariant) | `scalar6` |
+| `loss_type`         | `"huber"`, `"nll"` (legacy Huber-whitened), `"gauss_nll"` (exact Gaussian NLL) | `huber`   |
+| `beta_nll`          | β of β-NLL weighting (only `gauss_nll`)                                     | 0.0         |
+| `use_dataset_stats` | Initialise `shift` (per-atom mean energy), `scale` (force RMS) and `avg_n_neighbors` from the training set | false |
+| `e0_mode`           | `"isolated"` (config `atom_energies`) or `"regression"` (per-species least squares on the training energies) | `isolated` |
+| `loss_schedule`     | List of stages `{"until_epoch": N, "energy_weight": .., "force_weight": ..}` (best-checkpoint tracking restarts at each stage) | none |
+| `node_bucket_size` / `edge_bucket_size` | Padding granularity of batches (smaller = less wasted compute, more JIT shapes) | 128 / 4096 |
+
+3BPA with the `bam_omat24` backend:
+
+```bash
+python -m bam_omat24.train_3bpa input/input_3bpa_omat24_baseline.json
+pytest tests            # equivariance / forces / stats / x_mode
+```
 
 
 ### Comparison with other codes

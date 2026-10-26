@@ -32,8 +32,9 @@ from pathlib import Path
 import json
 import math
 import sys
+import functools
 
-from bam_omat24.data_nnx import BucketedDataLoader, MultiDeviceDataLoader, setup_mesh
+from bam_omat24.data_nnx import BucketedDataLoader, MultiDeviceDataLoader, setup_mesh, default_collate_fn
 from bam_omat24.data_3bpa import (
     load_3bpa_graphs, load_frames, fit_e0, compute_dataset_stats,
     split_train_valid, GraphListDataset, atomic_numbers_to_indices,
@@ -318,6 +319,14 @@ def train(cfg: Dict):
         train_dataset, batch_size=batch_size, n_buckets=8,
         shuffle=True, drop_last=True, rngs=loader_rngs,
     )
+    # Padding granularity. The default collate pads nodes to multiples of 128
+    # and edges to multiples of 4096, which wastes ~50 % of the compute for
+    # small molecules; smaller buckets mean a few more JIT shapes but less work.
+    node_bucket = int(_get(cfg, 'node_bucket_size', 128))
+    edge_bucket = int(_get(cfg, 'edge_bucket_size', 4096))
+    collate = functools.partial(default_collate_fn, node_bucket_size=node_bucket,
+                                edge_bucket_size=edge_bucket)
+    base_loader.collate_fn = collate
     train_loader = MultiDeviceDataLoader(base_loader, n_devices=n_devices, mesh=mesh,
                                          drop_incomplete=True)
 
@@ -328,7 +337,7 @@ def train(cfg: Dict):
             energy_weight=weights['energy_weight'], force_weight=weights['force_weight'],
             stress_weight=0.0, huber_delta=huber_delta, loss_type=loss_type,
             eval_step=eval_step, params_already_replicated=True, periodic=False,
-            cov_mode=cov_mode, beta_nll=beta_nll,
+            cov_mode=cov_mode, beta_nll=beta_nll, collate_fn=collate,
         )
 
     def _log(*args, **kwargs):
@@ -338,8 +347,19 @@ def train(cfg: Dict):
          f"{len(base_loader)} batches/epoch, loss_type={loss_type}")
     global_step = int(np.asarray(step))
     t_train_start = time.time()
+    prev_weights = loss_weights_for_epoch(cfg, start_epoch)
     for epoch in range(start_epoch, n_epochs):
         weights = loss_weights_for_epoch(cfg, epoch)
+        if weights != prev_weights:
+            # New loss-schedule stage: the validation loss changes scale, so the
+            # best-checkpoint tracking and the plateau counter must restart
+            # (the LR scale itself is kept).
+            _log(f"--- loss schedule stage change at epoch {epoch+1}: {prev_weights} -> {weights}")
+            best_val_loss = math.inf
+            old_sched = unreplicate_pytree(schedule_state)
+            fresh = schedule.init(unreplicate_pytree(params))
+            schedule_state = replicate_pytree(fresh._replace(scale=old_sched.scale), mesh)
+            prev_weights = weights
         lw = {k: jnp.asarray(v, dtype=jnp.float32) for k, v in weights.items()}
 
         acc_energy = acc_force = 0.0

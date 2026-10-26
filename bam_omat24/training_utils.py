@@ -603,6 +603,7 @@ def evaluate_sharded(
     periodic: bool = True,
     cov_mode: str = 'scalar6',
     beta_nll: float = 0.0,
+    collate_fn=None,
 ) -> Dict:
     """Evaluate model on validation set using all GPUs.
 
@@ -664,6 +665,8 @@ def evaluate_sharded(
             drop_last=False,     # Evaluate ALL data
             rngs=nnx.Rngs(0)    # Deterministic rngs (not used when shuffle=False)
         )
+        if collate_fn is not None:
+            base_loader.collate_fn = collate_fn
         # Use multi-device loader for evaluation
         loader = MultiDeviceDataLoader(
             base_loader=base_loader,

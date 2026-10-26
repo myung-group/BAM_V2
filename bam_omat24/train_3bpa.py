@@ -312,7 +312,7 @@ def train(cfg: Dict):
     ema_params = replicate_pytree(ema_params, mesh)
     opt_state = replicate_pytree(opt_state, mesh)
     schedule_state = replicate_pytree(schedule_state, mesh)
-    step = replicate(jnp.array(int(_get(cfg, 'step', 0))), mesh)
+    step = replicate(jnp.array(int(ckpt.get('step', 0)) if start_epoch > 0 else 0), mesh)
 
     loader_rngs = nnx.Rngs(int(_get(cfg, 'seed', 42)) + 100)
     base_loader = BucketedDataLoader(

@@ -6,6 +6,15 @@ using Flax NNX framework with e3nn_jax for equivariant operations.
 Changes from original:
 - Fixed hardcoded irreps in RACEXReadout (now derived from hidden_irreps)
 - Fixed avg_n_neighbors Param usage (now consistent)
+- avg_n_neighbors / atom_energies are now non-trainable constants
+  (static Python float / tuple) instead of nnx.Param.
+- New option ``x_mode``: "species" (default, original behaviour: x_feats is a
+  per-species scalar) or "node_scalar" (x_feats is a per-layer linear projection
+  of the receiving node's current scalar (0e) features).
+- New option ``cov_mode``: "scalar6" (default, original behaviour: 6 invariant
+  scalars fill a 3x3 Cholesky factor, which is NOT rotation-equivariant) or
+  "irreps" (predict ``1x0e + 1x2e`` and build Sigma = (a*I + B)^2 with B a
+  traceless symmetric tensor, which is rotation-equivariant).
 
 """
 
@@ -245,9 +254,16 @@ class RACE(nnx.Module):
         atom_energies: Optional[Sequence[float]] = None,
         l_train: bool = True,
         periodic: bool = True,
+        x_mode: str = "species",
+        cov_mode: str = "scalar6",
         *,
         rngs: nnx.Rngs,
     ):
+        if x_mode not in ("species", "node_scalar"):
+            raise ValueError(f"x_mode must be 'species' or 'node_scalar', got {x_mode!r}")
+        if cov_mode not in ("scalar6", "irreps"):
+            raise ValueError(f"cov_mode must be 'scalar6' or 'irreps', got {cov_mode!r}")
+
         # Store static configuration
         self.lmax = lmax
         self.cutoff = cutoff
@@ -256,23 +272,31 @@ class RACE(nnx.Module):
         self.radial_basis_size = radial_basis_size
         self.radial_polynomial_p = radial_polynomial_p
         self.l_train = l_train
+        self.x_mode = x_mode
+        self.cov_mode = cov_mode
 
         # Store trainable scale parameters
         self.shift = nnx.Param(jnp.array(shift))
         self.scale = nnx.Param(jnp.array(scale))
 
-        self.avg_n_neighbors = nnx.Param(jnp.array(avg_n_neighbors))
-        self._avg_n_neighbors_value = avg_n_neighbors  # Keep float for sub-module init
-
+        # Non-trainable constants.  Stored as plain Python objects so they are
+        # part of the (hashable) graphdef and never receive gradients/updates.
+        self.avg_n_neighbors = float(avg_n_neighbors)
         if atom_energies is not None:
-            self.atom_energies = nnx.Param(jnp.array(atom_energies))
+            atom_energies = tuple(float(e) for e in atom_energies)
+            if len(atom_energies) != n_species:
+                raise ValueError(
+                    f"len(atom_energies)={len(atom_energies)} != n_species={n_species}"
+                )
         else:
-            self.atom_energies = nnx.Param(jnp.zeros(n_species, dtype=jnp.float32))
+            atom_energies = tuple(0.0 for _ in range(n_species))
+        self.atom_energies = atom_energies
 
         self.hidden_irreps = e3nn.Irreps(hidden_irreps)
         input_irreps = self.hidden_irreps.filter(keep="0e")
         x_irreps = e3nn.Irreps("1x0e")
 
+        # x_mode == "species": a single per-species scalar (original behaviour)
         self.x_linear = e3nn_nnx_Linear(
             irreps_in=input_irreps,
             irreps_out=x_irreps,
@@ -293,6 +317,7 @@ class RACE(nnx.Module):
         layers = []
         x_readouts = []
         f_readouts = []
+        x_projs = []
         for i in range(n_layers):
             layer = RACEConvolution(
                 input_irreps=input_irreps if i == 0 else self.hidden_irreps,
@@ -331,15 +356,43 @@ class RACE(nnx.Module):
             )
             f_readouts.append(f_readout)
 
+            # x_mode == "node_scalar": project the receiving node's current
+            # scalar features (after layer norm) onto x_irreps, per layer.
+            if x_mode == "node_scalar":
+                layer_input_irreps = input_irreps if i == 0 else self.hidden_irreps
+                x_projs.append(
+                    e3nn_nnx_Linear(
+                        irreps_in=layer_input_irreps.filter(keep="0e"),
+                        irreps_out=x_irreps,
+                        biases=True,
+                        force_irreps_out=True,
+                        rngs=rngs,
+                    )
+                )
+
         self.layers = nnx.List(layers)
         self.x_readouts = nnx.List(x_readouts)
         self.f_readouts = nnx.List(f_readouts)
-        self.frc_logvar = e3nn_nnx_Linear (
-            irreps_in=hidden_irreps,
-            irreps_out=e3nn.Irreps("6x0e"),
-            biases=False,
-            rngs=rngs,
-        )
+        self.x_projs = nnx.List(x_projs)
+
+        if cov_mode == "scalar6":
+            # 6 invariant scalars -> 3x3 lower-triangular Cholesky factor.
+            # NOTE: not rotation-equivariant (kept for backward compatibility).
+            self.frc_logvar = e3nn_nnx_Linear(
+                irreps_in=hidden_irreps,
+                irreps_out=e3nn.Irreps("6x0e"),
+                biases=False,
+                rngs=rngs,
+            )
+        else:
+            # 1x0e (isotropic) + 1x2e (traceless symmetric) -> equivariant Sigma
+            self.frc_logvar = e3nn_nnx_Linear(
+                irreps_in=hidden_irreps,
+                irreps_out=e3nn.Irreps("1x0e + 1x2e"),
+                biases=False,
+                force_irreps_out=True,
+                rngs=rngs,
+            )
 
         self.energy_logvar = e3nn_nnx_Linear(
             irreps_in=hidden_irreps,
@@ -389,14 +442,20 @@ class RACE(nnx.Module):
         )
 
         features = self.species_embedding(features)
+        # x_mode == "species": per-species scalar, identical for all layers.
         x_feats = self.x_linear(data.nodes['species'], features)
 
         outputs = []
-        for (layer, x_readout, f_readout) in zip(
+        for i, (layer, x_readout, f_readout) in enumerate(zip(
             self.layers,
             self.x_readouts,
             self.f_readouts
-        ):
+        )):
+            if self.x_mode == "node_scalar":
+                # Receiving node's current scalar (0e) features -> 1x0e
+                x_feats = self.x_projs[i](
+                    separated_layer_norm(features).filter(keep="0e")
+                )
             f_energy = f_readout(
                 data.nodes["species"],
                 features
@@ -431,13 +490,23 @@ class RACE(nnx.Module):
         # Scale and shift energies
         node_energies = node_energies * self.scale[...] + self.shift[...]
 
-        # Force variation: 6 params for 3x3 lower triangular Cholesky L_f
-        # [diag0, diag1, diag2, off0, off1, off2] -> softplus on diagonal, min 0.04
-        frc_logvar = self.frc_logvar (features)
-        frc_var = jnp.hstack([
-            jax.nn.softplus(frc_logvar.array[:,:3]) + 0.04,
-            frc_logvar.array[:,3:]
-        ])
+        frc_logvar = self.frc_logvar(features)
+        if self.cov_mode == "scalar6":
+            # Force variation: 6 params for 3x3 lower triangular Cholesky L_f
+            # [diag0, diag1, diag2, off0, off1, off2] -> softplus on diagonal, min 0.04
+            frc_var = jnp.hstack([
+                jax.nn.softplus(frc_logvar.array[:, :3]) + 0.04,
+                frc_logvar.array[:, 3:]
+            ])
+        else:
+            # Force variation (equivariant): [a, b_0..b_4]
+            #   a : isotropic std (0e), softplus + min 0.04
+            #   b : 5 components of a 2e irrep (traceless symmetric B)
+            # Sigma = (a*I + B')^2 is assembled in training_utils.build_force_L
+            frc_var = jnp.hstack([
+                jax.nn.softplus(frc_logvar.array[:, :1]) + 0.04,
+                frc_logvar.array[:, 1:]
+            ])
 
         # Energy variation: per-atom sigma, min 0.04
         energy_var = jax.nn.softplus(self.energy_logvar(features).array) + 0.04  # (n_atoms, 1)
@@ -453,6 +522,13 @@ class RACE(nnx.Module):
             'energy_variation': energy_var,
             'stress_variation': stress_var,
         }
+
+    @property
+    def frc_variation_fill(self) -> jax.Array:
+        """Neutral (identity covariance) fill value for padded nodes."""
+        if self.cov_mode == "scalar6":
+            return jnp.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+        return jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
     def __call__(
         self, data: jraph.GraphsTuple
@@ -474,7 +550,8 @@ class RACE(nnx.Module):
         """
         return energy_forces_stress(
             self.node_energies, data, self.periodic,
-            self.l_train, self.atom_energies[...],
+            self.l_train, jnp.asarray(self.atom_energies, dtype=jnp.float32),
+            frc_variation_fill=self.frc_variation_fill,
         )
 
 

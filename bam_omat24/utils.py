@@ -273,6 +273,7 @@ def energy_forces_stress(
     periodic: bool,
     l_train: bool,
     atom_energies: jax.Array,
+    frc_variation_fill: Optional[jax.Array] = None,
 ) -> Dict:
     """Compute graph energies, forces, and stress from a node energy function.
 
@@ -284,6 +285,10 @@ def energy_forces_stress(
         periodic: Whether system is periodic
         l_train: Whether in training mode (affects atom energy handling)
         atom_energies: Isolated atom energies array
+        frc_variation_fill: value written into ``frc_variation`` of padded nodes
+            (shape (6,) or scalar). Default 1.0 (original behaviour). Models with
+            a non-Cholesky covariance layout (RACE ``cov_mode="irreps"``) pass a
+            layout-specific neutral value.
 
     Returns:
         Tuple of (graph_energies, forces, stress) where:
@@ -360,7 +365,9 @@ def energy_forces_stress(
 
     if n_graphs > 1:
         grad = jnp.where(node_mask[:, None], grad, 0.0)
-        frc_variation = jnp.where(node_mask[:,None], frc_variation, 1.0)
+        if frc_variation_fill is None:
+            frc_variation_fill = 1.0
+        frc_variation = jnp.where(node_mask[:, None], frc_variation, frc_variation_fill)
         if energy_variation is not None:
             energy_variation = jnp.where(node_mask[:, None], energy_variation, 0.0)
         if stress_variation is not None:

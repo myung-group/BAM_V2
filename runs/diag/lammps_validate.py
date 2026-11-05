@@ -57,6 +57,11 @@ run 4000
     fl = open(os.path.join(work, 'forces.dump')).read().split('ITEM: ATOMS id fx fy fz')[1].split('ITEM')[0]
     F = np.array([[float(x) for x in line.split()[1:]] for line in fl.strip().splitlines()])
 
+    # LAMMPS needs a lower-triangular cell: the data writer rotated the frame, so the reference is computed on the
+    # frame read back from the data file (energies are rotation invariant, forces / pressure are not)
+    a = ase.io.read(os.path.join(work, 'frame.data'), format='lammps-data', atom_style='atomic',
+                    Z_of_type={k + 1: z for k, z in enumerate(zs)})
+    a.pbc = True
     # reference: the exported function through JAX (same graph construction as the Python check) + E0
     import jax.numpy as jnp
     from bam_omat24.export_lammps import build, make_fn, graph_inputs

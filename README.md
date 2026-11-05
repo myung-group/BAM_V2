@@ -113,6 +113,19 @@ RACEv2가 세 데이터셋의 모든 지표에서 낮다. 에너지 MAE 7~31%, �
 
 진행 중인 항목은 나머지 ablation 4개, 응력 가중치·컷오프 검토, 10만 구조 부분집합 크기 비교, LAMMPS 연동(docs/RACEv2_lammps_export_plan_2026-11-06.md), 물 반발 항 재계산, MD22이다.
 
+## LAMMPS 연동 (`pair_style racev2`, 시험 단계)
+
+학습된 모델을 StableHLO로 내보내고(`bam_omat24/export_lammps.py`), jaxlib에 들어 있는 PJRT CUDA 플러그인으로 C++에서 실행한다(`lammps/`). 파이썬과 JAX는 실행 시 필요 없다.
+
+```
+pair_style racev2 <site-packages>/jax_plugins/xla_cuda12/xla_cuda_plugin.so <내보낸 모델 폴더> [GPU 번호]
+pair_coeff * * Li P S
+```
+
+LiPS 83원자 검증(GPU 1장): `run 0`의 에너지·힘·압력이 파이썬과 각각 2×10⁻¹³ eV, 9×10⁻¹⁴ eV/Å, 10⁻³ bar 이내로 같고, NVE 1 ps(0.25 fs)에서 전체 에너지 변화는 원자당 0.001 meV다.
+현재 제약: MPI 프로세스 1개, metal 단위, e3nn 백엔드(cue 커널은 파이썬 프로세스에서만 컴파일됨), 속도 초당 28 단계(JAX MD 76 단계보다 느림, 최적화 예정).
+빌드: `bash lammps/build_lammps.sh <LAMMPS 소스> <빌드 폴더>`. 계획과 단계는 `docs/RACEv2_lammps_export_plan_2026-11-06.md`.
+
 ## 설치
 
 ```bash

@@ -19,8 +19,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATASETS = [("omat24", "OMat24"), ("mptrj", "MPtrj"), ("salex", "sAlex")]
 STYLE = {"v2": ("RACEv2", "#4169E1", "o"), "v1": ("V1", "#DC143C", "s")}      # royal blue / crimson (user choice)
 INK, MUTED, GRID = "#1f2328", "#5b6068", "#e3e5e8"
-ROWS = [("train_E", "학습 에너지 손실 (Huber, 원자당)"), ("train_F", "학습 힘 손실 (Huber)"),
-        ("val_E", "검증 에너지 RMSE (meV/구조)"), ("val_F", "검증 힘 RMSE (meV/Å)")]
+ROWS = [("train_E", "train energy loss (Huber, per atom)"), ("train_F", "train force loss (Huber)"),
+        ("val_E", "valid energy RMSE (meV/structure)"), ("val_F", "valid force RMSE (meV/Å)")]
 
 
 def read_log(run):
@@ -74,14 +74,14 @@ def main():
             if i == 0:
                 ax.set_title(dname, color=INK, fontsize=12, loc="left", fontweight="bold")
             if i == len(ROWS) - 1:
-                ax.set_xlabel("에폭")
+                ax.set_xlabel("epoch")
         for v, lg in logs.items():
             if lg is not None:
                 summary.append((dname, STYLE[v][0], int(lg["epoch"][-1]), float(np.median(lg["time"][1:])) if len(lg["time"]) > 1 else float(lg["time"][0]),
                                 float(lg["val_E"][-1]), float(lg["val_F"][-1])))
     h, l = axes[0, 0].get_legend_handles_labels()
     fig.legend(h, l, loc="upper right", ncol=2, frameon=False, fontsize=10, bbox_to_anchor=(0.99, 1.0))
-    fig.suptitle("OAM 부분집합 (학습 1만 구조, float64): RACEv2 vs V1, 에폭별 손실과 검증 오차", x=0.01, ha="left",
+    fig.suptitle("OAM subsets (10k training structures, float64): RACEv2 vs V1, per-epoch losses and validation errors", x=0.01, ha="left",
                  fontsize=12, color=INK, y=0.995)
     fig.tight_layout(rect=(0, 0, 1, 0.975))
     for ext in ("png", "pdf"):

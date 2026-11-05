@@ -68,3 +68,23 @@ def test_race_model_identical_with_ragged(x64):
     _set("ragged"); r1 = model(g)
     for k in ("energy", "forces", "stress"):
         assert np.allclose(np.asarray(r0[k]), np.asarray(r1[k]), rtol=1e-11, atol=1e-11), k
+
+
+def test_remat_layers_identical(x64):
+    """BAM_REMAT_LAYERS=1 (per-layer rematerialisation) gives the same energies, forces and stress."""
+    from conftest import as_float64
+    from test_oam_stress import _model, _cell, _graph, _f64
+    a = _cell(3)
+    model, _ = as_float64(_model(), _graph(a))
+    g = _f64(_graph(a))
+    old = os.environ.get("BAM_REMAT_LAYERS")
+    try:
+        os.environ["BAM_REMAT_LAYERS"] = "0"; r0 = model(g)
+        os.environ["BAM_REMAT_LAYERS"] = "1"; r1 = model(g)
+    finally:
+        if old is None:
+            os.environ.pop("BAM_REMAT_LAYERS", None)
+        else:
+            os.environ["BAM_REMAT_LAYERS"] = old
+    for k in ("energy", "forces", "stress"):
+        assert np.allclose(np.asarray(r0[k]), np.asarray(r1[k]), rtol=1e-12, atol=1e-12), k

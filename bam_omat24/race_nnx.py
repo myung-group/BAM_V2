@@ -175,6 +175,12 @@ def _jackson_gain(n: int, N: int) -> float:
     return ((N - n + 1) * math.cos(q * n) + math.sin(q * n) / math.tan(q)) / (N + 1)
 
 
+def _remat_layers() -> bool:
+    """Environment BAM_REMAT_LAYERS=1: rematerialise every interaction layer (read at trace time)."""
+    import os
+    return os.environ.get("BAM_REMAT_LAYERS", "0") == "1"
+
+
 def _rms_normalize(x: e3nn.IrrepsArray, eps: float = 1e-6) -> e3nn.IrrepsArray:
     """x / sqrt(mean over all components of x^2 + eps), per node (an invariant rescaling: equivariant)."""
     arr = x.array
@@ -1869,19 +1875,28 @@ class RACE(nnx.Module):
                 sh_i = e3nn.IrrepsArray(sh.irreps, sh.array * factor)
             prev_features = (feats_hist[i - 1] if (self.residual == "chebyshev" and i >= 2) else
                              feats_hist[1] if (self.residual == "neumann" and i >= 1) else None)
-            #node_energies, features = jax.checkpoint(layer)(
-            node_energies, features = layer(
-                features,
-                x_feats,
-                data.nodes["species"],
-                sh_i,
-                radial_basis,
-                data.senders,
-                data.receivers,
-                edge_scale=edge_scale,
-                drop_scale=drop_scale,
-                prev_features=prev_features,
-            )
+            if _remat_layers():
+                # recompute the layer (per-edge radial weights, messages) in the backward pass instead of storing
+                # it: the per-edge activations of all layers dominate device memory (2026-11-06: ~140 kB per edge
+                # for L5 lmax3 128 channels float64); environment BAM_REMAT_LAYERS=1, read at trace time
+                def _call(lyr, f, xf, sp, y, rb, snd, rcv, es, ds, pf):
+                    return lyr(f, xf, sp, y, rb, snd, rcv, edge_scale=es, drop_scale=ds, prev_features=pf)
+                node_energies, features = nnx.remat(_call)(
+                    layer, features, x_feats, data.nodes["species"], sh_i, radial_basis, data.senders,
+                    data.receivers, edge_scale, drop_scale, prev_features)
+            else:
+                node_energies, features = layer(
+                    features,
+                    x_feats,
+                    data.nodes["species"],
+                    sh_i,
+                    radial_basis,
+                    data.senders,
+                    data.receivers,
+                    edge_scale=edge_scale,
+                    drop_scale=drop_scale,
+                    prev_features=prev_features,
+                )
             if self.feature_norm == "rms":
                 features = _rms_normalize(_dense(features))
             if i == 0 and dens_force is not None:

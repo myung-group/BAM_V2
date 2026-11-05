@@ -1,6 +1,7 @@
 // Runs the case_<k>.bin test cases written by `bam_omat24.export_lammps --cases` through the C++ runtime and
 // compares with the outputs of the exported function computed by JAX; also times repeated calls.
-//   test_pjrt <xla_cuda_plugin.so> <export_dir> [n_cases]
+//   test_pjrt <xla_cuda_plugin.so> <export_dir> [n_cases] [cases_dir] [tolerance]
+// cases_dir: read the cases of another export (e.g. float64 references for a float32 model).
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -17,10 +18,12 @@ int main(int argc, char** argv) {
   }
   const std::string dir = argv[2];
   const int n_cases = argc > 3 ? std::atoi(argv[3]) : 3;
+  const std::string cdir = argc > 4 ? argv[4] : dir;
+  const double tol = argc > 5 ? std::atof(argv[5]) : 1e-8;
   racev2::Model model(argv[1], dir);
   int fails = 0;
   for (int k = 0; k < n_cases; ++k) {
-    std::ifstream f(dir + "/case_" + std::to_string(k) + ".bin", std::ios::binary);
+    std::ifstream f(cdir + "/case_" + std::to_string(k) + ".bin", std::ios::binary);
     if (!f) { std::fprintf(stderr, "no case_%d.bin\n", k); break; }
     int32_t hdr[5];
     f.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
@@ -53,11 +56,12 @@ int main(int argc, char** argv) {
       }
     double df = 0.0;
     for (int i = 0; i < 3 * n; ++i) df = std::max(df, std::fabs(F[i] - Fr[i]));
-    const bool ok = de < 1e-8 && dea < 1e-8 && df < 1e-8;
+    const bool ok = de < tol && dea < tol && df < tol;
     fails += !ok;
-    std::printf("case %d: %d atoms %d edges bucket %d/%d | E %.10f (ref %.10f) |dE| %.2e |dE_atom| %.2e "
+    std::printf("case %d: %d atoms %d edges bucket %d/%d%s | E %.10f (ref %.10f) |dE| %.2e |dE_atom| %.2e "
                 "|d dE/dr| %.2e (max |dE/dr| %.3f) |dF| %.2e  %s\n",
-                k, n, e, n_pad, e_pad, et, et_ref, de, dea, dg, gmax, df, ok ? "OK" : "MISMATCH");
+                k, n, e, n_pad, e_pad, model.float32() ? " f32" : "", et, et_ref, de, dea, dg, gmax, df,
+                ok ? "OK" : "MISMATCH");
     // timing (compiled already)
     const int reps = 20;
     auto t0 = std::chrono::steady_clock::now();

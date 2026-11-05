@@ -40,7 +40,7 @@ def parse_buckets(items):
     return [tuple(int(v) for v in s.split(':')) for s in items]
 
 
-def build(cfg_path, ckpt, backend):
+def build(cfg_path, ckpt, backend, dtype='float64'):
     import jax
     import jax.numpy as jnp
     from flax import nnx
@@ -53,7 +53,8 @@ def build(cfg_path, ckpt, backend):
     jax.config.update('jax_enable_x64', True)
     (zs, e0, tr, va, te, stats) = T.build_datasets(cfg, sys.stderr)
     graphdef, _p, *_ = T.build_model(cfg, len(zs), e0, stats, sys.stderr)
-    params = jax.tree.map(lambda x: jnp.asarray(x, jnp.float64) if jnp.issubdtype(jnp.asarray(x).dtype, jnp.floating)
+    fdt = jnp.dtype(dtype)
+    params = jax.tree.map(lambda x: jnp.asarray(x, fdt) if jnp.issubdtype(jnp.asarray(x).dtype, jnp.floating)
                           else jnp.asarray(x), load_checkpoint(ckpt)['ema_params'])
     model = nnx.merge(graphdef, params)
     return cfg, model, [int(z) for z in zs], [float(x) for x in e0]
@@ -86,13 +87,61 @@ def make_fn(model, cutoff, n_pad, e_pad):
     return fn
 
 
+class CueRecorder:
+    """Records every cuequivariance-ops compile_uniform_1d_ctypes call of this process (arguments and returned
+    handle), so a C++ process can recompile the same kernels in the same order and get the same handles that the
+    exported HLO refers to (backend_config `handle`).  Text format, one call per block:
+        call <handle> <n_args> <name>
+        s <int>                (scalar int64 argument)
+        a <len> <v0> <v1> ...  (int64 array argument followed by its length argument)"""
+
+    def __init__(self):
+        import ctypes
+        import cuequivariance_ops_jax._uniform_1d as u
+        self.lib = u.library
+        self.orig = self.lib.compile_uniform_1d_ctypes
+        self.calls = []
+        rec = self
+
+        def wrapped(*a):
+            h = rec.orig(*a)
+            items = []
+            k = 1
+            while k < len(a):
+                x = a[k]
+                if isinstance(x, ctypes._Pointer) or hasattr(x, 'contents'):
+                    n = int(a[k + 1])
+                    arr = np.ctypeslib.as_array(x, shape=(n,)).astype(np.int64).tolist() if n else []
+                    items.append(('a', n, arr)); k += 2
+                else:
+                    items.append(('s', int(x))); k += 1
+            rec.calls.append((int(h), len(a), a[0].decode() if isinstance(a[0], bytes) else str(a[0]), items))
+            return h
+        wrapped.argtypes = self.orig.argtypes
+        wrapped.restype = self.orig.restype
+        u.library.compile_uniform_1d_ctypes = wrapped
+
+    def write(self, path):
+        with open(path, 'w') as fh:
+            for h, nargs, name, items in self.calls:
+                fh.write(f"call {h} {nargs} {name}\n")
+                for it in items:
+                    if it[0] == 's':
+                        fh.write(f"s {it[1]}\n")
+                    else:
+                        fh.write("a " + str(it[1]) + ("" if not it[2] else " " + " ".join(str(v) for v in it[2])) + "\n")
+
+
 def export(args):
     import jax
     import jax.numpy as jnp
-    cfg, model, zs, e0 = build(args.config, args.ckpt, args.backend)
+    recorder = CueRecorder() if args.backend == 'cue' else None
+    cfg, model, zs, e0 = build(args.config, args.ckpt, args.backend, args.dtype)
+    fdt = jnp.dtype(args.dtype)
     cutoff = float(cfg.get('cutoff', 5.0))
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
-    meta = {'config': str(args.config), 'ckpt': str(args.ckpt), 'backend': args.backend, 'dtype': 'float64',
+    meta = {'config': str(args.config), 'ckpt': str(args.ckpt), 'backend': args.backend, 'dtype': args.dtype,
+            'matmul_precision': args.matmul_precision,
             'cutoff': cutoff, 'n_layers': int(cfg.get('n_layers', 5)), 'atomic_numbers': zs, 'e0': e0,
             'signature': 'species,receivers,senders,rvec,n_real,e_real,n_local -> e_local,e_atom,dE_local_drvec',
             'buckets': []}
@@ -100,16 +149,18 @@ def export(args):
     for n_pad, e_pad in parse_buckets(args.buckets):
         fn = jax.jit(make_fn(model, cutoff, n_pad, e_pad))
         sds = (jax.ShapeDtypeStruct((n_pad,), jnp.int32), jax.ShapeDtypeStruct((e_pad,), jnp.int32),
-               jax.ShapeDtypeStruct((e_pad,), jnp.int32), jax.ShapeDtypeStruct((e_pad, 3), jnp.float64),
+               jax.ShapeDtypeStruct((e_pad,), jnp.int32), jax.ShapeDtypeStruct((e_pad, 3), fdt),
                jax.ShapeDtypeStruct((), jnp.int32), jax.ShapeDtypeStruct((), jnp.int32),
                jax.ShapeDtypeStruct((), jnp.int32))
         # cue kernels are custom calls without a cross-version compatibility guarantee: allow them explicitly
         # (the artifact then only runs with the same cuequivariance-ops build; recorded in the metadata)
-        lowered_txt = fn.lower(*sds).as_text()
+        with jax.default_matmul_precision(args.matmul_precision):   # float32: no TF32 unless asked
+            lowered_txt = fn.lower(*sds).as_text()
         cc_targets = sorted({l.split('custom_call @')[1].split('(')[0] for l in lowered_txt.splitlines()
                              if 'custom_call @' in l})
         checks = [jax.export.DisabledSafetyCheck.custom_call(t) for t in cc_targets]
-        exp = jax.export.export(fn, platforms=['cuda'], disabled_checks=checks)(*sds)
+        with jax.default_matmul_precision(args.matmul_precision):
+            exp = jax.export.export(fn, platforms=['cuda'], disabled_checks=checks)(*sds)
         stem = f'racev2_N{n_pad}_E{e_pad}'
         (out / f'{stem}.mlirbc').write_bytes(exp.mlir_module_serialized)        # StableHLO bytecode for PJRT
         entry = {'n_pad': n_pad, 'e_pad': e_pad, 'file': f'{stem}.mlirbc'}
@@ -127,14 +178,23 @@ def export(args):
             meta['buckets'][-1]['custom_calls'] = cc_targets
             meta['custom_call_note'] = 'cuequivariance-ops custom calls: run only with the same cue ops build'
         fns[(n_pad, e_pad)] = exp
+    if recorder is not None:
+        recorder.write(out / 'cue_kernels.txt')
+        import cuequivariance_ops_jax, cuequivariance_ops
+        meta['cue_kernels'] = 'cue_kernels.txt'
+        meta['cue_lib'] = os.path.join(os.path.dirname(cuequivariance_ops_jax.__file__), 'lib', 'libcue_ops_jax.so')
+        meta['cue_dep'] = os.path.join(os.path.dirname(cuequivariance_ops.__file__), 'lib', 'libcue_ops.so')
+        print(f"recorded {len(recorder.calls)} cue kernel compilations (handles {[c[0] for c in recorder.calls]})")
     json.dump(meta, open(out / 'racev2_lammps_meta.json', 'w'), indent=1)
     # plain-text copy for the C++ runtime (no JSON parser there)
     with open(out / 'racev2_lammps_meta.txt', 'w') as fh:
-        fh.write(f"cutoff {cutoff!r}\nn_layers {meta['n_layers']}\nsignature 7\n")
+        fh.write(f"cutoff {cutoff!r}\nn_layers {meta['n_layers']}\nsignature 7\ndtype {args.dtype}\n")
         fh.write('atomic_numbers ' + ' '.join(str(z) for z in zs) + '\n')
         fh.write('e0 ' + ' '.join(repr(float(x)) for x in e0) + '\n')
         for b in meta['buckets']:
             fh.write(f"bucket {b['n_pad']} {b['e_pad']} {b['file']}\n")
+        if 'cue_kernels' in meta:
+            fh.write(f"cue_kernels {meta['cue_kernels']}\ncue_lib {meta['cue_lib']}\ncue_dep {meta['cue_dep']}\n")
     # serialized xla::CompileOptionsProto for PJRT_Client_Compile (defaults: 1 replica, 1 partition)
     from jax._src.lib import xla_client
     (out / 'compile_options.pb').write_bytes(xla_client.CompileOptions().SerializeAsString())
@@ -169,7 +229,8 @@ def write_cases(args, meta, fns, zs):
     for k, a in enumerate(frames):
         key = next(((n, e) for (n, e) in sorted(fns) if len(a) < n), None)
         ins = graph_inputs(a, zs, meta['cutoff'], *key)
-        e, ne, g = fns[key].call(*[jnp.asarray(x) for x in ins])
+        e, ne, g = fns[key].call(*[jnp.asarray(x, jnp.dtype(meta['dtype'])) if np.asarray(x).dtype == np.float64
+                                    else jnp.asarray(x) for x in ins])
         with open(out / f'case_{k}.bin', 'wb') as fh:
             np.array([key[0], key[1], int(ins[4]), int(ins[5]), int(ins[6])], np.int32).tofile(fh)
             for x in ins[:3]:
@@ -196,7 +257,8 @@ def check(args, cfg, model, zs, e0, meta, fns):
         ins = graph_inputs(a, zs, cutoff, *key) if key else None
         if ins is None:
             print('frame does not fit any bucket', len(a)); continue
-        e, ne, g = fns[key].call(*[jnp.asarray(x) for x in ins])
+        e, ne, g = fns[key].call(*[jnp.asarray(x, jnp.dtype(meta['dtype'])) if np.asarray(x).dtype == np.float64
+                                    else jnp.asarray(x) for x in ins])
         n, ne_ = int(ins[4]), int(ins[5])
         rec, snd, rv, g = ins[1][:ne_], ins[2][:ne_], ins[3][:ne_], np.asarray(g)[:ne_]
         F = np.zeros((n, 3)); np.add.at(F, rec, g); np.add.at(F, snd, -g)
@@ -204,7 +266,8 @@ def check(args, cfg, model, zs, e0, meta, fns):
         stress = W / a.get_volume() * -1.0          # ASE stress = (1/V) dE/d(strain) = -W / V
         # reference: the normal model call (training graph path)
         gr = preprocess_graph(a, atomic_numbers_to_indices(zs), e0, cutoff, targets=False)
-        gr = T._cast_graphs([gr], np.float64)[0]
+        if meta['dtype'] == 'float64':
+            gr = T._cast_graphs([gr], np.float64)[0]
         b = default_collate_fn([gr], batch_size=1, node_bucket_size=64, edge_bucket_size=1024)
         r = model(jax.tree.map(jnp.asarray, b))
         Er, Fr, Sr = float(np.asarray(r['energy'])[0]), np.asarray(r['forces'])[:n], np.asarray(r['stress'])[0]
@@ -219,6 +282,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('config'); ap.add_argument('--ckpt', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--backend', choices=['e3nn', 'cue'], default='e3nn')
+    ap.add_argument('--dtype', choices=['float64', 'float32'], default='float64')
+    ap.add_argument('--matmul-precision', default='highest', help='jax default_matmul_precision at export (float32)')
     ap.add_argument('--buckets', nargs='+', default=['128:4096', '256:8192', '512:16384', '1024:32768'])
     ap.add_argument('--check', default=None); ap.add_argument('--n-check', type=int, default=5)
     ap.add_argument('--cases', default=None, help='extxyz: write case_<k>.bin test cases (3 frames) for the C++ runtime')

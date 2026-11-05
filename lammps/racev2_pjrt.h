@@ -49,12 +49,14 @@ class Model {
   int n_layers() const { return n_layers_; }
   const std::vector<int>& atomic_numbers() const { return z_; }
   const std::vector<double>& atom_energy0() const { return e0_; }
+  bool float32() const { return f32_; }
   int api_major() const { return api_major_; }
   int api_minor() const { return api_minor_; }
 
  private:
   Bucket& bucket_for(int n, int e);
   void compile(Bucket& b);
+  void setup_cue(const std::string& kernels, const std::string& lib, const std::string& dep);
 
   const PJRT_Api* api_ = nullptr;
   void* dl_ = nullptr;
@@ -67,6 +69,7 @@ class Model {
   double cutoff_ = 0.0;
   int n_layers_ = 0, api_major_ = -1, api_minor_ = -1;
   bool verbose_ = true;
+  bool f32_ = false;   // model exported in float32: rvec converted on input, outputs converted to double
 };
 
 }  // namespace racev2

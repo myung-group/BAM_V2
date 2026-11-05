@@ -14,7 +14,7 @@ cp "$HERE/pair_race.h" "$HERE/pair_race.cpp" "$LMP_SRC/src/"
 cp "$HERE/racev2_pjrt.h" "$LMP_SRC/src/"
 cp "$HERE/racev2_pjrt.cc" "$LMP_SRC/src/racev2_pjrt.cpp"
 mkdir -p "$LMP_SRC/src/third_party"
-cp "$HERE/third_party/pjrt_c_api.h" "$LMP_SRC/src/third_party/"
+cp "$HERE/third_party/pjrt_c_api.h" "$HERE/third_party/pjrt_c_api_ffi_extension.h" "$LMP_SRC/src/third_party/"
 mkdir -p "$BUILD" && cd "$BUILD"
 if [ "$KIND" = mpi ]; then
   module load PrgEnv-gnu cray-mpich >/dev/null 2>&1

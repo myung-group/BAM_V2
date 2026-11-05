@@ -12,6 +12,7 @@
 #include <stdexcept>
 
 #include "third_party/pjrt_c_api.h"
+#include "third_party/pjrt_c_api_ffi_extension.h"
 
 namespace racev2 {
 namespace {
@@ -72,6 +73,7 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
   std::istringstream meta(read_file(dir_ + "/racev2_lammps_meta.txt"));
   std::string line;
   int signature = 6;
+  std::string cue_kernels, cue_lib, cue_dep;
   while (std::getline(meta, line)) {
     std::istringstream ls(line);
     std::string key;
@@ -82,6 +84,10 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
     else if (key == "e0") { double v; while (ls >> v) e0_.push_back(v); }
     else if (key == "bucket") { Bucket b; ls >> b.n_pad >> b.e_pad >> b.file; buckets_.push_back(b); }
     else if (key == "signature") ls >> signature;
+    else if (key == "dtype") { std::string d; ls >> d; f32_ = (d == "float32"); }
+    else if (key == "cue_kernels") ls >> cue_kernels;
+    else if (key == "cue_lib") ls >> cue_lib;
+    else if (key == "cue_dep") ls >> cue_dep;
   }
   if (signature != 7)
     throw std::runtime_error("racev2: " + dir_ + " was exported with an older function signature (no n_local); "
@@ -138,6 +144,7 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
   if (device < 0 || static_cast<size_t>(device) >= ad.num_addressable_devices)
     throw std::runtime_error("racev2: device index out of range");
   device_ = ad.addressable_devices[device];
+  if (!cue_kernels.empty()) setup_cue(cue_kernels, cue_lib, cue_dep);
   if (verbose_)
     std::fprintf(stderr, "racev2: %zu GPU(s), using %d; %zu buckets, cutoff %.3f A, %zu species\n",
                  ad.num_addressable_devices, device, buckets_.size(), cutoff_, z_.size());
@@ -162,6 +169,74 @@ Model::~Model() {
     api_->PJRT_Client_Destroy(&d);
   }
   // the plugin is not dlclose()d: CUDA / XLA keep global state alive until process exit
+}
+
+// cuequivariance kernels: the exported HLO calls the FFI target "uniform_1d_cuda" with kernel handles that the
+// Python process created with compile_uniform_1d_ctypes at export time.  Recompile the recorded kernels in the same
+// order (handles are assigned sequentially per process) and register the CUDA handler with the plugin.
+void Model::setup_cue(const std::string& kernels, const std::string& lib, const std::string& dep) {
+  if (!dlopen(dep.c_str(), RTLD_NOW | RTLD_GLOBAL))
+    throw std::runtime_error(std::string("racev2: cannot load ") + dep + ": " + dlerror());
+  void* h = dlopen(lib.c_str(), RTLD_NOW | RTLD_GLOBAL);
+  if (!h) throw std::runtime_error(std::string("racev2: cannot load ") + lib + ": " + dlerror());
+  using Compile = int64_t (*)(const char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
+                              int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
+                              int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
+                              int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
+                              int64_t);
+  auto compile_fn = reinterpret_cast<Compile>(dlsym(h, "compile_uniform_1d_ctypes"));
+  void* handler = dlsym(h, "execute_uniform_1d_cuda_handler");
+  if (!compile_fn || !handler) throw std::runtime_error("racev2: cue symbols not found in " + lib);
+
+  std::istringstream in(read_file(dir_ + "/" + kernels));
+  std::string tok;
+  int replayed = 0;
+  while (in >> tok) {
+    if (tok != "call") throw std::runtime_error("racev2: bad cue_kernels file");
+    int64_t handle_ref; int nargs; std::string name;
+    in >> handle_ref >> nargs >> name;
+    if (nargs != 37) throw std::runtime_error("racev2: unexpected compile_uniform_1d arity (cue version?)");
+    std::vector<std::vector<int64_t>> arrays;   // keep storage alive
+    arrays.reserve(32);
+    std::vector<int64_t> args;                  // 36 integer-class arguments after the name
+    while ((int) args.size() < 36) {
+      std::string kind; in >> kind;
+      if (kind == "s") { int64_t v; in >> v; args.push_back(v); }
+      else if (kind == "a") {
+        int64_t n; in >> n; arrays.emplace_back(n);
+        for (int64_t q = 0; q < n; ++q) in >> arrays.back()[q];
+        args.push_back(reinterpret_cast<int64_t>(arrays.back().data()));
+        args.push_back(n);
+      } else throw std::runtime_error("racev2: bad cue_kernels entry");
+    }
+    const int64_t* a = args.data();
+    int64_t got = compile_fn(name.c_str(), a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11],
+                             a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23],
+                             a[24], a[25], a[26], a[27], a[28], a[29], a[30], a[31], a[32], a[33], a[34], a[35]);
+    if (got != handle_ref) {
+      std::ostringstream ss;
+      ss << "racev2: cue kernel handle mismatch (" << got << " vs recorded " << handle_ref << ")";
+      throw std::runtime_error(ss.str());
+    }
+    ++replayed;
+  }
+
+  const PJRT_Extension_Base* ext = api_->extension_start;
+  while (ext && ext->type != PJRT_Extension_Type_FFI) ext = ext->next;
+  if (!ext) throw std::runtime_error("racev2: the PJRT plugin has no FFI extension");
+  const auto* ffi = reinterpret_cast<const PJRT_FFI_Extension*>(ext);
+  static const char kTarget[] = "uniform_1d_cuda";
+  static const char kPlatform[] = "CUDA";
+  PJRT_FFI_Register_Handler_Args r;
+  std::memset(&r, 0, sizeof(r));
+  r.struct_size = PJRT_FFI_Register_Handler_Args_STRUCT_SIZE;
+  r.target_name = kTarget;
+  r.target_name_size = sizeof(kTarget) - 1;
+  r.handler = handler;
+  r.platform_name = kPlatform;
+  r.platform_name_size = sizeof(kPlatform) - 1;
+  check(api_, ffi->register_handler(&r), "PJRT FFI register uniform_1d_cuda");
+  if (verbose_) std::fprintf(stderr, "racev2: cue kernels replayed (%d), FFI handler registered\n", replayed);
 }
 
 void Model::compile(Bucket& b) {
@@ -227,9 +302,13 @@ double Model::compute_padded(int n_pad, int e_pad, int n, int e, int n_local, co
     std::vector<int64_t> dims;
   };
   const int32_t n32 = n, e32 = e, l32 = n_local;
+  std::vector<float> rv32;
+  if (f32_) rv32.assign(rvec, rvec + 3 * static_cast<size_t>(e_pad));
+  const void* rv_data = f32_ ? static_cast<const void*>(rv32.data()) : static_cast<const void*>(rvec);
+  const PJRT_Buffer_Type ftype = f32_ ? PJRT_Buffer_Type_F32 : PJRT_Buffer_Type_F64;
   std::vector<In> ins = {
       {species, PJRT_Buffer_Type_S32, {n_pad}},       {receivers, PJRT_Buffer_Type_S32, {e_pad}},
-      {senders, PJRT_Buffer_Type_S32, {e_pad}},       {rvec, PJRT_Buffer_Type_F64, {e_pad, 3}},
+      {senders, PJRT_Buffer_Type_S32, {e_pad}},       {rv_data, ftype, {e_pad, 3}},
       {&n32, PJRT_Buffer_Type_S32, {}},               {&e32, PJRT_Buffer_Type_S32, {}},
       {&l32, PJRT_Buffer_Type_S32, {}}};
   std::vector<PJRT_Buffer*> args(ins.size(), nullptr);
@@ -275,8 +354,16 @@ double Model::compute_padded(int n_pad, int e_pad, int n, int e, int n_local, co
   double et = 0.0;
   e_atom_pad.assign(n_pad, 0.0);
   dEdr_pad.assign(3 * static_cast<size_t>(e_pad), 0.0);
+  float et32 = 0.0f;
+  std::vector<float> ea32, g32;
   void* dst[3] = {&et, e_atom_pad.data(), dEdr_pad.data()};
   size_t sz[3] = {sizeof(double), sizeof(double) * n_pad, sizeof(double) * 3 * static_cast<size_t>(e_pad)};
+  if (f32_) {
+    ea32.assign(n_pad, 0.0f);
+    g32.assign(3 * static_cast<size_t>(e_pad), 0.0f);
+    dst[0] = &et32; dst[1] = ea32.data(); dst[2] = g32.data();
+    sz[0] = sizeof(float); sz[1] = sizeof(float) * n_pad; sz[2] = sizeof(float) * 3 * static_cast<size_t>(e_pad);
+  }
   for (int k = 0; k < 3; ++k) {
     PJRT_Buffer_ToHostBuffer_Args t;
     std::memset(&t, 0, sizeof(t));
@@ -287,6 +374,11 @@ double Model::compute_padded(int n_pad, int e_pad, int n, int e, int n_local, co
     check(api_, api_->PJRT_Buffer_ToHostBuffer(&t), "ToHostBuffer");
     await_and_destroy(api_, t.event, "device->host transfer");
     destroy_buffer(api_, outs[k]);
+  }
+  if (f32_) {
+    et = et32;
+    std::copy(ea32.begin(), ea32.end(), e_atom_pad.begin());
+    std::copy(g32.begin(), g32.end(), dEdr_pad.begin());
   }
   return et;
 }

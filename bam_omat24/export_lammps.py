@@ -3,8 +3,11 @@
 
 Exported function, one per padded shape bucket (n_pad atoms, e_pad edges), float64:
 
-    (species i32[n_pad], receivers i32[e_pad], senders i32[e_pad], rvec f64[e_pad, 3], n_real i32[], e_real i32[])
-        -> (e_total f64[], e_atom f64[n_pad], dE_drvec f64[e_pad, 3])
+    (species i32[n_pad], receivers i32[e_pad], senders i32[e_pad], rvec f64[e_pad, 3], n_real i32[], e_real i32[],
+     n_local i32[]) -> (e_local f64[], e_atom f64[n_pad], dE_local_drvec f64[e_pad, 3])
+
+  * e_local = sum of the atomic energies of nodes 0 .. n_local-1 (the atoms owned by this MPI rank; ghosts follow
+    them as nodes n_local .. n_real-1).  One rank with ghosts mapped to their owners: n_local = n_real.
 
   * receivers = centre atom i, senders = neighbour j (owned index of the image), rvec = x_j(image) - x_i, i.e. the
     edge vector of the training graphs (data_3bpa.preprocess_graph: r = x_sender - (x_receiver + Sij . cell)).
@@ -61,10 +64,11 @@ def make_fn(model, cutoff, n_pad, e_pad):
     import jax.numpy as jnp
     import jraph
 
-    def fn(species, receivers, senders, rvec, n_real, e_real):
+    def fn(species, receivers, senders, rvec, n_real, e_real, n_local):
         n_node = jnp.stack([n_real, n_pad - n_real]).astype(jnp.int32)
         n_edge = jnp.stack([e_real, e_pad - e_real]).astype(jnp.int32)
         node_mask = jnp.arange(n_pad) < n_real
+        local_mask = jnp.arange(n_pad) < n_local
         cell = jnp.broadcast_to(jnp.eye(3, dtype=rvec.dtype), (2, 3, 3))
         cut = jnp.array([cutoff, 0.0], dtype=rvec.dtype)
         pos0 = jnp.zeros((n_pad, 3), rvec.dtype)
@@ -76,7 +80,7 @@ def make_fn(model, cutoff, n_pad, e_pad):
                 globals={'cell': cell, 'cutoff': cut, 'volume': jnp.ones((2,), rv.dtype)})
             ne = model.node_energies(pos0, cell, cut, g)['node_energies'].reshape(-1)
             ne = jnp.where(node_mask, ne, 0.0)
-            return jnp.sum(ne), ne
+            return jnp.sum(jnp.where(local_mask, ne, 0.0)), ne
         (e, ne), g = jax.value_and_grad(etot, has_aux=True)(rvec)
         return e, ne, g
     return fn
@@ -90,14 +94,15 @@ def export(args):
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     meta = {'config': str(args.config), 'ckpt': str(args.ckpt), 'backend': args.backend, 'dtype': 'float64',
             'cutoff': cutoff, 'n_layers': int(cfg.get('n_layers', 5)), 'atomic_numbers': zs, 'e0': e0,
-            'signature': 'species,receivers,senders,rvec,n_real,e_real -> e_total,e_atom,dE_drvec',
+            'signature': 'species,receivers,senders,rvec,n_real,e_real,n_local -> e_local,e_atom,dE_local_drvec',
             'buckets': []}
     fns = {}
     for n_pad, e_pad in parse_buckets(args.buckets):
         fn = jax.jit(make_fn(model, cutoff, n_pad, e_pad))
         sds = (jax.ShapeDtypeStruct((n_pad,), jnp.int32), jax.ShapeDtypeStruct((e_pad,), jnp.int32),
                jax.ShapeDtypeStruct((e_pad,), jnp.int32), jax.ShapeDtypeStruct((e_pad, 3), jnp.float64),
-               jax.ShapeDtypeStruct((), jnp.int32), jax.ShapeDtypeStruct((), jnp.int32))
+               jax.ShapeDtypeStruct((), jnp.int32), jax.ShapeDtypeStruct((), jnp.int32),
+               jax.ShapeDtypeStruct((), jnp.int32))
         # cue kernels are custom calls without a cross-version compatibility guarantee: allow them explicitly
         # (the artifact then only runs with the same cuequivariance-ops build; recorded in the metadata)
         lowered_txt = fn.lower(*sds).as_text()
@@ -125,7 +130,7 @@ def export(args):
     json.dump(meta, open(out / 'racev2_lammps_meta.json', 'w'), indent=1)
     # plain-text copy for the C++ runtime (no JSON parser there)
     with open(out / 'racev2_lammps_meta.txt', 'w') as fh:
-        fh.write(f"cutoff {cutoff!r}\nn_layers {meta['n_layers']}\n")
+        fh.write(f"cutoff {cutoff!r}\nn_layers {meta['n_layers']}\nsignature 7\n")
         fh.write('atomic_numbers ' + ' '.join(str(z) for z in zs) + '\n')
         fh.write('e0 ' + ' '.join(repr(float(x)) for x in e0) + '\n')
         for b in meta['buckets']:
@@ -150,11 +155,11 @@ def graph_inputs(atoms, zs, cutoff, n_pad, e_pad):
     species = np.zeros(n_pad, np.int32); species[:n] = [idx[int(z)] for z in atoms.numbers]
     rec = np.full(e_pad, n, np.int32); snd = np.full(e_pad, n, np.int32); rv = np.zeros((e_pad, 3))
     rec[:e], snd[:e], rv[:e] = i, j, D
-    return species, rec, snd, rv, np.int32(n), np.int32(e)
+    return species, rec, snd, rv, np.int32(n), np.int32(e), np.int32(n)
 
 
 def write_cases(args, meta, fns, zs):
-    """Binary test cases for the C++ runtime: int32 n_pad e_pad n e, int32 species[n_pad], receivers[e_pad],
+    """Binary test cases for the C++ runtime: int32 n_pad e_pad n e n_local, int32 species[n_pad], receivers[e_pad],
     senders[e_pad], float64 rvec[e_pad*3], then the expected outputs of the exported function: float64 e_total,
     e_atom[n_pad], dE_drvec[e_pad*3]."""
     import ase.io
@@ -166,7 +171,7 @@ def write_cases(args, meta, fns, zs):
         ins = graph_inputs(a, zs, meta['cutoff'], *key)
         e, ne, g = fns[key].call(*[jnp.asarray(x) for x in ins])
         with open(out / f'case_{k}.bin', 'wb') as fh:
-            np.array([key[0], key[1], int(ins[4]), int(ins[5])], np.int32).tofile(fh)
+            np.array([key[0], key[1], int(ins[4]), int(ins[5]), int(ins[6])], np.int32).tofile(fh)
             for x in ins[:3]:
                 np.asarray(x, np.int32).tofile(fh)
             np.asarray(ins[3], np.float64).tofile(fh)

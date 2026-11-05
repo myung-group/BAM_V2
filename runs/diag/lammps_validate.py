@@ -1,4 +1,4 @@
-"""LAMMPS step 4: pair_style racev2 vs Python on a LiPS test frame (run 0: energy, forces, pressure tensor), then a
+"""LAMMPS step 4: pair_style race vs Python on a LiPS test frame (run 0: energy, forces, pressure tensor), then a
 1 ps NVE run (energy drift, speed).  Run on a GPU node after lammps/build_lammps.sh.
 
     python runs/diag/lammps_validate.py <lmp binary> <plugin.so> <export_dir> <config.json> <ckpt.pkl> <extxyz>
@@ -28,7 +28,7 @@ atom_style atomic
 atom_modify map yes
 boundary p p p
 read_data frame.data
-pair_style racev2 {plugin} {os.path.abspath(exp_dir)} 0
+pair_style race {plugin} {os.path.abspath(exp_dir)} 0
 pair_coeff * * {' '.join(syms)}
 neighbor 1.0 bin
 thermo_style custom step pe pxx pyy pzz pxy pxz pyz
@@ -69,7 +69,7 @@ run 4000
     import jax
     fn = jax.jit(make_fn(model, float(cfg.get('cutoff', 5.0)), 128, 4096))
     ins = graph_inputs(a, zs_m, float(cfg.get('cutoff', 5.0)), 128, 4096)
-    e, ne, g = fn(*[jnp.asarray(x) for x in ins])
+    e, ne, g = fn(*[jnp.asarray(x) for x in ins])  # ins[6] = n_local = n
     n, ned = int(ins[4]), int(ins[5])
     rec, snd, rv, g = ins[1][:ned], ins[2][:ned], ins[3][:ned], np.asarray(g)[:ned]
     Fr = np.zeros((n, 3)); np.add.at(Fr, rec, g); np.add.at(Fr, snd, -g)

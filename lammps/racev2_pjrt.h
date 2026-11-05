@@ -3,8 +3,9 @@
 // No Python, no JAX at run time.  Step 2 of docs/RACEv2_lammps_export_plan_2026-11-06.md.
 //
 // Model function (per padded bucket n_pad atoms / e_pad edges):
-//   (species[n_pad] i32, receivers[e_pad] i32, senders[e_pad] i32, rvec[e_pad*3] f64, n_real i32, e_real i32)
-//     -> (e_total f64, e_atom[n_pad] f64, dE_drvec[e_pad*3] f64)
+//   (species[n_pad] i32, receivers[e_pad] i32, senders[e_pad] i32, rvec[e_pad*3] f64, n_real i32, e_real i32,
+//    n_local i32) -> (e_local f64, e_atom[n_pad] f64, dE_local/drvec[e_pad*3] f64)
+// e_local sums the atomic energies of nodes 0..n_local-1 (atoms owned by this MPI rank; ghosts follow).
 // receivers = centre atom i, senders = neighbour j (owned index), rvec = x_j(image) - x_i.  Energies exclude the
 // per-species E0 (see atom_energy0()).  Forces: F_i += g, F_j -= g; virial W = -sum r (x) g.
 #pragma once
@@ -34,13 +35,13 @@ class Model {
   Model(const Model&) = delete;
   Model& operator=(const Model&) = delete;
 
-  // Species are indices into atomic_numbers() (sorted Z).  Returns e_total (without E0); e_atom has n entries,
-  // dEdr has 3*e entries.  Picks the smallest bucket with n < n_pad and e <= e_pad and pads.
-  double compute(int n, int e, const int* species, const int* receivers, const int* senders, const double* rvec,
-                 std::vector<double>& e_atom, std::vector<double>& dEdr);
+  // Species are indices into atomic_numbers() (sorted Z).  Returns e_local (without E0) of nodes < n_local;
+  // e_atom has n entries, dEdr has 3*e entries.  Picks the smallest bucket with n < n_pad, e <= e_pad and pads.
+  double compute(int n, int e, int n_local, const int* species, const int* receivers, const int* senders,
+                 const double* rvec, std::vector<double>& e_atom, std::vector<double>& dEdr);
 
   // Same, with caller-supplied padded arrays of exactly one bucket size (used by the tests).
-  double compute_padded(int n_pad, int e_pad, int n, int e, const int* species, const int* receivers,
+  double compute_padded(int n_pad, int e_pad, int n, int e, int n_local, const int* species, const int* receivers,
                         const int* senders, const double* rvec, std::vector<double>& e_atom_pad,
                         std::vector<double>& dEdr_pad);
 

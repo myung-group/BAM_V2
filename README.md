@@ -113,12 +113,12 @@ RACEv2가 세 데이터셋의 모든 지표에서 낮다. 에너지 MAE 7~31%, �
 
 진행 중인 항목은 나머지 ablation 4개, 응력 가중치·컷오프 검토, 10만 구조 부분집합 크기 비교, LAMMPS 연동(docs/RACEv2_lammps_export_plan_2026-11-06.md), 물 반발 항 재계산, MD22이다.
 
-## LAMMPS 연동 (`pair_style racev2`, 시험 단계)
+## LAMMPS 연동 (`pair_style race`, 시험 단계)
 
 학습된 모델을 StableHLO로 내보내고(`bam_omat24/export_lammps.py`), jaxlib에 들어 있는 PJRT CUDA 플러그인으로 C++에서 실행한다(`lammps/`). 파이썬과 JAX는 실행 시 필요 없다.
 
 ```
-pair_style racev2 <site-packages>/jax_plugins/xla_cuda12/xla_cuda_plugin.so <내보낸 모델 폴더> [GPU 번호]
+pair_style race <site-packages>/jax_plugins/xla_cuda12/xla_cuda_plugin.so <내보낸 모델 폴더> [GPU 번호]
 pair_coeff * * Li P S
 ```
 

@@ -22,9 +22,9 @@ int main(int argc, char** argv) {
   for (int k = 0; k < n_cases; ++k) {
     std::ifstream f(dir + "/case_" + std::to_string(k) + ".bin", std::ios::binary);
     if (!f) { std::fprintf(stderr, "no case_%d.bin\n", k); break; }
-    int32_t hdr[4];
+    int32_t hdr[5];
     f.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
-    const int n_pad = hdr[0], e_pad = hdr[1], n = hdr[2], e = hdr[3];
+    const int n_pad = hdr[0], e_pad = hdr[1], n = hdr[2], e = hdr[3], n_local = hdr[4];
     std::vector<int> sp(n_pad), rc(e_pad), sd(e_pad);
     std::vector<double> rv(3 * e_pad), ea_ref(n_pad), g_ref(3 * e_pad);
     double et_ref = 0.0;
@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     f.read(reinterpret_cast<char*>(g_ref.data()), 8 * 3 * e_pad);
 
     std::vector<double> ea, g;
-    double et = model.compute(n, e, sp.data(), rc.data(), sd.data(), rv.data(), ea, g);
+    double et = model.compute(n, e, n_local, sp.data(), rc.data(), sd.data(), rv.data(), ea, g);
     double de = std::fabs(et - et_ref), dea = 0.0, dg = 0.0, gmax = 0.0;
     for (int i = 0; i < n; ++i) dea = std::max(dea, std::fabs(ea[i] - ea_ref[i]));
     for (int i = 0; i < 3 * e; ++i) {
@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
     // timing (compiled already)
     const int reps = 20;
     auto t0 = std::chrono::steady_clock::now();
-    for (int r = 0; r < reps; ++r) model.compute(n, e, sp.data(), rc.data(), sd.data(), rv.data(), ea, g);
+    for (int r = 0; r < reps; ++r) model.compute(n, e, n_local, sp.data(), rc.data(), sd.data(), rv.data(), ea, g);
     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / reps;
     std::printf("        %.2f ms per call (energy + dE/dr, incl. host<->device copies)\n", ms);
   }

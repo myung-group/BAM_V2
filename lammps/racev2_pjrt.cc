@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -70,6 +71,7 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
   // ---- metadata
   std::istringstream meta(read_file(dir_ + "/racev2_lammps_meta.txt"));
   std::string line;
+  int signature = 6;
   while (std::getline(meta, line)) {
     std::istringstream ls(line);
     std::string key;
@@ -79,7 +81,11 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
     else if (key == "atomic_numbers") { int z; while (ls >> z) z_.push_back(z); }
     else if (key == "e0") { double v; while (ls >> v) e0_.push_back(v); }
     else if (key == "bucket") { Bucket b; ls >> b.n_pad >> b.e_pad >> b.file; buckets_.push_back(b); }
+    else if (key == "signature") ls >> signature;
   }
+  if (signature != 7)
+    throw std::runtime_error("racev2: " + dir_ + " was exported with an older function signature (no n_local); "
+                             "re-export it with bam_omat24/export_lammps.py");
   if (buckets_.empty() || z_.empty() || cutoff_ <= 0.0) throw std::runtime_error("racev2: bad metadata in " + dir_);
   std::sort(buckets_.begin(), buckets_.end(),
             [](const Bucket& a, const Bucket& b) { return a.n_pad < b.n_pad || (a.n_pad == b.n_pad && a.e_pad < b.e_pad); });
@@ -104,9 +110,23 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
   init.struct_size = PJRT_Plugin_Initialize_Args_STRUCT_SIZE;
   check(api_, api_->PJRT_Plugin_Initialize(&init), "PJRT_Plugin_Initialize");
 
+  // no up-front grab of 75 % of the GPU (several ranks may share a node; LAMMPS needs little device memory);
+  // RACEV2_PREALLOCATE=1 restores the XLA default
+  const char* pre = std::getenv("RACEV2_PREALLOCATE");
+  PJRT_NamedValue opt;
+  std::memset(&opt, 0, sizeof(opt));
+  opt.struct_size = PJRT_NamedValue_STRUCT_SIZE;
+  static const char kPre[] = "preallocate";
+  opt.name = kPre;
+  opt.name_size = sizeof(kPre) - 1;
+  opt.type = PJRT_NamedValue_kBool;
+  opt.bool_value = pre && pre[0] == '1';
+  opt.value_size = 1;
   PJRT_Client_Create_Args cc;
   std::memset(&cc, 0, sizeof(cc));
   cc.struct_size = PJRT_Client_Create_Args_STRUCT_SIZE;
+  cc.create_options = &opt;
+  cc.num_options = 1;
   check(api_, api_->PJRT_Client_Create(&cc), "PJRT_Client_Create");
   client_ = cc.client;
 
@@ -175,8 +195,8 @@ Bucket& Model::bucket_for(int n, int e) {
   throw std::runtime_error(ss.str());
 }
 
-double Model::compute(int n, int e, const int* species, const int* receivers, const int* senders, const double* rvec,
-                      std::vector<double>& e_atom, std::vector<double>& dEdr) {
+double Model::compute(int n, int e, int n_local, const int* species, const int* receivers, const int* senders,
+                      const double* rvec, std::vector<double>& e_atom, std::vector<double>& dEdr) {
   Bucket& b = bucket_for(n, e);
   std::vector<int> sp(b.n_pad, 0), rc(b.e_pad, n), sd(b.e_pad, n);
   std::vector<double> rv(3 * static_cast<size_t>(b.e_pad), 0.0);
@@ -185,13 +205,13 @@ double Model::compute(int n, int e, const int* species, const int* receivers, co
   std::copy(senders, senders + e, sd.begin());
   std::copy(rvec, rvec + 3 * static_cast<size_t>(e), rv.begin());
   std::vector<double> ea, g;
-  double et = compute_padded(b.n_pad, b.e_pad, n, e, sp.data(), rc.data(), sd.data(), rv.data(), ea, g);
+  double et = compute_padded(b.n_pad, b.e_pad, n, e, n_local, sp.data(), rc.data(), sd.data(), rv.data(), ea, g);
   e_atom.assign(ea.begin(), ea.begin() + n);
   dEdr.assign(g.begin(), g.begin() + 3 * static_cast<size_t>(e));
   return et;
 }
 
-double Model::compute_padded(int n_pad, int e_pad, int n, int e, const int* species, const int* receivers,
+double Model::compute_padded(int n_pad, int e_pad, int n, int e, int n_local, const int* species, const int* receivers,
                              const int* senders, const double* rvec, std::vector<double>& e_atom_pad,
                              std::vector<double>& dEdr_pad) {
   Bucket* bp = nullptr;
@@ -206,11 +226,12 @@ double Model::compute_padded(int n_pad, int e_pad, int n, int e, const int* spec
     PJRT_Buffer_Type type;
     std::vector<int64_t> dims;
   };
-  const int32_t n32 = n, e32 = e;
+  const int32_t n32 = n, e32 = e, l32 = n_local;
   std::vector<In> ins = {
       {species, PJRT_Buffer_Type_S32, {n_pad}},       {receivers, PJRT_Buffer_Type_S32, {e_pad}},
       {senders, PJRT_Buffer_Type_S32, {e_pad}},       {rvec, PJRT_Buffer_Type_F64, {e_pad, 3}},
-      {&n32, PJRT_Buffer_Type_S32, {}},               {&e32, PJRT_Buffer_Type_S32, {}}};
+      {&n32, PJRT_Buffer_Type_S32, {}},               {&e32, PJRT_Buffer_Type_S32, {}},
+      {&l32, PJRT_Buffer_Type_S32, {}}};
   std::vector<PJRT_Buffer*> args(ins.size(), nullptr);
   for (size_t k = 0; k < ins.size(); ++k) {
     PJRT_Client_BufferFromHostBuffer_Args h;

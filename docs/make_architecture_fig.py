@@ -26,11 +26,52 @@ NEW = "#fff2cc"       # fill of boxes that are new in v2 (vs v1)
 NEWEC = "#c98f00"
 
 
+
+# English labels for `--lang en` (docs/RACEv2_architecture_en.*, used by the English README)
+LANG = "ko"
+EN = {
+ "국소 화학 환경": "Local chemical environment",
+ "(컷오프 5 Å 이내)": "(within cutoff 5 Å)",
+ "원소 표현\n(원소 종류 → 벡터)": "Element embedding\n(species → vector)",
+ "방향 표현\n$Y_l(\\hat{\\mathbf{r}}_{ij}),\\ l\\leq 3$": "Angular basis\n$Y_l(\\hat{\\mathbf{r}}_{ij}),\\ l\\leq 3$",
+ "거리 표현\n(Bessel + 고차 진동 억제, 원소 껍질 채널)": "Radial basis\n(Bessel + oscillation prior,\nelement shell channels)",
+ "원자 주변 요약 $A_i$\n(이웃 정보를 한 번 모은 벡터)": "Atomic basis $A_i$\n(neighbourhood summed once)",
+ "$x_i^{(t)}$ = $A_i$의 변형\n(크기 조절)": "$x_i^{(t)}$ = projection of $A_i$\n(hill scaling)",
+ "두 층 전\n특징 빼기": "subtract\nlayer t-2",
+ "$h_i^{(5)}$ (미사용)": "$h_i^{(5)}$ (unused)",
+ "UFF 반발력 $E_i^{\\rm rep}$\n(형태 고정, 결합 안 한 쌍만;\n전역 배율 s 공유)": "UFF repulsion $E_i^{\\rm rep}$\n(fixed form, non-bonded\npairs only; one global scale s)",
+ "총 에너지  $E=\\Sigma_i\\,(E_0+E_i^{\\rm rep}+\\Sigma_t\\,E_i^{(t)})$\n힘  $\\mathbf{F}=-\\nabla E$ (자동미분)": "Total energy  $E=\\Sigma_i\\,(E_0+E_i^{\\rm rep}+\\Sigma_t\\,E_i^{(t)})$\nForces  $\\mathbf{F}=-\\nabla E$ (autodiff)",
+ "학습: SOAP 옵티마이저 · Huber 손실 · EMA · 학습 후 에너지 상수 보정": "Training: SOAP optimizer · Huber loss · EMA · energy-constant refit after training",
+ "회색: 원자 특징 h   초록: 원자 주변 요약 x   파랑: 방향 $Y$   빨강: 거리 $\\tilde e$   보라: 두 층 전 특징   노랑 상자: v2에서 추가/변경": "grey: node features h   green: atomic basis x   blue: angular $Y$   red: radial $\\tilde e$   purple: features of layer t-2   yellow boxes: new/changed in v2",
+ "상호작용 층 t  (최종 모델)": "Interaction layer t  (final model)",
+ "자기 자신 항\n(원소별 Linear)": "Self term\n(species-wise Linear)",
+ "방향 정보 결합": "angular coupling",
+ "거리 가중치 $R_t(r_{ij})$": "radial weights $R_t(r_{ij})$",
+ "이웃 합 ÷ 평균 이웃 수": "sum over neighbours ÷ mean neighbour count",
+ "원자 주변 요약 $x_i$ 곱": "product with atomic basis $x_i$",
+ "더하기 (비선형 없음)": "add (no nonlinearity)",
+ "증분 배율 γ (LayerScale)": "increment scale γ (LayerScale)",
+ "2×증분 − 두 층 전 특징 (Chebyshev)": "2 × increment - features of layer t-2 (Chebyshev)",
+ "$E_i^{(t)}$ (이 층의 에너지 조각)": "$E_i^{(t)}$ (energy stratum of this layer)",
+ "비선형은 여기에만": "nonlinearity only here",
+ "방향 정보 결합(텐서곱)": "angular coupling (tensor product)",
+ "곱": "product",
+ "이웃 합": "sum over neighbours",
+ "합": "sum",
+ "두 층 전 빼기": "subtract layer t-2",
+ "RACEv2 최종 모델 구조 (v1 논문 Figure 1 b·c 구도)": "RACEv2 final architecture (layout of Figure 1 b, c of the RACE paper)"
+}
+
+
+def T(text):
+    return EN.get(text, text) if LANG == "en" else text
+
+
 def box(ax, x, y, w, h, text, fc=BOXFC, ec=BOXEC, fs=8.5, bold=False, lw=1.0, rounding=0.18, color="black"):
     p = FancyBboxPatch((x - w / 2, y - h / 2), w, h, boxstyle=f"round,pad=0,rounding_size={rounding}",
                        fc=fc, ec=ec, lw=lw, zorder=3)
     ax.add_patch(p)
-    ax.text(x, y, text, ha="center", va="center", fontsize=fs, zorder=4, color=color,
+    ax.text(x, y, T(text), ha="center", va="center", fontsize=fs, zorder=4, color=color,
             fontweight="bold" if bold else "normal", linespacing=1.15)
     return p
 
@@ -57,7 +98,7 @@ def label(ax, x, y, text, fs=8, color="black", ha="center", va="center", bold=Fa
     kw = {}
     if bg:
         kw["bbox"] = dict(boxstyle="round,pad=0.12", fc=bg, ec="none")
-    ax.text(x, y, text, ha=ha, va=va, fontsize=fs, color=color, zorder=5,
+    ax.text(x, y, T(text), ha=ha, va=va, fontsize=fs, color=color, zorder=5,
             fontweight="bold" if bold else "normal", **kw)
 
 
@@ -262,12 +303,17 @@ def panel_layer(ax):
 
 
 def main():
+    global LANG
+    import sys
+    if "--lang" in sys.argv:
+        LANG = sys.argv[sys.argv.index("--lang") + 1]
     fig, (axb, axc) = plt.subplots(1, 2, figsize=(14.5, 11.0), gridspec_kw=dict(wspace=0.02))
     panel_pipeline(axb)
     panel_layer(axc)
-    fig.suptitle("RACEv2 최종 모델 구조 (v1 논문 Figure 1 b·c 구도)", fontsize=12, fontweight="bold", y=0.985)
+    fig.suptitle(T("RACEv2 최종 모델 구조 (v1 논문 Figure 1 b·c 구도)"), fontsize=12, fontweight="bold", y=0.985)
+    suffix = "_en" if LANG == "en" else ""
     for ext in ("png", "pdf"):
-        out = os.path.join(DOCS, f"RACEv2_architecture.{ext}")
+        out = os.path.join(DOCS, f"RACEv2_architecture{suffix}.{ext}")
         fig.savefig(out, dpi=220 if ext == "png" else None, bbox_inches="tight", facecolor="white")
         print("written", out)
 

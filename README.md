@@ -9,7 +9,7 @@ Every result below was trained on the official training split of its dataset onl
 no data augmentation. All equations, tables and figures are collected in
 [`docs/RACEv2_methods_summary.pdf`](docs/RACEv2_methods_summary.pdf) (in Korean).
 
-![RACEv2 architecture](docs/RACEv2_architecture.png)
+![RACEv2 architecture](docs/RACEv2_architecture_en.png)
 
 ## Changes with respect to RACE V1 (final recipe)
 

@@ -10,6 +10,10 @@ from flax import nnx
 import pytest
 
 from bam_omat24.linear_nnx import Linear
+# imported here, not inside the tests: importing train_3bpa (via test_oam_stress) switches jax_enable_x64 off,
+# which inside a test would undo the x64 fixture and compare float32 (TF32) results
+from conftest import as_float64                                     # noqa: E402
+from test_oam_stress import _model, _cell, _graph, _f64            # noqa: E402
 
 
 def _set(impl):
@@ -59,8 +63,6 @@ def test_ragged_matches_gather(x64, irreps_in, irreps_out, biases):
 
 
 def test_race_model_identical_with_ragged(x64):
-    from conftest import as_float64
-    from test_oam_stress import _model, _cell, _graph, _f64
     a = _cell(2)
     model, _ = as_float64(_model(), _graph(a))
     g = _f64(_graph(a))
@@ -72,8 +74,6 @@ def test_race_model_identical_with_ragged(x64):
 
 def test_remat_layers_identical(x64):
     """BAM_REMAT_LAYERS=1 (per-layer rematerialisation) gives the same energies, forces and stress."""
-    from conftest import as_float64
-    from test_oam_stress import _model, _cell, _graph, _f64
     a = _cell(3)
     model, _ = as_float64(_model(), _graph(a))
     g = _f64(_graph(a))

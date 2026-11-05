@@ -15,7 +15,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
 C=input/input_3bpa_omat24_lipsF_fu_s42_cue.json
 K=runs/lipsF_fu_s42_cue/ckpt_lipsF_fu_s42_cue.gauge.pkl
-CUDA_VISIBLE_DEVICES=0 python -m pytest -q tests/test_indexed_linear.py 2>&1 | tail -n 3
+CUDA_VISIBLE_DEVICES=0 python -m pytest -q -x --tb=short tests/test_indexed_linear.py 2>&1 | grep -a -v "warn\|Warning" | tail -n 40
 for B in "4096 131072" "16384 524288"; do
   CUDA_VISIBLE_DEVICES=0 BAM_REMAT_LAYERS=1 BAM_INDEXED_LINEAR=ragged python runs/diag/memory_probe.py $C $K $B cue 2>&1 | grep -a "^bucket" | sed "s/^/remat=1 /"
 done

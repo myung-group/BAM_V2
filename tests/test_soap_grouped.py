@@ -116,3 +116,23 @@ def test_cholqr_close_on_well_conditioned(x64):
         for k in SHAPES:
             np.testing.assert_allclose(np.asarray(ub[k]), np.asarray(ua[k]), rtol=1e-6, atol=1e-8,
                                        err_msg=f"step {step} leaf {k}")
+
+
+def test_species_tables_use_adam(x64):
+    """adam_leading_dim: leaves with leading dim == n_species are plain Adam; the others are unchanged SOAP."""
+    import optax
+    from bam_omat24.soap_grouped import scale_by_soap_grouped
+    key = jax.random.PRNGKey(0)
+    k1, k2, k3 = jax.random.split(key, 3)
+    params = {'table': jax.random.normal(k1, (5, 3, 4), jnp.float64), 'shared': jax.random.normal(k2, (6, 7), jnp.float64)}
+    tx_s = scale_by_soap_grouped(b1=0.95, b2=0.95, eps=1e-8, precondition_frequency=2, adam_leading_dim=5)
+    tx_ref = scale_by_soap_grouped(b1=0.95, b2=0.95, eps=1e-8, precondition_frequency=2)
+    tx_adam = optax.scale_by_adam(b1=0.95, b2=0.95, eps=1e-8)
+    s_s, s_r, s_a = tx_s.init(params), tx_ref.init(params), tx_adam.init(params['table'])
+    for t in range(5):
+        g = jax.tree.map(lambda x: jax.random.normal(jax.random.fold_in(k3, t), x.shape, x.dtype), params)
+        u_s, s_s = tx_s.update(g, s_s, params)
+        u_r, s_r = tx_ref.update(g, s_r, params)
+        u_a, s_a = tx_adam.update(g['table'], s_a, params['table'])
+        assert np.allclose(np.asarray(u_s['table']), np.asarray(u_a), rtol=1e-10, atol=1e-12)
+        assert np.allclose(np.asarray(u_s['shared']), np.asarray(u_r['shared']), rtol=1e-10, atol=1e-12)

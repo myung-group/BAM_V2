@@ -76,6 +76,8 @@ Config keys (in addition to the model hyper-parameters, see README):
     soap_orth        : "householder" | "cholqr" (grouped only; regularised shifted CholeskyQR3)  (default householder)
     matmul_precision : null | "highest" | "high" | "default": jax_default_matmul_precision (float32 runs: "highest"
                        disables TF32)                                                          (default null)
+    soap_species_adam: bool (grouped only): species-indexed parameter tables (leading dim = n_species) are updated
+                       by Adam (same b1 / b2 / eps) instead of SOAP                            (default false)
     soap_state_dtype : null | "float64" (grouped only): SOAP moments / factors / eigenbases in float64 while the
                        model runs in float32 (turns on jax_enable_x64; params and data stay float32)  (default null)
     gauge_refit      : bool, after training refit the per-atom energy shift in closed form on the training
@@ -525,7 +527,8 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
             # same maths, same-shape leaves batched (docs/RACE_SOAP_speedup_plan_2026-10-29.md)
             from bam_omat24.soap_grouped import scale_by_soap_grouped
             soap_fn = functools.partial(scale_by_soap_grouped, orth=_get(cfg, 'soap_orth', 'householder'),
-                                        state_dtype=_get(cfg, 'soap_state_dtype', None))
+                                        state_dtype=_get(cfg, 'soap_state_dtype', None),
+                                        adam_leading_dim=(n_species if _get(cfg, 'soap_species_adam', False) else None))
         elif soap_impl == 'reference':
             if _get(cfg, 'soap_state_dtype', None):
                 raise ValueError("soap_state_dtype needs soap_impl='grouped'")

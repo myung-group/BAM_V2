@@ -37,7 +37,7 @@ import jax.numpy as jnp
 import optax
 from jax import lax
 
-from bam_omat24.soap_optax import ScaleBySoapState, _spec, _mm, _t
+from bam_omat24.soap_optax import ScaleBySoapState, _Spec, _spec, _mm, _t
 
 
 class ScaleBySoapGroupedState(NamedTuple):
@@ -70,9 +70,15 @@ class _Grp(NamedTuple):
     B: int
 
 
-def make_plan(shapes, dtypes, max_dim=10000, pre1d=False, drop_unit=True):
-    """Static grouping from leaf shapes / dtypes (deterministic: first-occurrence order)."""
+def make_plan(shapes, dtypes, max_dim=10000, pre1d=False, drop_unit=True, adam_leading_dim=None):
+    """Static grouping from leaf shapes / dtypes (deterministic: first-occurrence order).
+    adam_leading_dim: leaves with ndim >= 2 whose LEADING dimension equals this value (the species-indexed tables
+    of RACE, shape (n_species, ...)) are updated by plain Adam instead of SOAP (2026-11-06: 89 % of the 89-element
+    model; their eigenbasis refresh dominated the SOAP step time and rare-element slices get almost no gradient)."""
     specs = [_spec(s, d, max_dim, pre1d) for s, d in zip(shapes, dtypes)]
+    if adam_leading_dim is not None:
+        specs = [_Spec('adam') if (sp.kind == 'soap' and len(s) >= 2 and int(s[0]) == int(adam_leading_dim)) else sp
+                 for sp, s in zip(specs, shapes)]
     acc = {}
     for i, sp in enumerate(specs):
         if sp.kind != 'soap':
@@ -180,7 +186,8 @@ def _eigh_desc(F, batched_max_k):
 def soap_grouped_build(b1=0.95, b2=0.95, eps=1e-8, precondition_frequency=10, max_precond_dim=10000,
                           shampoo_beta=None, precondition_1d=False, *, drop_unit=True, layout='grouped',
                           orth='householder', batched_qr_max_k=128, cholqr_reg=1e-12,
-                          axis_name: Optional[str] = None, axis_size: int = 1, state_dtype=None):
+                          axis_name: Optional[str] = None, axis_size: int = 1, state_dtype=None,
+                          adam_leading_dim: Optional[int] = None):
     """layout='grouped': ScaleBySoapGroupedState (no per-step state copies);
     layout='per_leaf': the current ScaleBySoapState (checkpoint compatible; stacks / unstacks
     the state every step, ~2-3 GB of HBM traffic, ~1 ms).
@@ -193,7 +200,10 @@ def soap_grouped_build(b1=0.95, b2=0.95, eps=1e-8, precondition_frequency=10, ma
     it into O(1) normalised steps, and the OAM-subset runs diverged within ~30 steps."""
     b1, b2, eps, freq = float(b1), float(b2), float(eps), int(precondition_frequency)
     beta_s = b2 if shampoo_beta is None or shampoo_beta < 0 else float(shampoo_beta)
-    plan_kw = dict(max_dim=int(max_precond_dim), pre1d=bool(precondition_1d), drop_unit=bool(drop_unit))
+    plan_kw = dict(max_dim=int(max_precond_dim), pre1d=bool(precondition_1d), drop_unit=bool(drop_unit),
+                   adam_leading_dim=adam_leading_dim)
+    if adam_leading_dim is not None and layout != 'grouped':
+        raise ValueError("adam_leading_dim needs layout='grouped'")
     okw = dict(mode=orth, batched_max_k=int(batched_qr_max_k), reg=float(cholqr_reg))
 
     if state_dtype is not None and layout != 'grouped':

@@ -13,15 +13,16 @@ module load PrgEnv-gnu cray-mpich >/dev/null 2>&1
 SP=$(python -c "import site; print(site.getsitepackages()[0])")
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
-OUT=runs/lammps_export/lips_e3nn
+OUT=${OUT:-runs/lammps_export/lips_cue_big}
+BACKEND=${BACKEND:-cue}
 CUDA_VISIBLE_DEVICES=0 python -m bam_omat24.export_lammps input/input_3bpa_omat24_lipsF_fu_s42_cue.json \
-  --ckpt runs/lipsF_fu_s42_cue/ckpt_lipsF_fu_s42_cue.gauge.pkl --out $OUT --backend e3nn \
+  --ckpt runs/lipsF_fu_s42_cue/ckpt_lipsF_fu_s42_cue.gauge.pkl --out $OUT --backend $BACKEND \
   --buckets 128:4096 1024:32768 4096:131072 16384:524288 32768:1048576 \
-  --cases /scratch/t589a02/datasets_ext/lips/fu_test.xyz 2>&1 | grep -E "exported|written|Error|error|Traceback"
-export LD_LIBRARY_PATH=$(ls -d $SP/nvidia/*/lib | tr '\n' ':')${LD_LIBRARY_PATH}
+  --cases /scratch/t589a02/datasets_ext/lips/fu_test.xyz 2>&1 | grep -a -E "exported|recorded|written|Error|error|Traceback"
+export LD_LIBRARY_PATH=$(ls -d $SP/nvidia/*/lib | tr '\n' ':')$SP/cuequivariance_ops/lib:${LD_LIBRARY_PATH}
 export PATH=$SP/nvidia/cuda_nvcc/bin:$PATH
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false --xla_gpu_cuda_data_dir=$SP/nvidia/cuda_nvcc"
-CUDA_VISIBLE_DEVICES=0 ./lammps/test_pjrt $SP/jax_plugins/xla_cuda12/xla_cuda_plugin.so $OUT 3 2>&1 | grep -E "case|ALL|FAIL"
+CUDA_VISIBLE_DEVICES=0 ./lammps/test_pjrt $SP/jax_plugins/xla_cuda12/xla_cuda_plugin.so $OUT 3 2>&1 | grep -a -E "case|ms per|ALL|FAIL|what"
 python runs/diag/lammps_multi.py --serial /scratch/t589a02/src/lammps-racev2-build/lmp_racev2 \
   --mpi /scratch/t589a02/src/lammps-racev2-mpi-build/lmp_racev2_mpi \
   --plugin $SP/jax_plugins/xla_cuda12/xla_cuda_plugin.so --export $OUT \

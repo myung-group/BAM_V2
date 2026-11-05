@@ -83,7 +83,8 @@ def make_fn(model, cutoff, n_pad, e_pad):
             ne = jnp.where(node_mask, ne, 0.0)
             return jnp.sum(jnp.where(local_mask, ne, 0.0)), ne
         (e, ne), g = jax.value_and_grad(etot, has_aux=True)(rvec)
-        return e, ne, g
+        # outputs in the model dtype (with x64 on at export, Python-float constants can promote sums to float64)
+        return e.astype(rvec.dtype), ne.astype(rvec.dtype), g.astype(rvec.dtype)
     return fn
 
 

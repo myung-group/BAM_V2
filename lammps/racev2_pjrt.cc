@@ -179,40 +179,48 @@ void Model::setup_cue(const std::string& kernels, const std::string& lib, const 
     throw std::runtime_error(std::string("racev2: cannot load ") + dep + ": " + dlerror());
   void* h = dlopen(lib.c_str(), RTLD_NOW | RTLD_GLOBAL);
   if (!h) throw std::runtime_error(std::string("racev2: cannot load ") + lib + ": " + dlerror());
+  // the exact arity depends on the cuequivariance-ops version (34 integer-class arguments after the name in 0.13):
+  // declare 40 and pass zeros for the unused ones (extra integer arguments are harmless in the AAPCS64 / SysV ABIs)
   using Compile = int64_t (*)(const char*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
                               int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
                               int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
                               int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
-                              int64_t);
+                              int64_t, int64_t, int64_t, int64_t, int64_t);
   auto compile_fn = reinterpret_cast<Compile>(dlsym(h, "compile_uniform_1d_ctypes"));
   void* handler = dlsym(h, "execute_uniform_1d_cuda_handler");
   if (!compile_fn || !handler) throw std::runtime_error("racev2: cue symbols not found in " + lib);
 
   std::istringstream in(read_file(dir_ + "/" + kernels));
-  std::string tok;
+  std::string line;
   int replayed = 0;
-  while (in >> tok) {
+  bool have = static_cast<bool>(std::getline(in, line));
+  while (have) {
+    std::istringstream hl(line);
+    std::string tok; int64_t handle_ref; int nargs; std::string name;
+    hl >> tok >> handle_ref >> nargs >> name;
     if (tok != "call") throw std::runtime_error("racev2: bad cue_kernels file");
-    int64_t handle_ref; int nargs; std::string name;
-    in >> handle_ref >> nargs >> name;
-    if (nargs != 37) throw std::runtime_error("racev2: unexpected compile_uniform_1d arity (cue version?)");
-    std::vector<std::vector<int64_t>> arrays;   // keep storage alive
-    arrays.reserve(32);
-    std::vector<int64_t> args;                  // 36 integer-class arguments after the name
-    while ((int) args.size() < 36) {
-      std::string kind; in >> kind;
-      if (kind == "s") { int64_t v; in >> v; args.push_back(v); }
+    std::vector<std::vector<int64_t>> arrays;
+    arrays.reserve(64);
+    std::vector<int64_t> args;
+    while ((have = static_cast<bool>(std::getline(in, line))) && line.rfind("call ", 0) != 0) {
+      std::istringstream ls(line);
+      std::string kind; ls >> kind;
+      if (kind == "s") { int64_t v; ls >> v; args.push_back(v); }
       else if (kind == "a") {
-        int64_t n; in >> n; arrays.emplace_back(n);
-        for (int64_t q = 0; q < n; ++q) in >> arrays.back()[q];
+        int64_t n; ls >> n; arrays.emplace_back(n);
+        for (int64_t q = 0; q < n; ++q) ls >> arrays.back()[q];
         args.push_back(reinterpret_cast<int64_t>(arrays.back().data()));
         args.push_back(n);
-      } else throw std::runtime_error("racev2: bad cue_kernels entry");
+      }
     }
+    if ((int) args.size() != nargs - 1 || args.size() > 40)
+      throw std::runtime_error("racev2: cue_kernels entry does not match its argument count");
+    args.resize(40, 0);
     const int64_t* a = args.data();
     int64_t got = compile_fn(name.c_str(), a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11],
                              a[12], a[13], a[14], a[15], a[16], a[17], a[18], a[19], a[20], a[21], a[22], a[23],
-                             a[24], a[25], a[26], a[27], a[28], a[29], a[30], a[31], a[32], a[33], a[34], a[35]);
+                             a[24], a[25], a[26], a[27], a[28], a[29], a[30], a[31], a[32], a[33], a[34], a[35],
+                             a[36], a[37], a[38], a[39]);
     if (got != handle_ref) {
       std::ostringstream ss;
       ss << "racev2: cue kernel handle mismatch (" << got << " vs recorded " << handle_ref << ")";

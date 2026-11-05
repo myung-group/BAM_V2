@@ -1016,7 +1016,9 @@ def evaluate_sharded(
         'energy_mae_total': totals['energy_ae_total'] / n_g,
         'energy_rmse_total': np.sqrt(totals['energy_se_total']/n_g),
         'force_mae': totals['force_ae'] / (3 * n_a),
-        'stress_mae': totals['stress_ae'] / n_g,
+        'stress_mae': totals['stress_ae'] / n_g,                    # sum of the 6 Voigt |errors| per graph (legacy)
+        'stress_mae_comp': totals['stress_ae'] / (6 * n_g),         # per Voigt component, eV/A^3
+        'stress_rmse_comp': np.sqrt(totals['stress_se'] / (6 * n_g)),
         'force_rmse': np.sqrt(totals['force_se']/(3 * n_a)),
         'energy_loss': totals['energy_loss'] / n_g,
         'force_loss': totals['force_loss'] / (3 * n_a),

@@ -27,10 +27,19 @@ def main():
     ap.add_argument('--datasets', nargs='+', default=['omat24', 'mptrj', 'salex'])
     ap.add_argument('--variants', nargs='+', default=['v2', 'v1'])
     ap.add_argument('--x64', action='store_true', help='float64 model + optimizer (the benchmark setting)')
+    ap.add_argument('--stress-weight', type=float, default=10.0)
+    ap.add_argument('--cutoff', type=float, default=5.0,
+                    help='!= 5: avg_n_neighbors recomputed on 500 training structures at this cutoff')
     args = ap.parse_args()
     base = json.load(open(BASE))
     for ds in args.datasets:
         meta = json.load(open(args.subset_dir / f'{ds}_meta.json'))
+        avg_n = meta['avg_n_neighbors']
+        if args.cutoff != 5.0:
+            import ase.io
+            from ase.neighborlist import neighbor_list
+            frames = ase.io.read(meta['train']['path'], index=':500')
+            avg_n = sum(len(neighbor_list('i', a, args.cutoff)) / len(a) for a in frames) / len(frames)
         for var in args.variants:
             for seed in args.seeds:
                 name = f'{args.tag}_{ds}_{var}_s{seed}'
@@ -39,8 +48,8 @@ def main():
                     'train_path': meta['train']['path'], 'valid_path': meta['valid']['path'],
                     'test_paths': [meta['test']['path']],
                     'atomic_numbers': meta['atomic_numbers'], 'atom_energies': meta['atom_energies'],
-                    'e0_mode': 'isolated', 'avg_n_neighbors': round(meta['avg_n_neighbors'], 3),
-                    'periodic': True, 'stress_loss': True, 'stress_weight': 10.0,
+                    'e0_mode': 'isolated', 'avg_n_neighbors': round(avg_n, 3), 'cutoff': args.cutoff,
+                    'periodic': True, 'stress_loss': True, 'stress_weight': args.stress_weight,
                     'x64': False, 'batch_size': 16, 'pad_mode': 'fixed', 'pack_max_graphs': 64,
                     'n_epochs': args.epochs, 'lr_schedule_patience': 10, 'eval_test_every': 10,
                     'ckpt_last_every': 5, 'restart': True, 'seed': seed,
@@ -48,7 +57,8 @@ def main():
                     'ckpt_name': f'runs/{name}_cue/ckpt_{name}_cue.pkl',
                     'note': f'OAM subset screening 2026-11-05: {ds} ({meta["train"]["n"]} train), '
                             f'{"RACEv2 final recipe" if var == "v2" else "all RACEv2 additions removed (V1 recipe)"}, float32, '
-                            'E0 = per-element least squares of the full training split, stress eV/A^3 (weight 10)',
+                            f'E0 = per-element least squares of the full training split, stress eV/A^3 (weight {args.stress_weight:g}), '
+                            f'cutoff {args.cutoff:g} A',
                 })
                 if var == 'v1':
                     c.update(V1_FLIPS)

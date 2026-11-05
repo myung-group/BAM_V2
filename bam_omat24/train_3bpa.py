@@ -632,7 +632,10 @@ def _fmt_metrics(m: Dict) -> str:
     return (f"E_MAE: {m['energy_mae_total']*1e3:7.2f} meV | "
             f"E_RMSE: {m['energy_rmse_total']*1e3:7.2f} meV | "
             f"F_MAE: {m['force_mae']*1e3:7.2f} meV/A | "
-            f"F_RMSE: {m['force_rmse']*1e3:7.2f} meV/A")
+            f"F_RMSE: {m['force_rmse']*1e3:7.2f} meV/A"
+            + (f" | E_MAE/atom: {m['energy_mae']*1e3:7.2f} meV | S_MAE: {m['stress_mae_comp']*160.21766:6.3f} GPa | "
+               f"S_RMSE: {m['stress_rmse_comp']*160.21766:6.3f} GPa"
+               if m.get('stress_rmse_comp', 0.0) > 0 else ""))
 
 
 def _cast_graphs(graphs, dtype):

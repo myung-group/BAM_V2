@@ -23,3 +23,5 @@ core
 core.*
 ._dbindex_/
 docs/fonts/
+lammps/*.o
+lammps/test_pjrt

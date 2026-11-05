@@ -98,22 +98,44 @@ def export(args):
         sds = (jax.ShapeDtypeStruct((n_pad,), jnp.int32), jax.ShapeDtypeStruct((e_pad,), jnp.int32),
                jax.ShapeDtypeStruct((e_pad,), jnp.int32), jax.ShapeDtypeStruct((e_pad, 3), jnp.float64),
                jax.ShapeDtypeStruct((), jnp.int32), jax.ShapeDtypeStruct((), jnp.int32))
-        exp = jax.export.export(fn, platforms=['cuda'])(*sds)
+        # cue kernels are custom calls without a cross-version compatibility guarantee: allow them explicitly
+        # (the artifact then only runs with the same cuequivariance-ops build; recorded in the metadata)
+        lowered_txt = fn.lower(*sds).as_text()
+        cc_targets = sorted({l.split('custom_call @')[1].split('(')[0] for l in lowered_txt.splitlines()
+                             if 'custom_call @' in l})
+        checks = [jax.export.DisabledSafetyCheck.custom_call(t) for t in cc_targets]
+        exp = jax.export.export(fn, platforms=['cuda'], disabled_checks=checks)(*sds)
         stem = f'racev2_N{n_pad}_E{e_pad}'
-        (out / f'{stem}.jaxexport').write_bytes(exp.serialize())                # for jax.export.deserialize
         (out / f'{stem}.mlirbc').write_bytes(exp.mlir_module_serialized)        # StableHLO bytecode for PJRT
-        meta['buckets'].append({'n_pad': n_pad, 'e_pad': e_pad, 'file': f'{stem}.mlirbc',
-                                'jaxexport': f'{stem}.jaxexport'})
+        entry = {'n_pad': n_pad, 'e_pad': e_pad, 'file': f'{stem}.mlirbc'}
+        try:                                                                    # needs the flatbuffers package
+            (out / f'{stem}.jaxexport').write_bytes(exp.serialize())
+            entry['jaxexport'] = f'{stem}.jaxexport'
+        except ImportError as ex:
+            print('  (no .jaxexport:', ex, ')')
+        meta['buckets'].append(entry)
         txt = exp.mlir_module()
         n_cc = txt.count('custom_call')
         print(f'exported {stem}: {len(exp.mlir_module_serialized) / 1e6:.1f} MB, custom_call ops {n_cc}', flush=True)
-        if n_cc:
-            targets = sorted({l.split('@')[1].split('(')[0] for l in txt.splitlines() if 'custom_call @' in l})
-            print('  custom_call targets:', targets)
-            meta['buckets'][-1]['custom_calls'] = targets
+        if cc_targets:
+            print('  custom_call targets:', cc_targets)
+            meta['buckets'][-1]['custom_calls'] = cc_targets
+            meta['custom_call_note'] = 'cuequivariance-ops custom calls: run only with the same cue ops build'
         fns[(n_pad, e_pad)] = exp
     json.dump(meta, open(out / 'racev2_lammps_meta.json', 'w'), indent=1)
-    print('written', out / 'racev2_lammps_meta.json')
+    # plain-text copy for the C++ runtime (no JSON parser there)
+    with open(out / 'racev2_lammps_meta.txt', 'w') as fh:
+        fh.write(f"cutoff {cutoff!r}\nn_layers {meta['n_layers']}\n")
+        fh.write('atomic_numbers ' + ' '.join(str(z) for z in zs) + '\n')
+        fh.write('e0 ' + ' '.join(repr(float(x)) for x in e0) + '\n')
+        for b in meta['buckets']:
+            fh.write(f"bucket {b['n_pad']} {b['e_pad']} {b['file']}\n")
+    # serialized xla::CompileOptionsProto for PJRT_Client_Compile (defaults: 1 replica, 1 partition)
+    from jax._src.lib import xla_client
+    (out / 'compile_options.pb').write_bytes(xla_client.CompileOptions().SerializeAsString())
+    print('written', out / 'racev2_lammps_meta.json', out / 'racev2_lammps_meta.txt', out / 'compile_options.pb')
+    if args.cases:
+        write_cases(args, meta, fns, zs)
     if args.check:
         check(args, cfg, model, zs, e0, meta, fns)
 
@@ -129,6 +151,28 @@ def graph_inputs(atoms, zs, cutoff, n_pad, e_pad):
     rec = np.full(e_pad, n, np.int32); snd = np.full(e_pad, n, np.int32); rv = np.zeros((e_pad, 3))
     rec[:e], snd[:e], rv[:e] = i, j, D
     return species, rec, snd, rv, np.int32(n), np.int32(e)
+
+
+def write_cases(args, meta, fns, zs):
+    """Binary test cases for the C++ runtime: int32 n_pad e_pad n e, int32 species[n_pad], receivers[e_pad],
+    senders[e_pad], float64 rvec[e_pad*3], then the expected outputs of the exported function: float64 e_total,
+    e_atom[n_pad], dE_drvec[e_pad*3]."""
+    import ase.io
+    import jax.numpy as jnp
+    out = Path(args.out)
+    frames = ase.io.read(args.cases, index=':3')
+    for k, a in enumerate(frames):
+        key = next(((n, e) for (n, e) in sorted(fns) if len(a) < n), None)
+        ins = graph_inputs(a, zs, meta['cutoff'], *key)
+        e, ne, g = fns[key].call(*[jnp.asarray(x) for x in ins])
+        with open(out / f'case_{k}.bin', 'wb') as fh:
+            np.array([key[0], key[1], int(ins[4]), int(ins[5])], np.int32).tofile(fh)
+            for x in ins[:3]:
+                np.asarray(x, np.int32).tofile(fh)
+            np.asarray(ins[3], np.float64).tofile(fh)
+            np.array([float(e)], np.float64).tofile(fh)
+            np.asarray(ne, np.float64).tofile(fh); np.asarray(g, np.float64).tofile(fh)
+        print('written', out / f'case_{k}.bin', 'atoms', len(a), 'edges', int(ins[5]), 'E', float(e))
 
 
 def check(args, cfg, model, zs, e0, meta, fns):
@@ -172,6 +216,7 @@ def main():
     ap.add_argument('--backend', choices=['e3nn', 'cue'], default='e3nn')
     ap.add_argument('--buckets', nargs='+', default=['128:4096', '256:8192', '512:16384', '1024:32768'])
     ap.add_argument('--check', default=None); ap.add_argument('--n-check', type=int, default=5)
+    ap.add_argument('--cases', default=None, help='extxyz: write case_<k>.bin test cases (3 frames) for the C++ runtime')
     export(ap.parse_args())
 
 

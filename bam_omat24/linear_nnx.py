@@ -84,6 +84,48 @@ def _linear_indexed(
     return f(w, input)
 
 
+def _linear_indexed_ragged(
+    input: e3nn.IrrepsArray,
+    lin: FunctionalLinear,
+    get_parameter: Callable[[str, Tuple[int, ...], float, Any], jax.Array],
+    indices: jax.Array,
+    num_indexed_weights: int,
+) -> e3nn.IrrepsArray:
+    """Same result as _linear_indexed for input (N, dim) and indices (N,), without materialising the per-node
+    weights (N, mul_in, mul_out): nodes are sorted by index and every weight block is applied once per index group
+    with jax.lax.ragged_dot.  Memory O(N * dim) instead of O(N * mul_in * mul_out) (2026-11-06: a 32k-atom graph
+    of the 89-element model needed ~200 GB with the gather)."""
+    input = input.rechunk(lin.irreps_in)
+    n = input.shape[0]
+    perm = jnp.argsort(indices, stable=True)
+    counts = jnp.bincount(indices, length=num_indexed_weights).astype(jnp.int32)
+    paths = []
+    for ins in lin.instructions:
+        name = (f"b[{ins.i_out}] {lin.irreps_out[ins.i_out]}" if ins.i_in == -1
+                else f"w[{ins.i_in},{ins.i_out}] {lin.irreps_in[ins.i_in]},{lin.irreps_out[ins.i_out]}")
+        w = get_parameter(name, (num_indexed_weights,) + ins.path_shape, ins.weight_std, input.dtype)
+        if ins.i_in == -1:                                   # bias of a scalar output: (S, mul) -> (N, mul, 1)
+            paths.append(ins.path_weight * w[indices].reshape(n, -1, 1))
+            continue
+        x = input.chunks[ins.i_in]                           # (N, mul_in, d) or None
+        if x is None:
+            paths.append(None)
+            continue
+        mul_in, d = x.shape[1], x.shape[2]
+        lhs = jnp.swapaxes(x[perm], 1, 2).reshape(n * d, mul_in)
+        y = jax.lax.ragged_dot(lhs, w.astype(lhs.dtype), counts * d)          # (N*d, mul_out), sorted order
+        y = jnp.swapaxes(y.reshape(n, d, -1), 1, 2)                           # (N, mul_out, d)
+        y = jnp.zeros_like(y).at[perm].set(y)                                 # back to the input order
+        paths.append(ins.path_weight * y)
+    return lin.aggregate_paths(paths, (n,), input.dtype)
+
+
+def indexed_linear_impl() -> str:
+    """'gather' (default, original) or 'ragged' (environment BAM_INDEXED_LINEAR=ragged, read at trace time)."""
+    import os
+    return os.environ.get("BAM_INDEXED_LINEAR", "gather")
+
+
 class Linear(nnx.Module):
     r"""Equivariant Linear Flax NNX module
 
@@ -365,9 +407,14 @@ class Linear(nnx.Module):
                 if not weights.irreps.is_scalar():
                     raise ValueError("weights must be scalar")
                 weights = weights.array
-            output = _linear_indexed(
-                input, self._linear, get_parameter, weights, self.num_indexed_weights
-            )
+            if indexed_linear_impl() == "ragged" and input.ndim == 2 and weights.ndim == 1:
+                output = _linear_indexed_ragged(
+                    input, self._linear, get_parameter, weights, self.num_indexed_weights
+                )
+            else:
+                output = _linear_indexed(
+                    input, self._linear, get_parameter, weights, self.num_indexed_weights
+                )
 
         if self.channel_out is not None:
             output = output.mul_to_axis(self.channel_out)

@@ -912,6 +912,8 @@ def evaluate_sharded(
     cov_mode: str = 'scalar6',
     beta_nll: float = 0.0,
     collate_fn=None,
+    max_nodes_per_batch=None,
+    max_edges_per_batch=None,
 ) -> Dict:
     """Evaluate model on validation set using all GPUs.
 
@@ -977,7 +979,9 @@ def evaluate_sharded(
             shuffle=False,       # No shuffle for deterministic evaluation
             drop_last=False,     # Evaluate ALL data
             rngs=nnx.Rngs(0),   # Deterministic rngs (not used when shuffle=False)
-            max_nodes_per_batch=max(256, batch_size * max_n + 1),
+            max_nodes_per_batch=(max_nodes_per_batch if max_nodes_per_batch is not None
+                                 else max(256, batch_size * max_n + 1)),
+            max_edges_per_batch=max_edges_per_batch,
         )
         if collate_fn is not None:
             base_loader.collate_fn = collate_fn

@@ -1015,8 +1015,15 @@
         "6.81 / 17.32",
         "27.75 / 52.39",
         "17.79 / 20.16"
+      ],
+      [
+        "LayerScale 제거 (0.5 → 1)",
+        "2.27 / 7.24",
+        "7.19 / 18.27",
+        "28.15 / 51.77",
+        "17.74 / 20.30"
       ]
     ],
-    "pending": "nols, gate, noprior, noshell, nouff, amsgrad 6개 변형 대기"
+    "pending": "gate, noprior, noshell, nouff, amsgrad 5개 변형 대기"
   }
 }

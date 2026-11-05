@@ -84,6 +84,15 @@ def preprocess_graph(
         glob.update(cell=np.array(atoms.get_cell().array, dtype=np.float32)[None],   # .array: ASE Cell.__array__ breaks under NumPy 2
                     cutoff=np.array([cutoff], dtype=np.float32),
                     volume=np.array([atoms.get_volume()], dtype=np.float32))
+        # stress target (eV/A^3, ASE sign: positive = tensile, Voigt xx yy zz yz xz xy); zeros if the frame has none
+        # (only read by the loss with stress_loss=true)
+        stress = np.zeros(6, dtype=np.float32)
+        if targets:
+            try:
+                stress = np.asarray(atoms.get_stress(voigt=True), dtype=np.float32).reshape(6)
+            except Exception:
+                pass
+        glob.update(stress=stress[None])
     return jraph.GraphsTuple(
         n_node=np.array([len(atoms)], dtype=np.int32),
         n_edge=np.array([len(src)], dtype=np.int32),

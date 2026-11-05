@@ -317,7 +317,7 @@ def energy_forces_stress(
         ) -> Tuple[jax.Array, dict]:
             results = node_energy_fn(positions, cell, cutoff, data)
             ne = results["node_energies"].reshape(-1)
-            ne = ne*node_mask #jnp.where(node_mask, ne, 0.0)
+            ne = jnp.where(node_mask.astype(bool), ne, 0.0)   # where, not *: a non-finite padding node must not reach the sums
             aux = {
                 'node_energies': ne,
                 'frc_variation': results.get('frc_variation'),
@@ -344,7 +344,7 @@ def energy_forces_stress(
         ) -> Tuple[jax.Array, dict]:
             results = node_energy_fn(positions, None, None, data)
             ne = results["node_energies"].reshape(-1)
-            ne = ne*node_mask #jnp.where(node_mask, ne, 0.0)
+            ne = jnp.where(node_mask.astype(bool), ne, 0.0)   # where, not *: a non-finite padding node must not reach the sums
             aux = {
                 'node_energies': ne,
                 'frc_variation': results.get('frc_variation'),

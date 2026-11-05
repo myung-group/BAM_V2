@@ -180,17 +180,33 @@ def _eigh_desc(F, batched_max_k):
 def soap_grouped_build(b1=0.95, b2=0.95, eps=1e-8, precondition_frequency=10, max_precond_dim=10000,
                           shampoo_beta=None, precondition_1d=False, *, drop_unit=True, layout='grouped',
                           orth='householder', batched_qr_max_k=128, cholqr_reg=1e-12,
-                          axis_name: Optional[str] = None, axis_size: int = 1):
+                          axis_name: Optional[str] = None, axis_size: int = 1, state_dtype=None):
     """layout='grouped': ScaleBySoapGroupedState (no per-step state copies);
     layout='per_leaf': the current ScaleBySoapState (checkpoint compatible; stacks / unstacks
-    the state every step, ~2-3 GB of HBM traffic, ~1 ms)."""
+    the state every step, ~2-3 GB of HBM traffic, ~1 ms).
+
+    state_dtype: None (= parameter dtype) or e.g. 'float64' (needs jax_enable_x64): the rotated
+    moments, Kronecker factors and eigenbases of the SOAP leaves are kept and computed in this dtype
+    while the parameters and the returned updates stay in their own dtype (mixed precision; grouped
+    layout only).  Rationale (2026-11-06): in float32 the rotation Q_L^T G Q_R leaves round-off of
+    order 1e-7 |G| in directions whose true gradient is zero; with eps = 1e-8 the Adam division turns
+    it into O(1) normalised steps, and the OAM-subset runs diverged within ~30 steps."""
     b1, b2, eps, freq = float(b1), float(b2), float(eps), int(precondition_frequency)
     beta_s = b2 if shampoo_beta is None or shampoo_beta < 0 else float(shampoo_beta)
     plan_kw = dict(max_dim=int(max_precond_dim), pre1d=bool(precondition_1d), drop_unit=bool(drop_unit))
     okw = dict(mode=orth, batched_max_k=int(batched_qr_max_k), reg=float(cholqr_reg))
 
+    if state_dtype is not None and layout != 'grouped':
+        raise ValueError("state_dtype needs layout='grouped'")
+    sdt = None if state_dtype is None else jnp.dtype(state_dtype)
+    if sdt is not None and sdt.itemsize == 8 and not jax.config.jax_enable_x64:
+        raise ValueError("state_dtype float64 needs jax_enable_x64 (the parameters may stay float32)")
+
     def plan(leaves):
-        return make_plan([jnp.shape(x) for x in leaves], [jnp.result_type(x) for x in leaves], **plan_kw)
+        dts = [jnp.result_type(x) for x in leaves]
+        if sdt is not None:
+            dts = [sdt if jnp.issubdtype(d, jnp.floating) else d for d in dts]
+        return make_plan([jnp.shape(x) for x in leaves], dts, **plan_kw)
 
     # ---- grouped state <-> per-leaf state (exact reshapes; also the checkpoint converters)
     def to_grouped(st: ScaleBySoapState, leaves, treedef):
@@ -210,12 +226,12 @@ def soap_grouped_build(b1=0.95, b2=0.95, eps=1e-8, precondition_frequency=10, ma
                 if sp.right and not g.right:
                     x = x * qr_l[mb.leaf].reshape((mb.count, 1, 1))
                 parts.append(x)
-            mu[g.key] = parts[0] if len(parts) == 1 else jnp.concatenate(parts, 0)
+            mu[g.key] = (parts[0] if len(parts) == 1 else jnp.concatenate(parts, 0)).astype(g.dtype)
             nu[g.key] = _stack(nu_l, g, g.dtype)
-            gl[g.key] = _stack_fac(gl_l, g, g.m) if g.left else e(g.dtype)
-            gr[g.key] = _stack_fac(gr_l, g, g.n) if g.right else e(g.dtype)
-            ql[g.key] = _stack_fac(ql_l, g, g.m) if g.left else e(g.dtype)
-            qr[g.key] = _stack_fac(qr_l, g, g.n) if g.right else e(g.dtype)
+            gl[g.key] = _stack_fac(gl_l, g, g.m).astype(g.dtype) if g.left else e(g.dtype)
+            gr[g.key] = _stack_fac(gr_l, g, g.n).astype(g.dtype) if g.right else e(g.dtype)
+            ql[g.key] = _stack_fac(ql_l, g, g.m).astype(g.dtype) if g.left else e(g.dtype)
+            qr[g.key] = _stack_fac(qr_l, g, g.n).astype(g.dtype) if g.right else e(g.dtype)
         return ScaleBySoapGroupedState(st.count, treedef.unflatten(amu), treedef.unflatten(anu),
                                        mu, nu, gl, gr, ql, qr)
 

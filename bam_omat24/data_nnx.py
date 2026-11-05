@@ -95,6 +95,25 @@ def default_collate_fn(
     return jraph.pad_with_graphs(batched, pad_nodes, pad_edges, pad_graphs)
 
 
+def fixed_collate_fn(
+    graphs: List[jraph.GraphsTuple],
+    batch_size: int,
+    n_node_pad: int,
+    n_edge_pad: int,
+) -> jraph.GraphsTuple:
+    """Pad every batch to ONE fixed shape (n_node_pad nodes, n_edge_pad edges, batch_size + 1 graphs), so the
+    jitted step compiles once.  The loader must pack graphs under these budgets
+    (BucketedDataLoader max_nodes_per_batch=n_node_pad, max_edges_per_batch=n_edge_pad)."""
+    if len(graphs) == 0:
+        raise ValueError("Cannot collate empty list of graphs")
+    batched = jraph.batch_np(graphs)
+    n_nodes = int(np.sum(batched.n_node)); n_edges = int(np.sum(batched.n_edge))
+    if n_nodes >= n_node_pad or n_edges > n_edge_pad or len(graphs) > batch_size:
+        raise ValueError(f"batch ({len(graphs)} graphs, {n_nodes} nodes, {n_edges} edges) exceeds the fixed shape "
+                         f"({batch_size} graphs, {n_node_pad} nodes, {n_edge_pad} edges)")
+    return jraph.pad_with_graphs(batched, n_node_pad, n_edge_pad, batch_size + 1)
+
+
 # =============================================================================
 # Dynamic Batching (Size-Aware)
 # =============================================================================
@@ -172,8 +191,10 @@ class BucketedDataLoader(nnx.Object):
         drop_last: bool = False,
         rngs: nnx.Rngs | None = None,
         max_nodes_per_batch=256,
+        max_edges_per_batch=None,
     ):
         self.dataset = dataset
+        self.max_edge_per_batch = max_edges_per_batch
         self.batch_size = batch_size
         self.n_buckets = n_buckets
         self.shuffle = shuffle
@@ -240,12 +261,16 @@ class BucketedDataLoader(nnx.Object):
             n_to_take = min(self.batch_size, remaining)
             graphs = []
             n_nodes = 0
+            n_edges = 0
             curr_idx = self.bucket_idx
             for _ in range(n_to_take):
                 idx = bucket[curr_idx]
                 curr_graph = self.dataset.graphs[idx]
                 n_nodes += curr_graph.n_node[0]
+                n_edges += curr_graph.n_edge[0]
                 if n_nodes >= self.max_node_per_batch:
+                    break
+                if self.max_edge_per_batch is not None and n_edges > self.max_edge_per_batch:
                     break
                 curr_idx += 1
                 graphs.append(curr_graph)
@@ -256,8 +281,10 @@ class BucketedDataLoader(nnx.Object):
             else:
                 # one graph alone reaches max_nodes_per_batch: ending the epoch here would silently
                 # skip every remaining graph
-                raise ValueError(f"graph {bucket[curr_idx]} has {int(self.dataset.graphs[bucket[curr_idx]].n_node[0])} "
-                                 f"nodes >= max_nodes_per_batch={self.max_node_per_batch}")
+                g0 = self.dataset.graphs[bucket[curr_idx]]
+                raise ValueError(f"graph {bucket[curr_idx]} has {int(g0.n_node[0])} nodes / {int(g0.n_edge[0])} edges, "
+                                 f"over max_nodes_per_batch={self.max_node_per_batch} / "
+                                 f"max_edges_per_batch={self.max_edge_per_batch}")
 
         raise StopIteration
 

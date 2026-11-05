@@ -74,6 +74,10 @@ Config keys (in addition to the model hyper-parameters, see README):
     soap_impl        : "reference" (per-leaf bam_omat24/soap_optax.py) | "grouped" (bam_omat24/soap_grouped.py:
                        same maths, same-shape leaves batched; opt_state layout differs)  (default "reference")
     soap_orth        : "householder" | "cholqr" (grouped only; regularised shifted CholeskyQR3)  (default householder)
+    matmul_precision : null | "highest" | "high" | "default": jax_default_matmul_precision (float32 runs: "highest"
+                       disables TF32)                                                          (default null)
+    soap_state_dtype : null | "float64" (grouped only): SOAP moments / factors / eigenbases in float64 while the
+                       model runs in float32 (turns on jax_enable_x64; params and data stay float32)  (default null)
     gauge_refit      : bool, after training refit the per-atom energy shift in closed form on the training
                        split (least squares of the energy residuals; forces are unchanged: the force-null
                        gauge direction, VarPro), report test metrics as summary 'gauge' and write
@@ -111,7 +115,9 @@ Config keys (in addition to the model hyper-parameters, see README):
                                                               (default false)
     e0_mode          : "isolated" | "regression"              (default "isolated")
     periodic         : bool, periodic cells (graphs built with image shifts Sij, cell, volume; the loss stays
-                       energy + forces, no stress)                                             (default false)
+                       energy + forces unless stress_loss)                                     (default false)
+    stress_loss      : bool, add the stress term (stress_weight, eV/A^3, ASE sign/Voigt order) to the loss and
+                       report stress metrics; needs periodic and a 'stress' global in the data (default false)
     e0_rank_deficient: "reference" (default) | "minnorm"; with e0_mode "regression" and a rank-deficient
                        composition matrix (single stoichiometry) keep the reference E0 (per-species values
                        are not identifiable) or use the old minimum-norm split
@@ -139,7 +145,8 @@ import sys
 import functools
 import os
 
-from bam_omat24.data_nnx import BucketedDataLoader, MultiDeviceDataLoader, setup_mesh, default_collate_fn, to_host
+from bam_omat24.data_nnx import (BucketedDataLoader, MultiDeviceDataLoader, setup_mesh, default_collate_fn,
+                                 fixed_collate_fn, to_host)
 from bam_omat24.distributed import init_distributed
 from bam_omat24.data_3bpa import (
     load_3bpa_graphs, load_frames, fit_e0, compute_dataset_stats, species_counts, e0_rank,
@@ -464,6 +471,9 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
     if _get(cfg, 'x64', False):
         # float64 training (MACE/BOTNet 3BPA protocol): parameters are created in float32
         params = jax.tree.map(lambda x: x.astype(jnp.float64) if jnp.issubdtype(x.dtype, jnp.floating) else x, params)
+    elif jax.config.jax_enable_x64:
+        # x64 switched on only for the optimizer state (soap_state_dtype float64): float32 parameters
+        params = jax.tree.map(lambda x: x.astype(jnp.float32) if jnp.issubdtype(x.dtype, jnp.floating) else x, params)
     n_params = sum(x.size for x in jax.tree.leaves(params))
     print(f"Model: {model_type} hidden_irreps={hidden_irreps} "
           f"x_mode={_get(cfg, 'x_mode', 'species')} cov_mode={_get(cfg, 'cov_mode', 'scalar6')} "
@@ -514,8 +524,11 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         if soap_impl == 'grouped':
             # same maths, same-shape leaves batched (docs/RACE_SOAP_speedup_plan_2026-10-29.md)
             from bam_omat24.soap_grouped import scale_by_soap_grouped
-            soap_fn = functools.partial(scale_by_soap_grouped, orth=_get(cfg, 'soap_orth', 'householder'))
+            soap_fn = functools.partial(scale_by_soap_grouped, orth=_get(cfg, 'soap_orth', 'householder'),
+                                        state_dtype=_get(cfg, 'soap_state_dtype', None))
         elif soap_impl == 'reference':
+            if _get(cfg, 'soap_state_dtype', None):
+                raise ValueError("soap_state_dtype needs soap_impl='grouped'")
             soap_fn = scale_by_soap
         else:
             raise ValueError(f"soap_impl must be 'reference' or 'grouped', got {soap_impl!r}")
@@ -644,8 +657,12 @@ def train(cfg: Dict):
         # debugging hangs (e.g. a multi-process collective): print every thread's stack periodically
         import faulthandler
         faulthandler.dump_traceback_later(float(os.environ["BAM_STACK_DUMP_SECS"]), repeat=True)
-    if _get(cfg, 'x64', False):
+    if _get(cfg, 'x64', False) or str(_get(cfg, 'soap_state_dtype', None) or '') == 'float64':
+        # soap_state_dtype float64 alone: 64-bit types for the SOAP state only; params and data stay float32
         jax.config.update("jax_enable_x64", True)
+    if _get(cfg, 'matmul_precision', None):
+        # e.g. "highest": no TF32 for float32 matmuls on Ampere / Hopper GPUs
+        jax.config.update("jax_default_matmul_precision", str(_get(cfg, 'matmul_precision', None)))
     mesh, n_devices = setup_mesh()
     rank0 = jax.process_index() == 0
     log_path = _get(cfg, 'log_file', 'loss_3bpa.out')
@@ -811,14 +828,18 @@ def train(cfg: Dict):
     graphdef, params, optimizer, schedule, grad_clip = build_model(
         cfg, len(atomic_numbers), atom_energies, stats, fout, n_devices=n_devices)
     ema_params = params
+    # stress in the loss and the metrics (periodic data with a 'stress' global, eV/A^3, ASE sign and Voigt order)
+    use_stress = bool(_get(cfg, 'stress_loss', False))
+    if use_stress and not bool(_get(cfg, 'periodic', False)):
+        raise ValueError("stress_loss needs periodic=true")
 
     train_step = make_sharded_train_step(
         optimizer=optimizer, mesh=mesh,
         energy_weight=float(_get(cfg, 'energy_weight', 1.0)),
         force_weight=float(_get(cfg, 'force_weight', 1.0)),
-        stress_weight=0.0,
+        stress_weight=float(_get(cfg, 'stress_weight', 1.0)) if use_stress else 0.0,
         huber_delta=huber_delta, ema_decay=ema_decay,
-        loss_type=loss_type, periodic=False, cov_mode=cov_mode, beta_nll=beta_nll,
+        loss_type=loss_type, periodic=use_stress, cov_mode=cov_mode, beta_nll=beta_nll,
         grad_clip=float(grad_clip) if grad_clip else 1.0,
         dynamic_loss_weights=dynamic_weights,
         stochastic_depth=(float(_get(cfg, 'stochastic_depth', 0.0)), int(_get(cfg, 'n_layers', 5))),
@@ -837,7 +858,7 @@ def train(cfg: Dict):
     if float(_get(cfg, 'stochastic_depth', 0.0)) > 0 and _get(cfg, 'residual', 'none') == 'none':
         raise ValueError("stochastic_depth needs residual='identity' or 'identity_cum'")
     eval_step = make_sharded_evaluate_step(
-        mesh, huber_delta=huber_delta, loss_type=loss_type, periodic=False,
+        mesh, huber_delta=huber_delta, loss_type=loss_type, periodic=use_stress,
         cov_mode=cov_mode, beta_nll=beta_nll, energy_loss_per=_get(cfg, 'energy_loss_per', 'atom'))
 
     init_from = _get(cfg, 'init_params_from', None)
@@ -879,13 +900,37 @@ def train(cfg: Dict):
     step = replicate(jnp.array(int(ckpt.get('step', 0)) if start_epoch > 0 else 0), mesh)
 
     loader_rngs = nnx.Rngs(int(_get(cfg, 'seed', 42)) + 100)
-    # the node cap must never shorten a full batch (batch_size graphs per device per step)
-    max_n = max(int(np.asarray(g.n_node).reshape(-1)[0]) for g in train_dataset.graphs)
-    base_loader = BucketedDataLoader(
-        train_dataset, batch_size=batch_size, n_buckets=8,
-        shuffle=True, drop_last=True, rngs=loader_rngs,
-        max_nodes_per_batch=max(256, batch_size * max_n + 1),
-    )
+    pad_mode = _get(cfg, 'pad_mode', 'bucket')
+    if pad_mode == 'fixed':
+        # ONE padded shape for every train / eval batch (one compilation each): graphs are packed until a node or
+        # edge budget is full; the budgets hold on average batch_size graphs and at least the largest graph of any
+        # split.  The number of graphs per step varies (up to pack_max_graphs); the loss is a per-graph / per-atom
+        # mean, so this changes the noise of the step, not its scale.
+        all_g = [g for ds in [train_dataset, valid_dataset] + list(test_sets.values()) for g in ds.graphs]
+        nn_ = np.array([int(np.asarray(g.n_node).reshape(-1)[0]) for g in all_g])
+        ne_ = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in all_g])
+        ntr = np.array([int(np.asarray(g.n_node).reshape(-1)[0]) for g in train_dataset.graphs])
+        etr = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in train_dataset.graphs])
+        pad_nodes = int(_get(cfg, 'pad_nodes', 0)) or int(math.ceil(max(batch_size * ntr.mean(), nn_.max() + 1) / 64) * 64)
+        pad_edges = int(_get(cfg, 'pad_edges', 0)) or int(math.ceil(max(batch_size * etr.mean(), ne_.max()) / 1024) * 1024)
+        pack_graphs = int(_get(cfg, 'pack_max_graphs', 4 * batch_size))
+        if nn_.max() + 1 > pad_nodes or ne_.max() > pad_edges:
+            raise ValueError(f"pad_nodes/pad_edges ({pad_nodes}/{pad_edges}) below the largest graph ({nn_.max()}/{ne_.max()})")
+        print(f"pad_mode fixed: {pad_nodes} nodes, {pad_edges} edges, <= {pack_graphs} graphs per batch "
+              f"(train mean {ntr.mean():.1f} nodes / {etr.mean():.0f} edges per graph)", file=fout)
+        base_loader = BucketedDataLoader(
+            train_dataset, batch_size=pack_graphs, n_buckets=8,
+            shuffle=True, drop_last=False, rngs=loader_rngs,
+            max_nodes_per_batch=pad_nodes, max_edges_per_batch=pad_edges,
+        )
+    else:
+        # the node cap must never shorten a full batch (batch_size graphs per device per step)
+        max_n = max(int(np.asarray(g.n_node).reshape(-1)[0]) for g in train_dataset.graphs)
+        base_loader = BucketedDataLoader(
+            train_dataset, batch_size=batch_size, n_buckets=8,
+            shuffle=True, drop_last=True, rngs=loader_rngs,
+            max_nodes_per_batch=max(256, batch_size * max_n + 1),
+        )
     # one shuffle key per epoch (BucketedDataLoader._reset, plus one in __init__): continue the sequence.
     # Advance the loader's own Rngs (an nnx attribute need not be the object that was passed in).
     for _ in range(start_epoch):
@@ -895,8 +940,13 @@ def train(cfg: Dict):
     # small molecules; smaller buckets mean a few more JIT shapes but less work.
     node_bucket = int(_get(cfg, 'node_bucket_size', 128))
     edge_bucket = int(_get(cfg, 'edge_bucket_size', 4096))
-    collate = functools.partial(default_collate_fn, node_bucket_size=node_bucket,
-                                edge_bucket_size=edge_bucket)
+    if pad_mode == 'fixed':
+        collate = functools.partial(fixed_collate_fn, n_node_pad=pad_nodes, n_edge_pad=pad_edges)
+        eval_bs, eval_caps = pack_graphs, dict(max_nodes_per_batch=pad_nodes, max_edges_per_batch=pad_edges)
+    else:
+        collate = functools.partial(default_collate_fn, node_bucket_size=node_bucket,
+                                    edge_bucket_size=edge_bucket)
+        eval_bs, eval_caps = batch_size, {}
     base_loader.collate_fn = collate
     train_loader = MultiDeviceDataLoader(base_loader, n_devices=n_devices, mesh=mesh,
                                          drop_incomplete=True)
@@ -904,11 +954,11 @@ def train(cfg: Dict):
     def _evaluate(dataset, params_rep, weights):
         return evaluate_sharded(
             graphdef=graphdef, params=params_rep, files_pkl=[dataset],
-            batch_size=batch_size, n_devices=n_devices, mesh=mesh,
+            batch_size=eval_bs, n_devices=n_devices, mesh=mesh,
             energy_weight=weights['energy_weight'], force_weight=weights['force_weight'],
-            stress_weight=0.0, huber_delta=huber_delta, loss_type=loss_type,
-            eval_step=eval_step, params_already_replicated=True, periodic=False,
-            cov_mode=cov_mode, beta_nll=beta_nll, collate_fn=collate,
+            stress_weight=weights['stress_weight'] if use_stress else 0.0, huber_delta=huber_delta, loss_type=loss_type,
+            eval_step=eval_step, params_already_replicated=True, periodic=use_stress,
+            cov_mode=cov_mode, beta_nll=beta_nll, collate_fn=collate, **eval_caps,
         )
 
     def _log(*args, **kwargs):

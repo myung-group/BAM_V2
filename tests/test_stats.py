@@ -58,3 +58,62 @@ def test_fit_e0_from_frames():
     # regression on residual with a reference returns reference + correction
     fitted2 = fit_e0(frames, idx, reference_e0=e0 + 1.0)
     assert np.allclose(fitted2, e0, atol=1e-3)
+
+
+def _single_stoichiometry_frames(rng, e0, offset_per_atom=0.3, n=30):
+    """3BPA-like: every frame has the same composition (H12 C12 N2 O1) -> rank-1 composition matrix."""
+    import ase.calculators.singlepoint
+    zs = [1, 6, 7, 8]
+    idx = atomic_numbers_to_indices(zs)
+    numbers = np.array([1] * 12 + [6] * 12 + [7] * 2 + [8])
+    frames = []
+    for _ in range(n):
+        atoms = ase.Atoms(numbers=numbers, positions=rng.normal(size=(len(numbers), 3)))
+        e = float(sum(e0[idx[int(z)]] for z in numbers)) + offset_per_atom * len(numbers) + rng.normal(scale=1e-3)
+        atoms.calc = ase.calculators.singlepoint.SinglePointCalculator(atoms, energy=e)
+        frames.append(atoms)
+    return frames, idx
+
+
+def test_fit_e0_single_stoichiometry_keeps_reference():
+    import warnings
+    rng = np.random.RandomState(2)
+    e0 = np.array([-13.5, -1029.5, -1485.0, -2042.0])
+    frames, idx = _single_stoichiometry_frames(rng, e0)
+    info = {}
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        fitted = fit_e0(frames, idx, reference_e0=e0, info=info)
+        assert any("not identifiable" in str(x.message) for x in w)
+    assert info["rank"] == 1 and info["n_species"] == 4
+    assert np.array_equal(fitted, e0)                                   # reference kept exactly
+    assert abs(info["per_atom_offset"] - 0.3) < 1e-3                    # identifiable offset reported
+    # the old split spreads the offset in proportion to the composition (12:12:2:1)
+    fitted_mn = fit_e0(frames, idx, reference_e0=e0, on_rank_deficient="minnorm")
+    d = fitted_mn - e0
+    assert np.allclose(d / d[0], np.array([1, 1, 2 / 12, 1 / 12]), atol=1e-6)
+    assert abs(np.dot(d, [12, 12, 2, 1]) - 0.3 * 27) < 1e-2            # same per-frame total
+    # no reference -> min-norm with warning (nothing better is possible)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        f0 = fit_e0(frames, idx)
+        assert any("not identifiable" in str(x.message) for x in w)
+    assert np.allclose(f0 / f0[0], np.array([1, 1, 2 / 12, 1 / 12]), atol=1e-6)
+
+
+def test_dataset_stats_single_stoichiometry_no_fake_e0():
+    rng = np.random.RandomState(3)
+    graphs = []
+    sp = np.array([0] * 12 + [1] * 12 + [2] * 2 + [3], np.int32)
+    for _ in range(20):
+        e = -131.5 + rng.normal(scale=0.1)
+        graphs.append(jraph.GraphsTuple(
+            n_node=np.array([27], np.int32), n_edge=np.array([200], np.int32),
+            nodes={"species": sp, "positions": np.zeros((27, 3), np.float32),
+                   "forces": rng.normal(size=(27, 3)).astype(np.float32)},
+            edges=None, senders=np.zeros(200, np.int32), receivers=np.zeros(200, np.int32),
+            globals={"energy": np.array([e], np.float32)}))
+    stats = compute_dataset_stats(graphs, n_species=4)
+    assert stats["e0_rank"] == 1 and not stats["e0_identifiable"]
+    assert np.all(stats["e0_residual"] == 0.0)
+    assert abs(stats["shift"] - stats["shift_raw"]) < 1e-12 and abs(stats["shift_raw"] + 131.5 / 27) < 0.01

@@ -10,6 +10,76 @@ E(3)-equivariant graph neural network interatomic potentials with uncertainty qu
 
 All backends implement the same model hierarchy — **NequIP → RACE**  — and share the same training interface.
 
+## RACEv2 (branch `racev2`, 2026-11)
+
+RACEv2는 `bam_omat24`(JAX) 위에 만든 RACE 개선판이다. 모든 결과는 각 데이터셋의 공식 학습셋만 사용했고, 사전학습·추가 데이터·데이터 증강은 쓰지 않았다.
+자세한 수식·표·그림은 [`docs/RACEv2_methods_summary.pdf`](docs/RACEv2_methods_summary.pdf), 구조 그림은 [`docs/RACEv2_architecture.png`](docs/RACEv2_architecture.png)에 있다.
+
+![RACEv2 architecture](docs/RACEv2_architecture.png)
+
+### V1 대비 바뀐 점 (최종 레시피)
+
+| 항목 | RACE V1 | RACEv2 |
+|---|---|---|
+| 원자 특징 x | 원소 임베딩 (`x_mode=species`) | 이웃 요약에서 층마다 선형 사영 (`x_mode=basis`) |
+| x 크기 조절 | 없음 | hill: x/r · 2σ(a log r + b), a·b는 층×원소별 학습값 (`x_norm=hill`) |
+| 층 갱신 | 단순 잔차 | Chebyshev식 h⁽ᵗ⁾ = 2γ⊙δ⁽ᵗ⁾ − h⁽ᵗ⁻²⁾, LayerScale 0.5 (`residual=chebyshev`) |
+| 메시지 정규화 | LayerNorm + 1/√⟨N⟩ | 평균 이웃 수로 나눔 (`message_norm=avg`) |
+| 갱신 / readout | gate / linear | linear / gated |
+| 거리 함수 | Bessel | Bessel + 원소 껍질 반지름 채널, Gaussian 고차 진동 억제 prior (σ=0.224) |
+| 반발 항 | 없음 | UFF 비결합 반발(형태 고정, 결합 쌍은 부드럽게 끔), 전역 배율 s 학습 |
+| 학습 | Adam | SOAP (lr 1e-2, β 0.95), Huber δ=10, EMA 0.99, float64, 학습 후 에너지 상수 보정 δ* |
+
+기본 크기는 5층, lmax 3, 컷오프 5 Å, hidden 128(rMD17·MD22 256, 물 64).
+
+### 결과 요약 (3시드 평균, 검증 기준 체크포인트)
+
+**3BPA** (RMSE, E meV/분자 / F meV/Å, 300 K 500프레임 학습)
+
+| 모델 | 300 K | 600 K | 1200 K | 이면각 |
+|---|---|---|---|---|
+| **RACEv2** | **1.56 / 6.31** | **6.05 / 15.92** | **22.20 / 45.16** | 16.67 / 19.09 |
+| RACE V1 | 3.4 / 12.1 | 11.7 / 31.8 | 37.5 / 115.3 | — |
+| GRACE (PRX 2024) | 1.7 / 7.6 | 7.3 / 19.2 | 25.8 / 61.7 | 7.4 / 15.3 |
+| TACE | 2.69 / 8.68 | 8.10 / 19.88 | 23.42 / 54.26 | 11.0 / 16.45 |
+| MACE | 3.0 / 8.8 | 9.7 / 21.8 | 29.8 / 62.0 | 7.8 / 16.5 |
+
+**rMD17** (MAE, 공식 분할, 학습 1000, L5h256): 힘은 10개 분자 중 8승 1무 1패, 에너지는 7승 2무 1패(발표된 최고값 대비).
+
+| 분자 | aspirin | azobenzene | benzene | ethanol | malonaldehyde | naphthalene | paracetamol | salicylic | toluene | uracil |
+|---|---|---|---|---|---|---|---|---|---|---|
+| E (meV) | 1.19 | 0.36 | 0.02 | 0.21 | 0.36 | 0.12 | 0.61 | 0.36 | 0.13 | 0.20 |
+| F (meV/Å) | 4.01 | 1.41 | 0.22 | 1.41 | 2.49 | 0.65 | 2.72 | 2.03 | 0.78 | 1.43 |
+| MACE F | 6.6 | 3.0 | 0.3 | 2.1 | 4.1 | 1.6 | 4.8 | 3.1 | 1.5 | 2.1 |
+
+**기타 벤치마크**
+
+| 벤치마크 | RACEv2 | 참조값 |
+|---|---|---|
+| AcAc 300 K / 600 K (RMSE E/F) | 0.46/3.06 · 5.32/15.55 | PACE 0.73/4.2 · 3.8/16.9 |
+| Si GAP-18 → RSS (RMSE meV/atom, meV/Å) | 15.65 / 106.7 | XPOT-ACE 20.5 / 139 |
+| Si GAP-18 → 압축 MD | 4.47 / 69.0 | GAP-18 15.7 / 125 |
+| LiPS 19k (MAE meV/atom, meV/Å) | 0.020 / 1.20 | FreeCG 힘 1.2, GemNet-T 1.3 |
+| LiPS 학습곡선 2500/1000/100/10 (힘 MAE) | 2.02 / 3.17 / 9.46 / 34.1 | NequIP 4.7, CarNet 5.6, CAMP 21.6 / 76.4 |
+| LiPS MD 50 ps × 5 (안정성 / RDF / Li 확산 오차) | 50 ps / 0.044 / 0.43 | NequIP 50 / 0.04 / 0.34, GemNet-T 0.24 |
+| 물 분할 1 / 2 (RMSE meV/H₂O, meV/Å, 반발 항 재계산 진행 중) | 3.38/63.6 · 0.64/21.96 | 같은 분할 MACE 64-0 4.5/64.8 · 0.9/23.2 |
+
+진행 중: 3BPA ablation(4/10 변형 완료, PDF 표 6b), 물 반발 항 재계산, MD22, QM9.
+
+### 실행
+
+```bash
+# 학습 (설정 예: input/input_3bpa_omat24_abl3_full_s42_cue.json)
+python -m bam_omat24.train_3bpa input/<config>.json
+# LiPS MD (Fu et al. 2023 프로토콜) 와 관측량 분석
+python -m bam_omat24.md_run --help
+python -m bam_omat24.md_lips_analysis <md_output_dir>
+# 문서·그림 재생성 (docs/fonts/ 에 NanumGothic 폰트 필요, 저장소에는 미포함)
+python docs/make_methods_pdf.py
+```
+
+HANGANG Slurm 스크립트 예시는 `runs/diag/*.sh`에 있다. GPU 노드에서는 `XLA_FLAGS=--xla_gpu_enable_triton_gemm=false`가 필요하다(float64 GEMM 오컴파일 회피).
+
 ## Overview
 
 A modified version of RACE is an E(3)-equivariant graph neural network architecture for learning interatomic potentials. This implementation provides:

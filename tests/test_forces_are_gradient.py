@@ -10,9 +10,11 @@ import pytest
 from conftest import make_model, as_float64
 
 
-@pytest.mark.parametrize("x_mode", ["species", "node_scalar"])
-def test_forces_match_finite_difference(x64, graph, x_mode):
-    model, graph = as_float64(make_model(x_mode=x_mode), graph)
+@pytest.mark.parametrize("residual", ["none", "identity"])
+@pytest.mark.parametrize("readout_mode", ["linear", "gated"])
+@pytest.mark.parametrize("x_mode", ["species", "node_scalar", "node_irreps"])
+def test_forces_match_finite_difference(x64, graph, x_mode, readout_mode, residual):
+    model, graph = as_float64(make_model(x_mode=x_mode, readout_mode=readout_mode, residual=residual, n_layers=3), graph)
     out = model(graph)
     forces = np.asarray(out["forces"])
     assert forces.dtype == np.float64
@@ -24,6 +26,31 @@ def test_forces_match_finite_difference(x64, graph, x_mode):
 
     rng = np.random.RandomState(0)
     # pick 2 atoms x 1 component where the force is not tiny
+    cands = [(i, k) for i in range(pos.shape[0]) for k in range(3) if abs(forces[i, k]) > 0.05]
+    assert len(cands) >= 2
+    picks = [cands[j] for j in rng.choice(len(cands), size=2, replace=False)]
+    h = 1e-4
+    for i, k in picks:
+        p_plus, p_minus = pos.copy(), pos.copy()
+        p_plus[i, k] += h
+        p_minus[i, k] -= h
+        fd = -(energy(p_plus) - energy(p_minus)) / (2 * h)
+        rel = abs(fd - forces[i, k]) / max(abs(forces[i, k]), 1e-6)
+        assert rel < 1e-3, (i, k, fd, forces[i, k], rel)
+
+
+def test_forces_match_finite_difference_full_parity_species_readout(x64, graph):
+    model, graph = as_float64(make_model(
+        x_mode="node_irreps", readout_species=True,
+        hidden_irreps="16x0e+16x0o+16x1o+16x1e+16x2e+16x2o"), graph)
+    forces = np.asarray(model(graph)["forces"])
+    pos = np.asarray(graph.nodes["positions"], dtype=np.float64)
+
+    def energy(p):
+        g = graph._replace(nodes={**graph.nodes, "positions": p.astype(np.float64)})
+        return float(np.asarray(model(g)["energy"])[0])
+
+    rng = np.random.RandomState(1)
     cands = [(i, k) for i in range(pos.shape[0]) for k in range(3) if abs(forces[i, k]) > 0.05]
     assert len(cands) >= 2
     picks = [cands[j] for j in rng.choice(len(cands), size=2, replace=False)]

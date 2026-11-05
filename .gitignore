@@ -17,3 +17,9 @@ build/
 runs/
 *.pkl
 *.out
+
+# local-only
+core
+core.*
+._dbindex_/
+docs/fonts/

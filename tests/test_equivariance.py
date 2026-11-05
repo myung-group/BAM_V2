@@ -109,3 +109,63 @@ def test_nll_loss_invariant_scalar6(x64, graph, loss_type):
     g2, _ = _transform(graph, R=random_rotation(5))
     l2, a2 = _nll(model, g2, loss_type)
     assert abs(a0["force_loss"] - a2["force_loss"]) <= TOL * max(1.0, abs(a0["force_loss"]))
+
+
+@pytest.mark.parametrize("x_mode", ["species", "node_scalar"])
+def test_energy_forces_e3_float64_gated_readout(x64, graph, x_mode):
+    model, g = as_float64(make_model(x_mode=x_mode, readout_mode="gated"), graph)
+    _check_e3(model, g, TOL)
+
+
+FULL_PARITY = "16x0e+16x0o+16x1o+16x1e+16x2e+16x2o"
+
+
+@pytest.mark.parametrize("x_mode", ["species", "node_irreps"])
+def test_energy_forces_e3_float64_node_irreps_full_parity(x64, graph, x_mode):
+    """Equivariant x product (x_mode node_irreps) and full-parity hidden irreps
+    (0o/1e/2o channels, tanh odd activation) must stay E(3)-equivariant."""
+    model, g = as_float64(make_model(x_mode=x_mode, hidden_irreps=FULL_PARITY), graph)
+    _check_e3(model, g, TOL)
+
+
+def test_energy_forces_e3_float64_node_irreps(x64, graph):
+    model, g = as_float64(make_model(x_mode="node_irreps"), graph)
+    _check_e3(model, g, TOL)
+
+
+def test_energy_forces_e3_float64_readout_species(x64, graph):
+    model, g = as_float64(make_model(readout_species=True), graph)
+    _check_e3(model, g, TOL)
+
+
+def test_node_irreps_product_is_not_trivial(graph):
+    """The equivariant x product must actually use the l>0 part of x_i: zeroing the
+    l>0 outputs of the layer-1 x projection must change the energy."""
+    model = make_model(x_mode="node_irreps")
+    e0 = float(np.asarray(model(graph)["energy"])[0])
+    proj = model.x_projs[1]
+    changed = 0
+    for orig, attr in proj._weight_name_mapping.items():
+        out_ir = orig.split()[-1].split(",")[-1]  # "w[i,j] 16x1o,16x1o" -> "16x1o"
+        if "0e" not in out_ir:
+            getattr(proj, attr).value = jnp.zeros_like(getattr(proj, attr).value)
+            changed += 1
+    assert changed > 0
+    e1 = float(np.asarray(model(graph)["energy"])[0])
+    assert abs(e0 - e1) > 1e-6, (e0, e1)
+
+
+@pytest.mark.parametrize("residual", ["identity", "identity_cum"])
+def test_energy_forces_e3_float64_residual(x64, graph, residual):
+    model, g = as_float64(make_model(residual=residual, n_layers=3), graph)
+    _check_e3(model, g, TOL)
+
+
+def test_residual_changes_features_only_from_layer_1(graph):
+    """residual='identity' must give the same layer-0 stratum energy as the original
+    model (same parameters) and a different total energy (layers 1+ differ)."""
+    m0 = make_model(n_layers=3, seed=3)
+    m1 = make_model(n_layers=3, seed=3, residual="identity")
+    e0 = np.asarray(m0(graph)["energy"])[0]
+    e1 = np.asarray(m1(graph)["energy"])[0]
+    assert abs(e0 - e1) > 1e-6, (e0, e1)

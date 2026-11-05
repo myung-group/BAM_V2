@@ -16,6 +16,26 @@ from flax import nnx
 from tqdm import tqdm
 
 
+# =============================================================================
+# Host <-> device (multi-process data parallel)
+# =============================================================================
+
+def to_host(x) -> np.ndarray:
+    """NumPy value of an array; for a replicated array spanning several processes (multi-node data
+    parallel) the local copy is read, since such an array is not fully addressable."""
+    if isinstance(x, jax.Array) and not x.is_fully_addressable:
+        x = x.addressable_data(0)
+    return np.asarray(x)
+
+
+def global_from_host(x, sharding: NamedSharding) -> jax.Array:
+    """Global array with the given sharding from a host value that is identical on every process
+    (each process places only the shards of its own devices)."""
+    x = np.asarray(to_host(x))
+    x = x.astype(jax.dtypes.canonicalize_dtype(x.dtype))
+    return jax.make_array_from_callback(x.shape, sharding, lambda idx: x[idx])
+
+
 def create_size_buckets(
     graphs: List[jraph.GraphsTuple],
     n_buckets: int = 8
@@ -234,7 +254,10 @@ class BucketedDataLoader(nnx.Object):
                 self.bucket_idx = curr_idx
                 return self.collate_fn(graphs, self.batch_size)
             else:
-                raise StopIteration
+                # one graph alone reaches max_nodes_per_batch: ending the epoch here would silently
+                # skip every remaining graph
+                raise ValueError(f"graph {bucket[curr_idx]} has {int(self.dataset.graphs[bucket[curr_idx]].n_node[0])} "
+                                 f"nodes >= max_nodes_per_batch={self.max_node_per_batch}")
 
         raise StopIteration
 
@@ -332,12 +355,17 @@ def stack_batches_for_devices(
             ub = jraph.unpad_with_graphs (b)
             b = jraph.pad_with_graphs(ub, max_nodes, max_edges, max_graphs)
         padded_batches.append(b)
-    # Stack along device dimension
-    stacked = jax.tree.map(lambda *xs: jnp.stack(xs, axis=0), *padded_batches)
-
-    # Shard across devices
     sharding = NamedSharding(mesh, P('dp'))
-    sharded = jax.tree.map(lambda x: jax.device_put(x, sharding), stacked)
+    if jax.process_count() == 1:
+        # Stack along device dimension
+        stacked = jax.tree.map(lambda *xs: jnp.stack(xs, axis=0), *padded_batches)
+        # Shard across devices
+        sharded = jax.tree.map(lambda x: jax.device_put(x, sharding), stacked)
+    else:
+        # multi-process: every process collates the same global group (identical loaders and
+        # seeds) and places only the slices of its own devices
+        stacked = jax.tree.map(lambda *xs: np.stack([np.asarray(x) for x in xs], axis=0), *padded_batches)
+        sharded = jax.tree.map(lambda x: global_from_host(x, sharding), stacked)
 
     info = MultiDeviceBatchInfo(
         n_devices=n_devices,
@@ -472,12 +500,13 @@ def print_bucket_batch_info(bucket_batch_info: dict,
 # =============================================================================
 
 def setup_mesh() -> Tuple[Mesh, int]:
-    """Setup device mesh for data parallelism."""
+    """Setup device mesh for data parallelism (all devices of all processes)."""
     devices = jax.devices()
     n_devices = len(devices)
-    print(f"Setting up mesh with {n_devices} device(s)")
-    for i, d in enumerate(devices):
-        print(f"  Device {i}: {d}")
+    if jax.process_index() == 0:
+        print(f"Setting up mesh with {n_devices} device(s)")
+        for i, d in enumerate(devices):
+            print(f"  Device {i}: {d}")
 
     device_mesh = mesh_utils.create_device_mesh((n_devices,))
     mesh = Mesh(device_mesh, axis_names=('dp',))  # dp = data parallel

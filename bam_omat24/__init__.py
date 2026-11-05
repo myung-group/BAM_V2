@@ -1,5 +1,11 @@
 """BAM-OMAT24: Equivariant ML potentials with JAX/Flax NNX."""
 
+import os as _os
+if _os.environ.get("BAM_DISTRIBUTED") == "1":
+    # multi-node data parallel: jax.distributed must start before the imports below touch the backend
+    from bam_omat24.distributed import init_distributed as _init_distributed
+    _init_distributed()
+
 # Models
 from bam_omat24.nequip_nnx import Nequip
 from bam_omat24.race_nnx import RACE

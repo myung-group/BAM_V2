@@ -4,7 +4,7 @@ Loss functions, device replication helpers, batch shape utilities,
 sharded train/eval step factories, evaluation loop, and checkpointing.
 """
 
-from typing import Dict, Tuple, List, Any
+from typing import Dict, Tuple, List, Any, Optional
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +19,9 @@ import pickle
 import jraph
 import numpy as np
 
-from bam_omat24.data_nnx import Dataset, BucketedDataLoader, MultiDeviceDataLoader
+from bam_omat24.data_nnx import (Dataset, BucketedDataLoader, MultiDeviceDataLoader, to_host,
+                                 global_from_host)
+from bam_omat24.utils import node_graph_idx
 
 
 # =============================================================================
@@ -28,7 +30,9 @@ from bam_omat24.data_nnx import Dataset, BucketedDataLoader, MultiDeviceDataLoad
 
 def replicate(x: Any, mesh: Mesh) -> Any:
     """Replicate array across all devices."""
-    return jax.device_put(x, NamedSharding(mesh, P()))
+    if jax.process_count() == 1:
+        return jax.device_put(x, NamedSharding(mesh, P()))
+    return global_from_host(x, NamedSharding(mesh, P()))
 
 
 def replicate_pytree(pytree: Any, mesh: Mesh) -> Any:
@@ -38,7 +42,7 @@ def replicate_pytree(pytree: Any, mesh: Mesh) -> Any:
 
 def unreplicate(x: Any) -> Any:
     """Get value from replicated array."""
-    return np.asarray(x)
+    return to_host(x)
 
 
 def unreplicate_pytree(pytree: Any) -> Any:
@@ -185,8 +189,13 @@ def _loss_terms(
     cov_mode: str,
     beta_nll: float,
     clip_residuals: bool = True,
+    energy_loss_per: str = "atom",
 ):
     """Per-batch loss terms shared by the train and eval steps.
+
+    energy_loss_per: "atom" (original: the energy residual entering the loss is the per-atom
+    error E/N) or "structure" (MACE Eq. 15: the total-energy error of the structure).  The
+    reported metrics are always per atom / total as before.
 
     Returns a dict of *sums* (not averages) together with counts, so callers
     can normalise (train) or accumulate across devices/batches (eval).
@@ -214,18 +223,40 @@ def _loss_terms(
     # raw residuals (for metrics)
     energy_diff_total_raw = (energy - batch.globals["energy"]) * graph_mask
     energy_diff_raw = energy_diff_total_raw / n_node          # per atom
+    if energy_loss_per not in ("atom", "structure"):
+        raise ValueError(f"energy_loss_per must be 'atom' or 'structure', got {energy_loss_per!r}")
+    energy_diff_loss = energy_diff_total_raw if energy_loss_per == "structure" else energy_diff_raw
     force_diff_raw = (forces - batch.nodes["forces"]) * node_mask[:, None]
+    # optional per-graph loss weights (training set only, e.g. Boltzmann tilting);
+    # mean 1 over the training set so the n_graphs / n_atoms normalisation is unchanged
+    gw = batch.globals.get("loss_weight") if isinstance(batch.globals, dict) else None
+    if gw is None:
+        gw = jnp.ones_like(graph_mask)
+        nw = jnp.ones_like(node_mask)
+    else:
+        gw = gw.reshape(-1) * graph_mask
+        nw = gw[node_graph_idx(batch)] * node_mask
+    # optional per-node force-loss weights (training set only, e.g. bond-strain / force-magnitude
+    # re-weighting, review §11.12); mean 1 over the training atoms, padded nodes are 0
+    nwn = batch.nodes.get("loss_weight") if isinstance(batch.nodes, dict) else None
+    if nwn is not None:
+        nw = nw * nwn.reshape(-1).astype(nw.dtype) * node_mask
 
     # (optionally) tanh-clipped residuals for the training loss only.
     # Forces are clipped by their *norm* (direction preserved) so that the
     # clipping is rotation equivariant; a component-wise tanh is not.
     if clip_residuals:
         vmax_E, vmax_F = 5.0, 10.0
-        energy_diff = vmax_E * jnp.tanh(energy_diff_raw / vmax_E)
+        if energy_loss_per == "structure":
+            # the 5 eV clip is a per-atom scale; for the total-energy residual scale it by N
+            # (otherwise an untrained offset of ~100 eV per molecule saturates the tanh and the
+            # energy term gives no gradient: r15_eloss_s42, review §11.6)
+            vmax_E = vmax_E * n_node
+        energy_diff = vmax_E * jnp.tanh(energy_diff_loss / vmax_E)
         fnorm = jnp.sqrt(jnp.sum(force_diff_raw ** 2, axis=-1, keepdims=True) + 1e-24)
         force_diff = force_diff_raw * (vmax_F * jnp.tanh(fnorm / vmax_F) / fnorm)
     else:
-        energy_diff, force_diff = energy_diff_raw, force_diff_raw
+        energy_diff, force_diff = energy_diff_loss, force_diff_raw
 
     if periodic:
         stress = results['stress']
@@ -307,8 +338,8 @@ def _loss_terms(
         out['force_loss'] = f_fit + f_logdet + f_const
         out['stress_loss'] = s_fit + s_logdet + s_const
     else:  # 'huber'
-        out['energy_loss'] = jnp.sum(huber_loss(energy_diff, delta=huber_delta))
-        out['force_loss'] = jnp.sum(huber_loss(force_diff, delta=huber_delta))
+        out['energy_loss'] = jnp.sum(huber_loss(energy_diff, delta=huber_delta) * gw)
+        out['force_loss'] = jnp.sum(huber_loss(force_diff, delta=huber_delta) * nw[:, None])
         out['stress_loss'] = (jnp.sum(huber_loss(stress_diff, delta=huber_delta))
                               if periodic else 0.0)
 
@@ -318,6 +349,9 @@ def _loss_terms(
         'energy_ae': jnp.sum(jnp.abs(energy_diff_raw)),
         'energy_se_total': jnp.sum(energy_diff_total_raw ** 2),  # total energy
         'energy_ae_total': jnp.sum(jnp.abs(energy_diff_total_raw)),
+        # least-squares refit of the per-atom energy shift (force-null gauge): sums of N_n d_n, N_n^2
+        'energy_dN': jnp.sum(energy_diff_total_raw * batch.n_node * graph_mask),
+        'n_node_sq': jnp.sum((batch.n_node * graph_mask) ** 2),
         'force_se': jnp.sum(force_diff_raw ** 2),
         'force_ae': jnp.sum(jnp.abs(force_diff_raw)),
         'stress_se': jnp.sum(stress_diff_raw ** 2) if periodic else 0.0,
@@ -340,8 +374,50 @@ def compute_loss(
     periodic: bool = True,
     cov_mode: str = 'scalar6',
     beta_nll: float = 0.0,
+    deep_supervision: float = 0.0,
+    stratum_decorrelation: float = 0.0,
+    noisy_nodes: Tuple[float, float] = (0.0, 0.0),
+    energy_loss_per: str = "atom",
+    taylor_consistency: Tuple[float, float, float] = (0.0, 0.0, 0.5),
+    radial_l2: float = 0.0,
+    norm: Optional[Dict] = None,
+    dens: Optional[Dict] = None,
+    dens_weight: Any = 0.0,
 ) -> Tuple[jnp.ndarray, Dict]:
     """Compute training loss for a single batch (no device dimension).
+
+    norm = dict(n_graphs, n_atoms, n_rep[, n_atoms_f, n_dens]) of the *global* batch (data parallel,
+    review §13): every additive term is divided by the global counts and the parameter-only /
+    batch-statistic terms (radial_l2, stratum_decorrelation) by n_rep, so the psum over the devices
+    of the returned loss (and of its gradient) equals the single-device loss of the union batch.  The
+    decorrelation term is a batch statistic and stays the device mean.  None = counts of this batch.
+
+    dens = dict(sigma, noisy_ef) (faithful DeNS, docs/RACE_DeNS_audit_2026-10-29.md), batch prepared by
+    the train step (nodes 'dens_mask' m, 'dens_noise' m*eps, 'dens_force' or 'dens_force_in' m*F):
+      noisy_ef True : one pass on the corrupted positions with force encoding; energy vs the clean
+                      label for every graph, forces only on uncorrupted atoms (nodes 'loss_weight'
+                      carries 1 - m, normalised by their count n_atoms_f), plus the noise loss
+      noisy_ef False: clean energy / force pass unchanged + an extra forward pass on the corrupted,
+                      force-encoded structure for the noise loss only
+      noise loss    : dens_weight * sum_i m_i |head_i - eps_i/sigma| / sum_i m_i  (L2MAE, as the code)
+
+    Round-20 regularisers (review §11.15):
+      taylor_consistency (w, eps_max, k2): + w * mean_graphs [ (E(S+d) - E(S) + sum_i d_i.((1-k2) F_i(S)
+                               + k2 F_i(S+d))) / N ]^2  with the model's own E, F (PICPS "PITC",
+                               no reference labels); d = batch.nodes['taylor_disp'] (per-atom random
+                               direction, |d_i| <= eps_max, 0 on padded nodes).  k2 = 1/2 = exact
+                               second order.  For a conservative model this is a smoothness
+                               (curvature / third-derivative) penalty along random directions.
+      radial_l2 w            : + w * sum_layers ||W_1(radial MLP)||^2; with the radial basis rescaled
+                               by 1/gamma(n) (RACE radial_prior) this is the Tikhonov regularity
+                               prior gamma(n)^2 |c_n|^2 of Darby et al. (arXiv:2601.15072).
+
+    Extra (all default off, RACE only):
+      deep_supervision w     : + w * sum_{t<S-1} Huber(partial-sum energy of strata 0..t)  (per atom)
+      stratum_decorrelation w: + w * sum_{s<t} Corr(E_s, E_t)^2 over the real atoms of the batch
+                               (ACE purification / restratification as a penalty)
+      noisy_nodes (sigma, w) : + w * mean |head(x + eps) - eps/sigma|^2, eps = batch.nodes['noise']
+                               (Noisy Nodes denoising auxiliary task; needs model.noise_head)
 
     Args:
         loss_type: 'huber' | 'nll' (legacy Huber-whitened) | 'gauss_nll'.
@@ -351,11 +427,24 @@ def compute_loss(
     """
     model = nnx.merge(graphdef, params)
     results = model(batch)
-    t = _loss_terms(results, batch, huber_delta, loss_type, periodic, cov_mode, beta_nll)
+    t = _loss_terms(results, batch, huber_delta, loss_type, periodic, cov_mode, beta_nll,
+                    energy_loss_per=energy_loss_per)
 
     n_graphs, n_atoms = t['n_graphs'], t['n_atoms']
+    n_rep = 1
+    dens_on = dens is not None and isinstance(batch.nodes, dict) and 'dens_mask' in batch.nodes
+    if dens_on:
+        node_mask_d = jraph.get_node_padding_mask(batch).astype(batch.nodes['dens_mask'].dtype)
+        n_atoms_f = jnp.maximum(jnp.sum(node_mask_d * (1.0 - batch.nodes['dens_mask'])), 1.0)
+        n_dens = jnp.maximum(jnp.sum(batch.nodes['dens_mask']), 1.0)
+    if norm is not None:
+        n_graphs, n_atoms, n_rep = norm['n_graphs'], norm['n_atoms'], norm['n_rep']
+        if dens_on:
+            n_atoms_f, n_dens = norm['n_atoms_f'], norm['n_dens']
+    # forces of the corrupted atoms are not supervised in the single DeNS pass
+    n_atoms_force = n_atoms_f if (dens_on and dens['noisy_ef']) else n_atoms
     energy_loss = t['energy_loss'] / n_graphs
-    force_loss = t['force_loss'] / (3 * n_atoms)
+    force_loss = t['force_loss'] / (3 * n_atoms_force)
     stress_loss = t['stress_loss'] / n_graphs
 
     total_loss = (
@@ -363,15 +452,97 @@ def compute_loss(
         + force_weight * force_loss
         + stress_weight * stress_loss
     )
+
+    ds_loss = jnp.zeros(()); decor_loss = jnp.zeros(()); denoise_loss = jnp.zeros(())
+    if deep_supervision > 0.0 or stratum_decorrelation > 0.0:
+        strata = results['strata']                                  # (S, n_atoms), padded -> 0
+        node_mask = jraph.get_node_padding_mask(batch).astype(strata.dtype)
+        graph_mask = jraph.get_graph_padding_mask(batch).astype(strata.dtype)
+        gidx = node_graph_idx(batch)
+        n_graphs_pad = batch.n_node.shape[0]
+    if deep_supervision > 0.0:
+        n_node = jnp.maximum(batch.n_node, 1)
+        e_strata = jax.vmap(lambda s: jraph.segment_sum(s, gidx, num_segments=n_graphs_pad))(strata)
+        e_partial = jnp.cumsum(e_strata, axis=0) + (n_node * model.shift[...])[None, :]   # (S, G)
+        target = batch.globals["energy"]
+        for tt in range(e_partial.shape[0] - 1):                    # last partial sum = full energy
+            d = (e_partial[tt] - target) * graph_mask / n_node
+            d = 5.0 * jnp.tanh(d / 5.0)
+            ds_loss = ds_loss + jnp.sum(huber_loss(d, delta=huber_delta)) / n_graphs
+        total_loss = total_loss + deep_supervision * ds_loss
+    if stratum_decorrelation > 0.0:
+        m = node_mask
+        n_real = jnp.maximum(m.sum(), 1.0)
+        mean = jnp.sum(strata * m[None, :], axis=1, keepdims=True) / n_real
+        c = (strata - mean) * m[None, :]
+        cov = c @ c.T / n_real                                      # (S, S)
+        std = jnp.sqrt(jnp.diag(cov) + 1e-12)
+        corr = cov / (std[:, None] * std[None, :])
+        S = corr.shape[0]
+        upper = jnp.triu(jnp.ones((S, S), dtype=corr.dtype), k=1)
+        decor_loss = jnp.sum((corr * upper) ** 2) / n_rep
+        total_loss = total_loss + stratum_decorrelation * decor_loss
+    sigma, w_dn = noisy_nodes
+    if w_dn > 0.0 and isinstance(batch.nodes, dict) and 'noise' in batch.nodes:
+        noise = batch.nodes['noise']
+        noisy = batch._replace(nodes={**batch.nodes, 'positions': batch.nodes['positions'] + noise})
+        pred = model.denoise(noisy)                                 # (n_atoms, 3)
+        node_mask_dn = jraph.get_node_padding_mask(batch).astype(pred.dtype)
+        err = jnp.sum((pred - noise / sigma) ** 2, axis=-1) * node_mask_dn
+        n_dn = jnp.maximum(node_mask_dn.sum(), 1.0) if norm is None else n_atoms
+        denoise_loss = jnp.sum(err) / (3.0 * n_dn)
+        total_loss = total_loss + w_dn * denoise_loss
+
+    dens_loss = jnp.zeros(()); dens_sum = jnp.zeros(()); dens_count = jnp.zeros(())
+    if dens_on:
+        m = batch.nodes['dens_mask']
+        if dens['noisy_ef']:
+            feats = results['node_features']
+        else:
+            noisy = batch._replace(nodes={**batch.nodes, 'positions': batch.nodes['positions'] + batch.nodes['dens_noise'],
+                                          'dens_force': batch.nodes['dens_force_in']})
+            feats = model.node_energies(noisy.nodes['positions'], None, None, noisy)['node_features']
+        pred = model.dens_noise(feats)
+        err = jnp.sqrt(jnp.sum((pred - batch.nodes['dens_noise'] / dens['sigma']) ** 2, axis=-1) + 1e-24) * m
+        dens_sum, dens_count = jnp.sum(err), jnp.sum(m)          # raw (log: L2MAE = sum / count)
+        dens_loss = dens_sum / n_dens
+        total_loss = total_loss + dens_weight * dens_loss
+
+    tc_loss = jnp.zeros(()); rl2_loss = jnp.zeros(())
+    w_tc, eps_tc, k2 = taylor_consistency
+    if w_tc > 0.0 and isinstance(batch.nodes, dict) and 'taylor_disp' in batch.nodes:
+        disp = batch.nodes['taylor_disp']                                   # (n_atoms, 3), 0 on padding
+        displaced = batch._replace(nodes={**batch.nodes, 'positions': batch.nodes['positions'] + disp})
+        res2 = model(displaced)
+        gidx_tc = node_graph_idx(batch)
+        n_graphs_pad_tc = batch.n_node.shape[0]
+        gmask_tc = jraph.get_graph_padding_mask(batch).astype(disp.dtype)
+        f_mix = (1.0 - k2) * results['forces'] + k2 * res2['forces']
+        work = jraph.segment_sum(jnp.sum(disp * f_mix, axis=-1), gidx_tc, num_segments=n_graphs_pad_tc)
+        e_taylor = results['energy'].reshape(-1) - work                      # E(S) - sum d.F
+        n_node_tc = jnp.maximum(batch.n_node, 1).astype(disp.dtype)
+        d_tc = (res2['energy'].reshape(-1) - e_taylor) * gmask_tc / n_node_tc
+        tc_loss = jnp.sum(d_tc ** 2) / n_graphs
+        total_loss = total_loss + w_tc * tc_loss
+    if radial_l2 > 0.0:
+        rl2_loss = sum(jnp.sum(layer.radial_mlp.layers[0].weights[...] ** 2) for layer in model.layers) / n_rep
+        total_loss = total_loss + radial_l2 * rl2_loss
+
     aux = {
         'energy_loss': energy_loss,
         'force_loss': force_loss,
         'stress_loss': stress_loss,
+        'aux_loss': (deep_supervision * ds_loss + stratum_decorrelation * decor_loss + w_dn * denoise_loss
+                     + dens_weight * dens_loss
+                     + w_tc * tc_loss + radial_l2 * rl2_loss),
+        'ds_loss': ds_loss, 'decor_loss': decor_loss, 'denoise_loss': denoise_loss, 'dens_loss': dens_loss,
+        'dens_sum': dens_sum, 'dens_count': dens_count,
+        'tc_loss': tc_loss, 'rl2_loss': rl2_loss,
         'energy_mse': t['energy_se'] / n_graphs,
-        'force_mse': t['force_se'] / (3 * n_atoms),
+        'force_mse': t['force_se'] / (3 * n_atoms),       # all atoms (DeNS: incl. the corrupted ones)
         'stress_mse': t['stress_se'] / n_graphs if periodic else 0.0,
         'n_graphs': n_graphs,
-        'n_atoms': n_atoms,
+        'n_atoms': n_atoms_force,        # = n_atoms unless the DeNS pass drops the corrupted atoms
     }
     return total_loss, aux
 
@@ -434,12 +605,42 @@ def make_sharded_train_step(
     beta_nll: float = 0.0,
     grad_clip: float = 1.0,
     dynamic_loss_weights: bool = False,
+    stochastic_depth: Tuple[float, int] = (0.0, 0),
+    stochastic_depth_mode: str = "graph",
+    noisy_nodes: Tuple[float, float] = (0.0, 0.0),
+    deep_supervision: float = 0.0,
+    stratum_decorrelation: float = 0.0,
+    sam_rho: float = 0.0,
+    rng_seed: int = 0,
+    energy_loss_per: str = "atom",
+    taylor_consistency: Tuple[float, float, float] = (0.0, 0.0, 0.5),
+    radial_l2: float = 0.0,
+    dens: Optional[Dict] = None,
 ):
     """Create sharded training step with gradient synchronization.
 
+    dens = dict(p, r, sigma, noisy_ef, weight): faithful DeNS (docs/RACE_DeNS_audit_2026-10-29.md):
+      per step, each graph is picked with probability p and each atom of a picked graph is
+      corrupted with probability r (mask m); eps ~ N(0, sigma^2) on the corrupted atoms; reference
+      forces m*F feed the model's force encoding; see compute_loss for the two modes.  The noise-loss
+      weight comes from loss_weights['dens_weight'] (dynamic, e.g. linear decay) or dens['weight'].
+
+    Regularisation options (all default off):
+      stochastic_depth (p_max, n_layers): per graph and layer t, drop stratum t with
+          probability p_t = p_max * t/(n_layers-1) (layer 0 never); kept strata are scaled
+          by 1/(1-p_t) (inverted dropout).  Passed to the model as globals['stratum_keep'].
+      noisy_nodes (sigma, w): Gaussian position noise eps ~ N(0, sigma^2) added as
+          nodes['noise']; see compute_loss.
+      deep_supervision / stratum_decorrelation: see compute_loss.
+      sam_rho: sharpness-aware minimisation (Foret et al. 2021): the update uses the
+          gradient at params + rho * g/|g| (two forward/backward passes).
+
     Uses shard_map to explicitly control SPMD execution:
     - Each device processes its own batch (indexed by leading dimension)
-    - Gradients are synchronized via pmean across the 'dp' axis
+    - Each device's loss is normalised by the graph / atom counts of the global batch and the
+      gradients are summed (psum) across the 'dp' axis, so the update equals the single-device
+      update on the union of the device batches (compute_loss ``norm``); a mean of per-device
+      means (pmean) would weight the atoms of small device batches more
     - Parameters are updated identically on all devices
 
     Args:
@@ -455,6 +656,8 @@ def make_sharded_train_step(
             changed between epochs without re-JIT (used by ``loss_schedule``).
     """
 
+    n_replicas = int(mesh.shape['dp'])
+
     def per_device_step(graphdef, params, opt_state, schedule_state, ema_params, step, batch,
                         loss_weights=None):
         """Training step for a single device's batch."""
@@ -466,6 +669,71 @@ def make_sharded_train_step(
             ew, fw, sw = (loss_weights['energy_weight'],
                           loss_weights['force_weight'],
                           loss_weights['stress_weight'])
+        dw = 0.0
+        if dens is not None:
+            dw = (loss_weights['dens_weight'] if (loss_weights is not None and 'dens_weight' in loss_weights)
+                  else dens['weight'])
+            # corruption: graphs with probability p, atoms of a picked graph with probability r
+            kd = jax.random.fold_in(jax.random.fold_in(jax.random.PRNGKey(rng_seed + 7777), step),
+                                    jax.lax.axis_index('dp'))
+            kg, ka, ke = jax.random.split(kd, 3)
+            pos = batch.nodes['positions']
+            pick = (jax.random.uniform(kg, (batch.n_node.shape[0],)) < dens['p']) & jraph.get_graph_padding_mask(batch)
+            m = (pick[node_graph_idx(batch)] & (jax.random.uniform(ka, (pos.shape[0],)) < dens['r'])
+                 & jraph.get_node_padding_mask(batch)).astype(pos.dtype)
+            eps = dens['sigma'] * jax.random.normal(ke, pos.shape, dtype=pos.dtype) * m[:, None]
+            f_in = batch.nodes['forces'] * m[:, None]
+            nodes = {**batch.nodes, 'dens_mask': m, 'dens_noise': eps}
+            if dens['noisy_ef']:
+                lw0 = batch.nodes.get('loss_weight')
+                keep = 1.0 - m if lw0 is None else lw0 * (1.0 - m)
+                nodes.update(positions=pos + eps, dens_force=f_in, loss_weight=keep)
+            else:
+                nodes['dens_force_in'] = f_in
+            batch = batch._replace(nodes=nodes)
+
+        p_max, n_layers_sd = stochastic_depth
+        sigma_nn, w_nn = noisy_nodes
+        w_tc, eps_tc, _k2 = taylor_consistency
+        if p_max > 0.0 or w_nn > 0.0 or w_tc > 0.0:
+            key = jax.random.fold_in(jax.random.PRNGKey(rng_seed), step)
+            key = jax.random.fold_in(key, jax.lax.axis_index('dp'))
+            k_sd, k_nn, k_tc1, k_tc2 = jax.random.split(key, 4)
+        if w_tc > 0.0:
+            # Taylor-consistency displacement: random direction per atom, |d| ~ U(0, eps_max],
+            # re-sampled every step, zero on padded nodes
+            pos = batch.nodes['positions']
+            dirs = jax.random.normal(k_tc1, pos.shape, dtype=pos.dtype)
+            dirs = dirs / jnp.maximum(jnp.linalg.norm(dirs, axis=-1, keepdims=True), 1e-12)
+            mag = eps_tc * jax.random.uniform(k_tc2, (pos.shape[0], 1), dtype=pos.dtype)
+            nmask_tc = jraph.get_node_padding_mask(batch).astype(pos.dtype)[:, None]
+            batch = batch._replace(nodes={**batch.nodes, 'taylor_disp': dirs * mag * nmask_tc})
+        if p_max > 0.0:
+            p_t = p_max * jnp.arange(n_layers_sd) / max(n_layers_sd - 1, 1)
+            if stochastic_depth_mode == "node":
+                # per-atom masks: the energy noise averages over the atoms of a molecule
+                n_rows = batch.nodes['positions'].shape[0]
+            else:
+                n_rows = batch.n_node.shape[0]
+            u = jax.random.uniform(k_sd, (n_rows, n_layers_sd))
+            keep = (u >= p_t[None, :]).astype(jnp.float32) / (1.0 - p_t)[None, :]
+            if stochastic_depth_mode == "node":
+                batch = batch._replace(nodes={**batch.nodes, 'stratum_keep': keep})
+            else:
+                batch = batch._replace(globals={**batch.globals, 'stratum_keep': keep})
+        if w_nn > 0.0:
+            noise = sigma_nn * jax.random.normal(k_nn, batch.nodes['positions'].shape,
+                                                 dtype=batch.nodes['positions'].dtype)
+            batch = batch._replace(nodes={**batch.nodes, 'noise': noise})
+
+        # counts of the global batch (labels only, independent of the parameters)
+        nmask = jraph.get_node_padding_mask(batch).astype(jnp.float32)
+        norm = {'n_graphs': jax.lax.psum(jraph.get_graph_padding_mask(batch).astype(jnp.float32).sum(), 'dp'),
+                'n_atoms': jax.lax.psum(nmask.sum(), 'dp'), 'n_rep': n_replicas}
+        if dens is not None:
+            md = batch.nodes['dens_mask'].astype(jnp.float32)
+            norm['n_atoms_f'] = jnp.maximum(jax.lax.psum(jnp.sum(nmask * (1.0 - md)), 'dp'), 1.0)
+            norm['n_dens'] = jnp.maximum(jax.lax.psum(jnp.sum(md), 'dp'), 1.0)
 
         def loss_fn(params):
             return compute_loss(
@@ -473,15 +741,33 @@ def make_sharded_train_step(
                 ew, fw, sw, huber_delta,
                 loss_type=loss_type, periodic=periodic,
                 cov_mode=cov_mode, beta_nll=beta_nll,
+                deep_supervision=deep_supervision,
+                stratum_decorrelation=stratum_decorrelation,
+                noisy_nodes=noisy_nodes,
+                energy_loss_per=energy_loss_per,
+                taylor_consistency=taylor_consistency,
+                radial_l2=radial_l2,
+                norm=norm,
+                dens=None if dens is None else {'sigma': dens['sigma'], 'noisy_ef': dens['noisy_ef']},
+                dens_weight=dw,
             )
 
         # Compute gradients locally
         (loss, aux), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
 
-        # Synchronize gradients and metrics across devices
-        grads = jax.lax.pmean(grads, axis_name='dp')
-        loss = jax.lax.pmean(loss, axis_name='dp')
-        aux = jax.tree.map(lambda x: jax.lax.pmean(x, axis_name='dp'), aux)
+        # Sum the globally normalised per-device losses / gradients; the counts are already global
+        grads = jax.lax.psum(grads, axis_name='dp')
+        loss = jax.lax.psum(loss, axis_name='dp')
+        aux = {k: (v if k in ('n_graphs', 'n_atoms') else jax.lax.psum(v, axis_name='dp'))
+               for k, v in aux.items()}
+
+        if sam_rho > 0.0:
+            # SAM: gradient at the adversarially perturbed point params + rho * g / |g|
+            g_norm = optax.global_norm(grads)
+            eps = jax.tree.map(lambda g: g * (sam_rho / (g_norm + 1e-12)), grads)
+            params_adv = optax.apply_updates(params, eps)
+            (_, _), grads_adv = jax.value_and_grad(loss_fn, has_aux=True)(params_adv)
+            grads = jax.lax.psum(grads_adv, axis_name='dp')
 
         grad_norm = optax.global_norm(grads)
 
@@ -531,6 +817,7 @@ def make_sharded_train_step(
     sharded_step = shard_map(
         step_fn,
         mesh=mesh,
+        check_vma=False,   # custom primitives (cuEquivariance) lack VMA-typed transpose rules
         in_specs=tuple(in_specs),
         out_specs=(
             P(),       # new_params
@@ -550,12 +837,14 @@ def make_sharded_train_step(
 
 def make_sharded_evaluate_step(mesh: Mesh, huber_delta: float, loss_type: str = 'huber',
                                periodic: bool = True, cov_mode: str = 'scalar6',
-                               beta_nll: float = 0.0):
+                               beta_nll: float = 0.0, energy_loss_per: str = "atom"):
     """Create sharded evaluation function that runs on all GPUs.
 
     Each device evaluates its own batch, then results are summed across devices.
     Loss terms use the same (tanh-clipped) residuals as training; the reported
-    squared / absolute errors use raw residuals.
+    squared / absolute errors use raw residuals.  ``valid`` (n_devices,) weights the devices: the
+    last group of an epoch is filled up with copies of its last batch (multi_device_iterator),
+    which must not be counted (weight 0).  Called without ``valid`` every device counts.
     """
 
     def eval_single_device(graphdef, params, batch):
@@ -563,27 +852,46 @@ def make_sharded_evaluate_step(mesh: Mesh, huber_delta: float, loss_type: str = 
         batch = squeeze_batch(batch)
         model = nnx.merge(graphdef, params)
         results = model(batch)
-        return _loss_terms(results, batch, huber_delta, loss_type, periodic, cov_mode, beta_nll)
+        return _loss_terms(results, batch, huber_delta, loss_type, periodic, cov_mode, beta_nll,
+                           energy_loss_per=energy_loss_per)
 
-    def eval_and_reduce(graphdef, params, batch):
+    def eval_and_reduce(graphdef, params, batch, valid):
         """Evaluate on each device and sum results across devices."""
         local_metrics = eval_single_device(graphdef, params, batch)
+        w = valid.reshape(())
         # Sum across all devices using psum
-        return jax.tree.map(lambda x: jax.lax.psum(x, axis_name='dp'), local_metrics)
+        return jax.tree.map(lambda x: jax.lax.psum(jnp.asarray(x) * w.astype(jnp.asarray(x).dtype),
+                                                   axis_name='dp'), local_metrics)
 
     # Create sharded version
     sharded_eval = shard_map(
         eval_and_reduce,
         mesh=mesh,
+        check_vma=False,   # custom primitives (cuEquivariance) lack VMA-typed transpose rules
         in_specs=(
             P(),       # graphdef - replicated
             P(),       # params - replicated
             P('dp'),   # batch - sharded along device axis
+            P('dp'),   # valid - one weight per device
         ),
         out_specs=P(),  # metrics - reduced (same on all devices after psum)
     )
+    sharded_eval = jax.jit(sharded_eval)
+    n_dev = int(mesh.shape['dp'])
 
-    return jax.jit(sharded_eval)
+    def eval_step(graphdef, params, batch, valid=None):
+        if valid is None:
+            valid = device_weights(n_dev, n_dev, mesh)
+        return sharded_eval(graphdef, params, batch, valid)
+
+    return eval_step
+
+
+def device_weights(n_valid: int, n_devices: int, mesh: Mesh) -> jax.Array:
+    """(n_devices,) array sharded over 'dp': 1 for the first n_valid devices, 0 for padding copies."""
+    w = (np.arange(n_devices) < n_valid).astype(np.float32)
+    sharding = NamedSharding(mesh, P('dp'))
+    return jax.device_put(w, sharding) if jax.process_count() == 1 else global_from_host(w, sharding)
 
 
 def evaluate_sharded(
@@ -646,6 +954,8 @@ def evaluate_sharded(
         'stress_ae': 0.0,
         'energy_se_total': 0.0,
         'energy_ae_total': 0.0,
+        'energy_dN': 0.0,
+        'n_node_sq': 0.0,
         'n_graphs': 0.0,
         'n_atoms': 0.0
     }
@@ -657,13 +967,17 @@ def evaluate_sharded(
     for fname in files_pkl:
         # accept either a pickle path or an in-memory dataset object (with .graphs)
         dataset = fname if hasattr(fname, "graphs") else Dataset(file_path=fname)
+        # same node cap rule as the training loader: a full batch of the largest graph must fit
+        # (MD22 double-walled nanotube has 370 atoms > the old fixed cap of 256)
+        max_n = max(int(np.asarray(g.n_node).reshape(-1)[0]) for g in dataset.graphs)
         base_loader = BucketedDataLoader (
             dataset=dataset,
             batch_size=batch_size,
             n_buckets=8,
             shuffle=False,       # No shuffle for deterministic evaluation
             drop_last=False,     # Evaluate ALL data
-            rngs=nnx.Rngs(0)    # Deterministic rngs (not used when shuffle=False)
+            rngs=nnx.Rngs(0),   # Deterministic rngs (not used when shuffle=False)
+            max_nodes_per_batch=max(256, batch_size * max_n + 1),
         )
         if collate_fn is not None:
             base_loader.collate_fn = collate_fn
@@ -676,12 +990,13 @@ def evaluate_sharded(
         )
 
         for batch, info in loader:
-            # Run sharded evaluation
-            metrics = eval_step(graphdef, params_replicated, batch)
+            # Run sharded evaluation (padding copies of the last group get weight 0)
+            metrics = eval_step(graphdef, params_replicated, batch,
+                                device_weights(info.valid_device_count, n_devices, mesh))
 
             # Accumulate results (metrics are already summed across devices)
             for k in totals:
-                totals[k] += float(metrics[k])
+                totals[k] += float(to_host(metrics[k]))
 
     # Compute final metrics
     n_g = max(totals['n_graphs'], 1)
@@ -705,7 +1020,17 @@ def evaluate_sharded(
         'total_loss': total_loss,
         'n_graphs': n_g,
         'n_atoms': n_a,
+        # per-atom shift that minimises sum_n (d_n + N_n delta)^2 (VarPro / closed-form gauge refit;
+        # apply with gauge_shift_params, only from a *training*-set evaluation)
+        'gauge_shift': -totals['energy_dN'] / max(totals['n_node_sq'], 1.0),
     }
+
+
+def gauge_shift_params(params, delta: float):
+    """Add delta to the model's per-atom energy shift (top-level Param 'shift')."""
+    def f(path, x):
+        return x + delta if (len(path) and getattr(path[0], 'key', None) == 'shift') else x
+    return jax.tree_util.tree_map_with_path(f, params)
 
 
 # =============================================================================

@@ -46,7 +46,22 @@ def preprocess_graph(
     ``atom_energies`` is indexed by species index and subtracted from the
     total energy.
     """
-    src, dst = matscipy.neighbours.neighbour_list("ij", atoms, cutoff)
+    periodic = bool(np.any(atoms.pbc))
+    if periodic:
+        # periodic: i (receiver), j (sender), S (image of j).  D_ij = x_j - x_i + S.cell (ASE / matscipy
+        # convention); the model computes r = x_sender - (x_receiver + Sij.cell), so Sij = -S gives
+        # r = D_ij.  ASE's neighbour list is used here (matscipy's periodic path fails under NumPy 2).
+        import ase.neighborlist
+        src, dst, S = ase.neighborlist.neighbor_list("ijS", atoms, cutoff)
+    else:
+        if atoms.cell.rank < 3:
+            # molecule without a cell (e.g. converted rMD17): any box works for the open-boundary search
+            boxed = atoms.copy()          # copy for the neighbour search only (keeps the calculator on atoms)
+            span = np.ptp(boxed.positions, axis=0) if len(boxed) else np.zeros(3)
+            boxed.set_cell(np.diag(span + 2.0 * cutoff + 10.0)); boxed.pbc = False
+            src, dst = matscipy.neighbours.neighbour_list("ij", boxed, cutoff)
+        else:
+            src, dst = matscipy.neighbours.neighbour_list("ij", atoms, cutoff)
     species = np.array(
         [atom_indices[int(n)] for n in atoms.get_atomic_numbers()], dtype=np.int32
     )
@@ -62,14 +77,21 @@ def preprocess_graph(
     else:
         energy = np.array([0.0], dtype=np.float32)
 
+    edges = None
+    glob = {"energy": energy}
+    if periodic:
+        edges = {"Sij": (-S).astype(np.float32)}
+        glob.update(cell=np.array(atoms.get_cell().array, dtype=np.float32)[None],   # .array: ASE Cell.__array__ breaks under NumPy 2
+                    cutoff=np.array([cutoff], dtype=np.float32),
+                    volume=np.array([atoms.get_volume()], dtype=np.float32))
     return jraph.GraphsTuple(
         n_node=np.array([len(atoms)], dtype=np.int32),
         n_edge=np.array([len(src)], dtype=np.int32),
         nodes=nodes,
-        edges=None,
+        edges=edges,
         senders=dst.astype(np.int32),
         receivers=src.astype(np.int32),
-        globals={"energy": energy},
+        globals=glob,
     )
 
 
@@ -87,24 +109,66 @@ def species_counts(frames: Sequence[ase.Atoms], atom_indices: Dict[int, int]) ->
     return counts
 
 
+def e0_rank(counts: np.ndarray) -> int:
+    """Rank of the (n_frames, n_species) composition matrix.  Per-species E0 are identifiable
+    only if the rank equals the number of species; a dataset with a single stoichiometry (3BPA)
+    has rank 1: the data determine the per-frame offset sum_s N_s E0_s and nothing else."""
+    return int(np.linalg.matrix_rank(counts))
+
+
 def fit_e0(
     frames: Sequence[ase.Atoms],
     atom_indices: Dict[int, int],
     reference_e0: Optional[Sequence[float]] = None,
+    on_rank_deficient: str = "reference",
+    info: Optional[Dict] = None,
 ) -> np.ndarray:
     """Per-species E0 by least squares  E_g ~ sum_s N_{g,s} E0_s.
 
     If ``reference_e0`` is given the regression is done on the residual
-    ``E_g - sum_s N_{g,s} ref_s`` and the result is ``ref + delta`` (this is the
-    minimum-norm solution when the composition matrix is rank deficient, e.g. a
-    dataset with a single stoichiometry such as 3BPA).
+    ``E_g - sum_s N_{g,s} ref_s`` and the result is ``ref + delta``.
+
+    When the composition matrix is rank deficient (fewer distinct stoichiometries than species,
+    e.g. 3BPA with one molecule) the per-species values are **not identifiable**: any split of the
+    per-frame offset over the species gives identical training targets, and the minimum-norm
+    lstsq split (proportional to the composition) is physically meaningless and not comparable
+    to isolated-atom / foundation E0.  ``on_rank_deficient`` controls what is returned then:
+
+    * ``"reference"`` (default): keep ``reference_e0`` exactly (the identifiable per-frame offset
+      is left in the targets and belongs to the model's per-atom ``shift``); without a reference
+      fall back to ``"minnorm"`` with a warning.
+    * ``"minnorm"``: the old behaviour (minimum-norm correction).
+
+    ``info`` (optional dict) receives rank, n_species, the mean per-atom offset of the residual and
+    the action taken.
     """
+    import warnings
     counts = species_counts(frames, atom_indices)
     energies = np.array([a.get_potential_energy() for a in frames], dtype=np.float64)
-    ref = (np.zeros(counts.shape[1]) if reference_e0 is None
+    n_species = counts.shape[1]
+    ref = (np.zeros(n_species) if reference_e0 is None
            else np.asarray(reference_e0, dtype=np.float64))
     residual = energies - counts @ ref
-    delta, *_ = np.linalg.lstsq(counts, residual, rcond=None)
+    rank = e0_rank(counts)
+    per_atom_offset = float(np.sum(residual) / max(np.sum(counts), 1.0))
+    if on_rank_deficient not in ("reference", "minnorm"):
+        raise ValueError(f"on_rank_deficient must be 'reference' or 'minnorm', got {on_rank_deficient!r}")
+    action = "lstsq"
+    if rank < n_species:
+        if reference_e0 is not None and on_rank_deficient == "reference":
+            delta = np.zeros(n_species)
+            action = "reference kept (rank deficient)"
+        else:
+            delta, *_ = np.linalg.lstsq(counts, residual, rcond=None)
+            action = "minimum-norm split (rank deficient, arbitrary per species)"
+        warnings.warn(
+            f"fit_e0: composition matrix rank {rank} < n_species {n_species}: per-species E0 are not "
+            f"identifiable (only the per-frame offset, {per_atom_offset:.4f} eV/atom, is); {action}.")
+    else:
+        delta, *_ = np.linalg.lstsq(counts, residual, rcond=None)
+    if info is not None:
+        info.update(rank=rank, n_species=n_species, per_atom_offset=per_atom_offset, action=action,
+                    delta=np.asarray(delta))
     return ref + delta
 
 
@@ -145,11 +209,19 @@ def compute_dataset_stats(
         force_sq_sum += float(np.sum(f ** 2))
         force_count += f.size
 
-    e0_residual, *_ = np.linalg.lstsq(counts, energies, rcond=None)
+    rank = e0_rank(counts)
+    if rank < n_species:
+        # single (or too few) stoichiometries: a per-species residual E0 is not identifiable, do not
+        # invent one; the identifiable offset is the per-atom shift (shift == shift_raw)
+        e0_residual = np.zeros(n_species)
+    else:
+        e0_residual, *_ = np.linalg.lstsq(counts, energies, rcond=None)
     resid = energies - counts @ e0_residual
     n_atoms = float(n_atoms_g.sum())
     return {
         "e0_residual": e0_residual,
+        "e0_rank": rank,
+        "e0_identifiable": bool(rank == n_species),
         "shift": float(np.sum(resid) / n_atoms),
         "shift_raw": float(np.sum(energies) / n_atoms),
         "scale": float(np.sqrt(force_sq_sum / max(force_count, 1))),

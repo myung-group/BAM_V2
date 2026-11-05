@@ -323,6 +323,8 @@ def energy_forces_stress(
                 'frc_variation': results.get('frc_variation'),
                 'energy_variation': results.get('energy_variation'),
                 'stress_variation': results.get('stress_variation'),
+                'strata': results.get('strata'),
+                'node_features': results.get('node_features'),
             }
             return jnp.sum(ne), aux
 
@@ -348,6 +350,8 @@ def energy_forces_stress(
                 'frc_variation': results.get('frc_variation'),
                 'energy_variation': results.get('energy_variation'),
                 'stress_variation': results.get('stress_variation'),
+                'strata': results.get('strata'),
+                'node_features': results.get('node_features'),
             }
             return jnp.sum(ne), aux
 
@@ -422,6 +426,10 @@ def energy_forces_stress(
             indices_are_sorted=True,
         )
 
+    strata = aux.get('strata')
+    if strata is not None:
+        strata = strata * node_mask[None, :]       # (n_strata, n_atoms), padded nodes -> 0
+
     return {
         'energy': graph_energies,
         'forces': -jnp.array(grad),
@@ -429,4 +437,6 @@ def energy_forces_stress(
         'force_variation': frc_variation,
         'energy_variation': energy_variation,
         'stress_variation': stress_variation,
+        'strata': strata,
+        'node_features': aux.get('node_features'),     # final node features (DeNS noise head)
     }

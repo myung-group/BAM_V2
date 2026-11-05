@@ -1,0 +1,11 @@
+#!/bin/bash
+#SBATCH -p normal
+#SBATCH --comment="field=sciai;appl=jax"
+#SBATCH --gres=gpu:4
+#SBATCH -t 23:00:00
+#SBATCH -J qm9_u0t
+#SBATCH -o runs/slurm/%x_%j.out
+# QM9 U0, standard 110k / 10k / 10,831 split (uncharacterized removed), energy-only, QM9-tuned: lr 1e-3, EMA 0.999, batch 16, radial MLP 256, 4 GPUs (global batch 32)
+cd /scratch/t589a02/BAM_V2
+bash runs/run_cue.sh qm9_u0t_hill_soap_s42
+tail -n1 runs/qm9_u0t_hill_soap_s42_cue/stdout.txt

@@ -436,7 +436,7 @@ def build():
     s.append(Paragraph("5b. Ablation (3BPA, 진행 중)", H2))
     rows = [["변형 (하나씩 V1식으로 되돌림)", "300 K", "600 K", "1200 K", "이면각"]] + ab["rows"]
     s.append(table(rows, col_widths=[W * 0.32, W * 0.17, W * 0.17, W * 0.17, W * 0.17], hi_rows=[1]))
-    s.append(Paragraph("표 6b. " + ab["note"] + ". 각 칸은 에너지 / 힘. 1200 K 힘 오차는 원자 특징 +32%, hill +22%, Chebyshev +13%, LayerScale +12%, 메시지 정규화 +6% 나빠진다. " + ab["pending"] + ".", CAP))
+    s.append(Paragraph("표 6b. " + ab["note"] + ". 각 칸은 에너지 / 힘. 1200 K 힘 오차는 원자 특징 +32%, hill +22%, Chebyshev +13%, LayerScale +12%, 메시지 정규화 +6% 나빠진다. 갱신을 gate로 되돌리면 1200 K 에너지만 +6% 나빠지고 나머지는 같거나 좋아져, 선형 갱신의 이득은 이 설정에서 확인되지 않았다. " + ab["pending"] + ".", CAP))
 
     s.append(Paragraph("6. 다른 SOTA 모델에 없는, 이 모델에서 처음 쓴 방법", H2))
     rows = [["방법", "다른 모델의 선례", "우리 기여", "판정"],

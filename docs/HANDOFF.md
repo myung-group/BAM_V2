@@ -211,6 +211,12 @@ sbatch). Every one of those jobs was written but not submitted.
        - AMSGrad f32 is about 10× faster than SOAP f64 on the RTX 4060 Ti, at equal or slightly better accuracy.
        - The Löwdin charge loss fixes the charges (r 0.93) but not the errors there.
        - Latent charges on neutral data are meaningless (r −0.15).
+     - ctx-RACE requirements (2026-11-07, `docs/RACE_LR_feedback_reply_2026-11-07_ko.md`):
+       - per-fragment charge constraints (`fragment_key` / `fragment_charges_key` / `n_fragments`);
+       - the short-range switch `long_range.sr_switch`;
+       - `chi_init` defaulting to Pauling, with old configs pinned to zero;
+       - the inference API `bam_omat24/predict.py`: `load` / `predict` / `charges`, and the per-element `refit`.
+       - Still open: the HOMO > 0 filter and the PDB leakage check, both after `inspect` of the official OMol25.
    See `docs/RACE_LR_design.md` §3.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.

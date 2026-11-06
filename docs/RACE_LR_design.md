@@ -62,6 +62,33 @@ claim it cleanly.
 - In the local 4G test (report §10), the Hirshfeld charge loss is what makes the charges physical (r ≥ 0.98, right
   magnitude). It also gives the best energies and forces on the carbon chain and NaCl.
 
+**Options added 2026-11-07, for the ctx-RACE use case** (protein–ligand ΔE_int; the user decided to pretrain RACE_LR
+from scratch on OMol25):
+- **`chi_init` defaults to `"pauling"`** (user decision), with `chi_init_missing: "mean"`. Configs written before
+  this date pin `"chi_init": "zero"`, so they reproduce.
+- **Per-fragment charge constraints.** cfg `fragment_key` (per-atom integer ids, e.g. `"is_ligand"`),
+  `fragment_charges_key` (info list of the fragment charges, default `"fragment_charges"`) and `n_fragments`
+  (default 2).
+  - Each fragment keeps its own integer charge, so no fractional charge flows between distant fragments (a known
+    Qeq weakness). Coulomb still couples all atoms.
+  - A structure with a single fragment, such as a ligand or protein part, needs no fragment charges: it carries the
+    total charge.
+  - Fragment charges that do not sum to the total charge raise an error.
+- **`long_range.sr_switch: [r_on, r_off]`.** The Coulomb energy of pairs closer than r_off is switched off smoothly
+  (C2 smoothstep, fully off below r_on), so the learned short-range strata and the Coulomb term do not double count
+  there.
+  - The Qeq charges are solved with the unswitched matrix.
+  - Periodic graphs use the lattice images |n| ≤ 1, so r_off must be below the shortest cell height.
+- **Inference API `bam_omat24/predict.py`.** `load(ckpt) -> Predictor`.
+  - `Predictor.predict(frames)` returns total energies (eV) and per-frame forces (eV/Å). `charges(frames)` returns
+    the Qeq charges.
+  - Each frame gives `info["charge"]`, `info["spin"]` and `arrays["is_ligand"]` under the key names of the training
+    config.
+  - `python -m bam_omat24.predict refit <ckpt> --xyz <train.xyz>` fits a per-element energy correction on training
+    frames and writes it to `<ckpt>.species_refit.json`. It is applied when present.
+  - Checked on a trained checkpoint: it reproduces the trainer's test numbers exactly, and the refit gives the
+    per-composition result of `by_state.py`.
+
 ## 2. Limits of the first version
 
 - **Dense matrices.** The Qeq matrix is N_pad × N_pad per batch, and the Ewald real-space part is N² × images. This

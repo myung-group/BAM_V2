@@ -383,6 +383,7 @@ def compute_loss(
     norm: Optional[Dict] = None,
     dens: Optional[Dict] = None,
     dens_weight: Any = 0.0,
+    charge_weight: float = 0.0,
 ) -> Tuple[jnp.ndarray, Dict]:
     """Compute training loss for a single batch (no device dimension).
 
@@ -418,6 +419,8 @@ def compute_loss(
                                (ACE purification / restratification as a penalty)
       noisy_nodes (sigma, w) : + w * mean |head(x + eps) - eps/sigma|^2, eps = batch.nodes['noise']
                                (Noisy Nodes denoising auxiliary task; needs model.noise_head)
+      charge_weight w        : + w * sum_i (q_i - q_ref_i)^2 / n_atoms (e^2), q = results['charges'] (RACE_LR),
+                               q_ref = batch.nodes['ref_charges'] (cfg charge_label_key); skipped if either is absent
 
     Args:
         loss_type: 'huber' | 'nll' (legacy Huber-whitened) | 'gauss_nll'.
@@ -527,6 +530,12 @@ def compute_loss(
     if radial_l2 > 0.0:
         rl2_loss = sum(jnp.sum(layer.radial_mlp.layers[0].weights[...] ** 2) for layer in model.layers) / n_rep
         total_loss = total_loss + radial_l2 * rl2_loss
+    q_loss = jnp.zeros(())
+    if charge_weight > 0.0 and 'charges' in results and isinstance(batch.nodes, dict) and 'ref_charges' in batch.nodes:
+        qm = jraph.get_node_padding_mask(batch).astype(results['charges'].dtype)
+        dq = results['charges'] - batch.nodes['ref_charges'].astype(results['charges'].dtype)
+        q_loss = jnp.sum(qm * dq ** 2) / n_atoms
+        total_loss = total_loss + charge_weight * q_loss
 
     aux = {
         'energy_loss': energy_loss,
@@ -534,10 +543,10 @@ def compute_loss(
         'stress_loss': stress_loss,
         'aux_loss': (deep_supervision * ds_loss + stratum_decorrelation * decor_loss + w_dn * denoise_loss
                      + dens_weight * dens_loss
-                     + w_tc * tc_loss + radial_l2 * rl2_loss),
+                     + w_tc * tc_loss + radial_l2 * rl2_loss + charge_weight * q_loss),
         'ds_loss': ds_loss, 'decor_loss': decor_loss, 'denoise_loss': denoise_loss, 'dens_loss': dens_loss,
         'dens_sum': dens_sum, 'dens_count': dens_count,
-        'tc_loss': tc_loss, 'rl2_loss': rl2_loss,
+        'tc_loss': tc_loss, 'rl2_loss': rl2_loss, 'q_loss': q_loss,
         'energy_mse': t['energy_se'] / n_graphs,
         'force_mse': t['force_se'] / (3 * n_atoms),       # all atoms (DeNS: incl. the corrupted ones)
         'stress_mse': t['stress_se'] / n_graphs if periodic else 0.0,
@@ -616,6 +625,7 @@ def make_sharded_train_step(
     taylor_consistency: Tuple[float, float, float] = (0.0, 0.0, 0.5),
     radial_l2: float = 0.0,
     dens: Optional[Dict] = None,
+    charge_weight: float = 0.0,
 ):
     """Create sharded training step with gradient synchronization.
 
@@ -750,6 +760,7 @@ def make_sharded_train_step(
                 norm=norm,
                 dens=None if dens is None else {'sigma': dens['sigma'], 'noisy_ef': dens['noisy_ef']},
                 dens_weight=dw,
+                charge_weight=charge_weight,
             )
 
         # Compute gradients locally

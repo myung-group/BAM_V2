@@ -117,3 +117,57 @@ def test_race_output_keys_unchanged(graph):
     out = make_model()(jax.tree.map(jnp.asarray, pad_single(graph)))
     assert 'charges' not in out
     assert {'energy', 'forces', 'stress', 'node_features'} <= set(out)
+
+
+def test_chi_init_pauling():
+    """chi_init 'pauling': chi0 = 3 eV x (Pauling - mean); the default stays zero."""
+    import jax.numpy as jnp
+    from flax import nnx
+    from bam_omat24.race_lr_nnx import RACE_LR, PAULING
+    kw = dict(n_species=4, lmax=1, cutoff=5.0, hidden_irreps="8x0e + 8x1o", n_layers=1, radial_basis_size=4,
+              radial_mlp_size=8, radial_mlp_layers=1, mlp_init_scale=4.0, shift=0.0, scale=1.0, avg_n_neighbors=10.0,
+              atom_energies=ATOM_ENERGIES, l_train=True, periodic=False, x_mode="species", rngs=nnx.Rngs(0),
+              species_radii=[0.31, 0.76, 0.71, 0.66], species_z=ATOMIC_NUMBERS)
+    assert np.all(np.asarray(RACE_LR(**kw, long_range={}).chi0[...]) == 0.0)
+    m = RACE_LR(**kw, long_range={"chi_init": "pauling"})
+    v = np.array([PAULING[z] for z in ATOMIC_NUMBERS])
+    assert np.allclose(np.asarray(m.chi0[...]), 3.0 * (v - v.mean()), atol=1e-6)
+    with pytest.raises(ValueError):
+        RACE_LR(**{**kw, 'species_z': [1, 6, 7, 2]}, long_range={"chi_init": "pauling"})   # He: no value
+
+
+def test_charge_loss_term(x64, graph):
+    """charge_weight * mean_i (q_i - q_ref_i)^2 over the real atoms is added to the loss; weight 0 = unchanged."""
+    import jax
+    import jax.numpy as jnp
+    from flax import nnx
+    from bam_omat24.training_utils import compute_loss
+    model, g = as_float64(_lr_model(), pad_single(graph))
+    model.chi0.value = jnp.asarray([0.3, -0.2, 0.1, -0.4])
+    n = int(g.n_node[0])
+    rng = np.random.default_rng(0)
+    ref = np.zeros(g.nodes['positions'].shape[0]); ref[:n] = rng.normal(0, 0.2, n); ref[n:] = 5.0  # padding ignored
+    g = g._replace(nodes={**g.nodes, 'ref_charges': ref}, globals={**g.globals, 'charge': np.array([0.0, 0.0])})
+    g = jax.tree.map(jnp.asarray, g)
+    graphdef, params = nnx.split(model)
+    l0, a0 = compute_loss(graphdef, params, g, 1.0, 10.0, 0.0, 10.0, periodic=False)
+    l1, a1 = compute_loss(graphdef, params, g, 1.0, 10.0, 0.0, 10.0, periodic=False, charge_weight=0.5)
+    q = np.asarray(model(g)['charges'])[:n]
+    expect = np.mean((q - ref[:n]) ** 2)
+    assert abs(float(a1['q_loss']) - expect) < 1e-10 and float(a0['q_loss']) == 0.0
+    assert abs(float(l1) - float(l0) - 0.5 * expect) < 1e-10
+    # gradient of the charge term reaches the electronegativity parameters
+    gq = jax.grad(lambda p: compute_loss(graphdef, p, g, 0.0, 0.0, 0.0, 10.0, periodic=False, charge_weight=1.0)[0])(params)
+    assert float(jnp.abs(gq['chi0'][...]).sum()) > 0.0
+
+
+def test_ref_charges_in_graph(graph, frame):
+    """charge_label_key puts the per-atom labels into nodes['ref_charges']; without it the node keys are unchanged."""
+    from conftest import preprocess_graph, atomic_numbers_to_indices, CUTOFF
+    a = frame.copy(); a.calc = frame.calc
+    a.arrays['hirshfeld_charges'] = np.linspace(-0.5, 0.5, len(a))
+    g0 = preprocess_graph(a, atomic_numbers_to_indices(ATOMIC_NUMBERS), ATOM_ENERGIES, CUTOFF)
+    g1 = preprocess_graph(a, atomic_numbers_to_indices(ATOMIC_NUMBERS), ATOM_ENERGIES, CUTOFF,
+                          charge_label_key='hirshfeld_charges')
+    assert 'ref_charges' not in g0.nodes and set(g1.nodes) == set(g0.nodes) | {'ref_charges'}
+    assert np.allclose(g1.nodes['ref_charges'], a.arrays['hirshfeld_charges'])

@@ -117,6 +117,9 @@ Config keys (in addition to the model hyper-parameters, see README):
                        race_lr_nnx.py; options in "long_range": ewald_alpha, ewald_n_real, ewald_n_recip, head_hidden,
                        chi_scale, hard_init) | "Nequip"
     total_charge_key : extxyz info key of the total charge per structure (RACE_LR; default none = neutral)
+    charge_label_key : extxyz per-atom array of reference charges, e.g. "hirshfeld_charges" (RACE_LR; default none)
+    charge_weight    : weight of the charge loss mean_i (q_i - q_ref_i)^2 in e^2 (needs charge_label_key; default 0 =
+                       latent charges, no charge labels used)
     graph_cache      : pickle cache of the graphs next to each xyz (default true); false recomputes the neighbour
                        lists at start and writes nothing (disk = the xyz files only)
     graph_workers    : processes for the neighbour searches (default 1; 0 = CPUs of the Slurm task, <= 64)
@@ -349,7 +352,7 @@ def build_datasets(cfg: Dict, fout):
 
     # graph_cache false: no pickle cache (neighbour lists recomputed at start, graph_workers processes)
     gl = dict(use_cache=bool(_get(cfg, 'graph_cache', True)), n_workers=_graph_workers(cfg),
-              charge_key=_get(cfg, 'total_charge_key', None))
+              charge_key=_get(cfg, 'total_charge_key', None), charge_label_key=_get(cfg, 'charge_label_key', None))
     all_graphs = load_3bpa_graphs(train_path, atomic_numbers, atom_energies, cutoff,
                                   frames=train_frames, **gl)
     valid_path = _get(cfg, 'valid_path', None)
@@ -885,7 +888,10 @@ def train(cfg: Dict):
                             if c else (0.0, 0.0, 0.5))(_get(cfg, 'taylor_consistency', None)),
         radial_l2=float(_get(cfg, 'radial_l2', 0.0)),
         dens=dens_cfg or None,
+        charge_weight=float(_get(cfg, 'charge_weight', 0.0)),
     )
+    if float(_get(cfg, 'charge_weight', 0.0)) > 0 and not _get(cfg, 'charge_label_key', None):
+        raise ValueError("charge_weight needs charge_label_key")
     if float(_get(cfg, 'stochastic_depth', 0.0)) > 0 and _get(cfg, 'residual', 'none') == 'none':
         raise ValueError("stochastic_depth needs residual='identity' or 'identity_cum'")
     eval_step = make_sharded_evaluate_step(

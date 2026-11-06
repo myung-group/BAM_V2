@@ -43,6 +43,14 @@ Why this fits RACE: the locally resolved strata stay as they are, and all non-lo
 explicit, physically constrained stratum. This keeps the local/long-range separation interpretable and lets a paper
 claim it cleanly.
 
+**Options added 2026-11-06, all off by default.** They were added after the charge diagnostics of the local test
+(`docs/local_test_report.md` §8): the latent charges were nearly uniform and too small.
+- `long_range.chi_init: "pauling"` initialises χ0_Z as `chi_init_scale` × (Pauling χ_Z − mean over the species).
+  The default scale is 3 eV, about the slope of the Mulliken scale. The default `"zero"` is unchanged.
+- `charge_label_key` (e.g. `"hirshfeld_charges"`) with `charge_weight` w adds w · mean_i (q_i − q_ref_i)² in e² to
+  the loss. The reference charges are labels of the same dataset; 4G-HDNNP fits them in a first step. With this
+  option the charges are no longer purely latent, so report it as a separate variant.
+
 ## 2. Limits of the first version
 
 - **Dense matrices.** The Qeq matrix is N_pad × N_pad per batch, and the Ewald real-space part is N² × images. This

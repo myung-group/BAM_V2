@@ -478,3 +478,42 @@ def test_predict_api_and_species_refit(tmp_path, frame):
     assert r['rmse_after_eV'] < 1e-4
     e2, _ = load(ck).predict(frames)
     assert np.allclose(e2, [a.get_potential_energy() for a in frames], atol=1e-3)
+
+
+def test_predict_atom_budget_batches(tmp_path):
+    """Predictor cuts batches at max_atoms (the Qeq solve is dense per batch): the results do not depend on it, also
+    for frames of about 1000 atoms."""
+    import io
+    import ase
+    from bam_omat24 import train_3bpa as T
+    from bam_omat24.training_utils import save_checkpoint
+    from bam_omat24.predict import load
+    from bam_omat24.data_3bpa import load_frames
+    cfg = {"model": "RACE_LR", "atomic_numbers": ATOMIC_NUMBERS, "atom_energies": ATOM_ENERGIES, "cutoff": 5.0,
+           "hidden_size": 8, "lmax": 1, "n_layers": 1, "radial_mlp_size": 8, "radial_mlp_layers": 1,
+           "avg_n_neighbors": 15.0, "tp_backend": "e3nn", "total_charge_key": "charge", "x64": False,
+           "node_bucket_size": 64, "edge_bucket_size": 1024, "learning_rate": 1e-3}
+    stats = {'shift_raw': 0.0, 'scale': 1.0, 'avg_n_neighbors': 15.0, 'n_graphs': 1, 'n_atoms': 1}
+    _, params, *_ = T.build_model(cfg, 4, ATOM_ENERGIES, stats, io.StringIO())
+    ck = tmp_path / 'ckpt.pkl'
+    save_checkpoint({'config': cfg, 'ema_params': params}, str(ck))
+    mol = load_frames(T.Path(__file__).resolve().parents[1] / 'dataset_3BPA' / 'train_300K.xyz')[:3]
+    big = []
+    for k, q in enumerate([0, 1]):                          # two "complexes" of 37 molecules (999 atoms), 12 A apart
+        a = ase.Atoms()
+        for i in range(37):
+            m = mol[(i + k) % 3].copy()
+            m.positions += 12.0 * np.array([i % 4, (i // 4) % 4, i // 16])
+            a += m
+        a.info['charge'] = q
+        big.append(a)
+    frames = big + [m.copy() for m in mol]
+    for m in frames[2:]:
+        m.info['charge'] = 0
+    e1, f1 = load(ck, max_atoms=100000).predict(frames)
+    p_small = load(ck, max_atoms=1000)
+    assert len(p_small._chunks(frames)) == 3                 # [big0], [big1], [3 small]
+    e2, f2 = p_small.predict(frames)
+    assert np.allclose(e1, e2, atol=1e-3) and all(np.allclose(a, b, atol=1e-4) for a, b in zip(f1, f2))
+    q = p_small.charges(frames[:2])
+    assert abs(q[0].sum()) < 1e-3 and abs(q[1].sum() - 1.0) < 1e-3 and len(q[0]) == 999

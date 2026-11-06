@@ -88,6 +88,10 @@ from scratch on OMol25):
     frames and writes it to `<ckpt>.species_refit.json`. It is applied when present.
   - Checked on a trained checkpoint: it reproduces the trainer's test numbers exactly, and the refit gives the
     per-composition result of `by_state.py`.
+  - Batching: at most `batch_size` (16) frames and `max_atoms` (2048) real atoms per batch, because the Qeq solve is
+    dense per batch. A larger frame runs alone, and the loader's 256-node cap is lifted.
+    - RTX 4060 Ti, reduced float64 model: about 120 ms per 1000-atom frame.
+    - Peak GPU memory is 2.3 GB at a 1100-atom cap and 4.3 GB at 2200.
 
 ## 2. Limits of the first version
 

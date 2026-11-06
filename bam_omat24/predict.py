@@ -4,6 +4,7 @@ fragments read as the training config says.
 
     from bam_omat24.predict import load
     pred = load('runs/<name>/ckpt.pkl')                  # config from the checkpoint (or config=dict / path)
+                                                         # batch_size=16 frames, max_atoms=2048 atoms per batch
     energies, forces = pred.predict(frames)              # energies (n_frames,) eV, forces: list of (n_atoms, 3) eV/Å
     charges = pred.charges(frames)                       # RACE_LR only: list of (n_atoms,) Qeq charges in e
 
@@ -35,7 +36,8 @@ def _refit_path(ckpt_path) -> Path:
 
 
 class Predictor:
-    def __init__(self, ckpt_path, config=None, species_refit: bool = True, batch_size: int = 16):
+    def __init__(self, ckpt_path, config=None, species_refit: bool = True, batch_size: int = 16,
+                 max_atoms: int = 2048):
         import jax
         from bam_omat24 import train_3bpa as T
         from bam_omat24.training_utils import load_checkpoint
@@ -64,6 +66,9 @@ class Predictor:
         import jax.numpy as jnp
         self.model = nnx.merge(graphdef, jax.tree.map(jnp.asarray, ckpt['ema_params']))
         self.batch_size = int(batch_size)
+        # RACE_LR solves the Qeq system densely over a whole batch (N_batch^2 memory, N_batch^3 time), so batches
+        # are cut at max_atoms real atoms (a larger single frame runs alone)
+        self.max_atoms = int(max_atoms)
         self.delta = np.zeros(len(self.atomic_numbers))
         rp = _refit_path(ckpt_path)
         if species_refit and rp.exists():
@@ -87,14 +92,35 @@ class Predictor:
             graphs = T._cast_graphs(graphs, np.float64)
         return _tag_frames(graphs)
 
+    def _chunks(self, frames):
+        out, cur, n_at = [], [], 0
+        for i, a in enumerate(frames):
+            if cur and (len(cur) >= self.batch_size or n_at + len(a) > self.max_atoms):
+                out.append(cur); cur, n_at = [], 0
+            cur.append(i); n_at += len(a)
+        if cur:
+            out.append(cur)
+        return out
+
     def _run(self, frames, want):
+        n = len(frames)
+        energies, forces, charges = np.full(n, np.nan), [None] * n, [None] * n
+        for idx in self._chunks(frames):
+            e, f, q = self._run_batch([frames[i] for i in idx], want)
+            for j, i in enumerate(idx):
+                energies[i], forces[i], charges[i] = e[j], f[j], q[j]
+        return energies, forces, charges
+
+    def _run_batch(self, frames, want):
         import jraph
         from flax import nnx
         from bam_omat24.data_3bpa import GraphListDataset
         from bam_omat24.data_nnx import BucketedDataLoader, default_collate_fn
         T, cfg = self._T, self.cfg
-        loader = BucketedDataLoader(GraphListDataset(self._graphs(frames)), batch_size=self.batch_size, n_buckets=1,
-                                    shuffle=False, drop_last=False, rngs=nnx.Rngs(0))
+        n_tot = sum(len(a) for a in frames)
+        # one batch per chunk: lift the loader's node cap (default 256) above the chunk size
+        loader = BucketedDataLoader(GraphListDataset(self._graphs(frames)), batch_size=len(frames), n_buckets=1,
+                                    shuffle=False, drop_last=False, rngs=nnx.Rngs(0), max_nodes_per_batch=n_tot + 1)
         loader.collate_fn = functools.partial(default_collate_fn,
                                               node_bucket_size=int(T._get(cfg, 'node_bucket_size', 128)),
                                               edge_bucket_size=int(T._get(cfg, 'edge_bucket_size', 4096)))

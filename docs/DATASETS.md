@@ -41,6 +41,7 @@ Conventions in this file:
 | `water_split1393` | same clone | inline python (verbatim below) | yes |
 | `oam_subsets`, `oam_subsets_100k` | BAM-GAMP-jax shards in `/scratch/t589a02/oam_data`, `/scratch/t589a02/mp_data/jax_data_v3_raw` | `bam_omat24/oam_subset.py` | subsets: yes, given the shards. Shards: **partly** (converter and options are on disk; the raw OMat24/sAlex/MPtrj downloads and the MPtrj `jax_data_v3_raw` build are NOT FOUND in transcript) |
 | `venv_tools` | `python -m venv` from conda env `bam_cue` + pip `pyarrow numpy scikit-learn` | n/a | yes |
+| local `data_local/4ghdnnp/{carbon_chain,ag_cluster,nacl,aumgo}` | Materials Cloud 2020.137 (10.24435/materialscloud:f3-yh) `datasets.tar.gz` (md5 recorded) | `data_prep/convert_4ghdnnp.py` | yes (section 16) |
 | `tm23_dl`, `zuo2020_dl` | Materials Cloud tcrks-ymp88; github materialsvirtuallab/mlearn | none (inspected only) | not used in results |
 
 ## 1. Environments used for the conversions
@@ -1359,3 +1360,132 @@ Not hashed (large; rebuild and compare frame counts): `rmd17_official/*/rest_spl
    and the BOTNet files; the md5s above were computed on 2026-11-06 from the files on disk.
 4. `venv_tools`: cloudpickle and narwhals installs NOT FOUND in transcript (not needed by any converter).
 5. `rmd17_from_frodo.tar.gz` (user-provided) has no recorded origin beyond its own README; it is not used in results.
+
+## 16. 4G-HDNNP systems (RACE_LR)
+
+Benchmark data for RACE_LR step 2 (`docs/RACE_LR_design.md` §3). Converted on the local PC on 2026-11-06, not on
+HANGANG, so the paths are relative to the repo root. `data_local/` is git-ignored.
+
+**Source.** Ko, Finkler, Goedecker, Behler, "A fourth-generation high-dimensional neural network potential with
+accurate electrostatics including non-local charge transfer", Nat. Commun. 12, 398 (2021), arXiv 2009.06484.
+- Data: Materials Cloud Archive 2020.137, DOI 10.24435/materialscloud:f3-yh. Record page:
+  https://archive.materialscloud.org/records/bk6kw-4b895, published 2020-11-04.
+- The DOI 10.24435/materialscloud:dz-zg resolves to the same record.
+- License: **CC BY 4.0**. Cite the paper and the record.
+- DFT: FHI-aims 171221_1, PBE, light settings. NaCl, Ag3 and Au2/MgO are spin polarised. Au2/MgO uses a 3×3×1
+  k-point grid. The per-atom charges are Hirshfeld charges.
+
+**Files (md5 recorded at download; the record's own checksums agree):**
+
+| file | size (bytes) | md5 |
+|---|---|---|
+| files_description.md | 233 | 832437d3cd7102d0a601fba567d7c9b8 |
+| readme.txt | 2536 | 8a7eb0061688d4014848bc37009210f1 |
+| datasets.tar.gz | 39726732 | 0aa11ea305b3af6a47bb3c577c2729bc |
+| datasets/Carbon_chain/input.data (extracted) | 15761645 | 222436bccf3ce2f22d0a0ece9262e4f8 |
+| datasets/Ag_cluster/input.data | 4231431 | 62a88547ce3cc6a744c03eefbc8b027a |
+| datasets/NaCl/input.data | 11685000 | e49432d41cf703ff8d44390f00db7599 |
+| datasets/AuMgO/input.data | 77130000 | 90112426e0825a0cc35be36bed3321a6 |
+
+The archive holds only the four RuNNer `input.data` files, so there is no script to run. The format and the units
+are described in the docstring of `data_prep/convert_4ghdnnp.py`.
+
+**Commands:**
+
+```bash
+mkdir -p data_local/4ghdnnp/raw && cd data_local/4ghdnnp/raw
+for f in files_description.md readme.txt datasets.tar.gz; do
+  curl -sfL -o $f "https://archive.materialscloud.org/records/bk6kw-4b895/files/$f?download=1"; done
+md5sum * > md5sums.txt
+tar xzf datasets.tar.gz --no-same-owner --no-same-permissions && md5sum datasets/*/input.data >> md5sums.txt
+cd ../../.. && python -I data_prep/convert_4ghdnnp.py data_local/4ghdnnp/raw data_local/4ghdnnp
+```
+The environment was the repo `.venv` (Python 3.12.15, ase 3.29.0, numpy 2.5.4). The conversion takes about 15 s.
+
+**Unit conversions.**
+- The archive is in atomic units: Bohr, Hartree, e and Hartree/Bohr.
+- Energies are multiplied by 1 Ha = 27.211386245988 eV and positions and cells by 1 Bohr = 0.529177210903 Å
+  (CODATA 2018).
+- Forces are multiplied by 27.211386245988 / 0.529177210903 eV/Å per Ha/Bohr.
+
+**Output.** Each system gets a directory `data_local/4ghdnnp/<system>/` with these files:
+- `all.xyz`, `train.xyz` and `test.xyz`.
+- `split.json` with the indices and the counts per subset.
+- `e0.json` with the per-element offsets, described below.
+
+The extxyz keys:
+- info `energy` in eV.
+- info `charge`, the total charge as an integer in e. Use it with `"total_charge_key": "charge"`.
+- info `subset`, the charge state or structure family, and info `source_index`, the block index in `input.data`.
+- arrays `forces` in eV/Å and `hirshfeld_charges` in e. The Hirshfeld charges sum to the total charge in every
+  structure.
+- Au2/MgO has the cell and `pbc="T T T"`, matching the 3D periodic slab of the DFT. The cell is 9.05 × 9.05 ×
+  26.46 Å, with the slab and the vacuum along c. The other systems have no cell and `pbc="F F F"`.
+
+**Split.**
+- The paper used a random 90 % / 10 % train / test split ("In all cases 90% of the available reference data was
+  used for training ... the remaining 10% ... as an independent test set") but did not publish the indices.
+- Our split is `numpy.random.RandomState(42).permutation(n)`, with the first `round(0.9 n)` frames for training,
+  per system and not stratified. The indices are in `split.json`.
+- Validation for training comes from `valid_frac` of the trainer, taken from `train.xyz` only.
+
+| system | subset (total charge) | n | n_atoms | train | test | E range (eV) | max abs F component (eV/Å) |
+|---|---|---|---|---|---|---|---|
+| carbon_chain | C10H2 (0) | 5008 | 12 | 4511 | 497 | −10384.640 … −10383.614 | 7.16 |
+| carbon_chain | C10H3+ (+1) | 5011 | 13 | 4506 | 505 | −10393.885 … −10392.777 | 10.85 |
+| ag_cluster | Ag3+ (+1) | 5014 | 3 | 4507 | 507 | −439152.900 … −439152.131 | 3.12 |
+| ag_cluster | Ag3− (−1) | 5999 | 3 | 5405 | 594 | −439160.765 … −439159.356 | 2.40 |
+| nacl | Na8Cl8+ (+1) | 2500 | 16 | 2246 | 254 | −135471.864 … −135471.305 | 2.37 |
+| nacl | Na9Cl8+ (+1) | 2500 | 17 | 2254 | 246 | −139888.893 … −139888.490 | 2.21 |
+| aumgo | Au2/MgO undoped (0) | 2500 | 110 | 2264 | 236 | −1476723.181 … −1476716.845 | 31.82 |
+| aumgo | Au2/MgO Al-doped (0) | 2500 | 110 | 2236 | 264 | −1480190.765 … −1480185.480 | 24.62 |
+
+Totals are 10019, 11013, 5000 and 5000 structures, matching the record's readme. NaCl has total charge +1 in both
+compositions, as the readme states. The charge-state contrast there is the position of the extra Na.
+
+**Reference energies (`e0.json`).**
+- The archive has no isolated-atom energies.
+- The trainer subtracts `atom_energies` and then stores the target in float32. At −439 000 eV (Ag3), float32
+  resolves only about 0.03 eV, so an offset is needed.
+- `e0.json` holds per-element energies from a least-squares fit of E = Σ_Z n_Z E0_Z on the **training split
+  only**, which stays within the fair protocol.
+- When the compositions do not determine every element, the fit takes the minimum-norm solution. That happens for
+  Ag3 (a single composition) and for Au2/MgO (rank 2 of 4 elements: O, Mg, Al, Au).
+- The values are therefore offsets, not physical atom energies. With these offsets the targets after subtraction
+  are within a few eV.
+- The fit residual std is 0.135 eV for carbon_chain, 3.85 eV for ag_cluster, 0.071 eV for nacl and 0.447 eV for
+  aumgo. For Ag3 it is the Ag3+ / Ag3− energy gap.
+- Isolated-atom DFT energies at the same level would be the physical alternative. They are not computed yet.
+
+**Check (2026-11-06).**
+- Read back with `ase.io.read`: five structures per system (indices 0, 1, n/2, n−1 and 1234) were compared with an
+  independent re-parse of `input.data`. Symbols and total charge are identical. Energy, positions, forces and cell
+  agree to 5e-9 or better, which is the 8-decimal precision of ASE's extxyz writer.
+- Train ∪ test = all, the two are disjoint, and `source_index` matches `split.json`.
+- A RACE_LR forward pass on converted structures gave finite energies, forces and stress, conserved charge exactly,
+  and ran on the periodic Au2/MgO cell (110 atoms) on CPU.
+
+**md5 of the outputs (ASE 3.29.0 writer):**
+
+```
+2f6ee7ae158922f18d1566aa0a70413f  carbon_chain/all.xyz
+7ea91416ff935bfd827a18fc8712ef22  carbon_chain/train.xyz
+7f961dc68aeee6238613feadc898100c  carbon_chain/test.xyz
+7129a1765b5f41a68a8ca47b14cd39a8  carbon_chain/split.json
+36a7d68ff3313e149d04a187d4825de9  carbon_chain/e0.json
+8e920cc7f37a4121f32d1b52b538c43c  ag_cluster/all.xyz
+5947c9a0a1abe7fe69c6b0b80a62e0ee  ag_cluster/train.xyz
+8883f48ec4b04f6a1abe7a4453b119b9  ag_cluster/test.xyz
+bc6a1f1c8e3a73a5aac3210957a4f5df  ag_cluster/split.json
+671a8d7b8b9a1c7ffcbe95275ca73e32  ag_cluster/e0.json
+ede591fecbdd6bdf0e3d9a6ccbc7ab34  nacl/all.xyz
+ccac97c4ffda8d89ed9e8bb5238c60d5  nacl/train.xyz
+7e52a56659d33e86af4aa0f0944c3879  nacl/test.xyz
+ce43898e4315f7ab33f34762a2c3dfd0  nacl/split.json
+7cd7917c00abbf643cfb282bb9e1bf10  nacl/e0.json
+269c12ceec15ae62b6d62be007791f62  aumgo/all.xyz
+524e371f1856ada080b1b04a2583c8bc  aumgo/train.xyz
+a4fcd2c32eb623e9b6aa8096639fbb6e  aumgo/test.xyz
+5ac5c63b65992204f1b2296d3e360bf1  aumgo/split.json
+875b924c3df0de2ae7a07d6e0e18f7f4  aumgo/e0.json
+```

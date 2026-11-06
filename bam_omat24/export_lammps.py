@@ -180,11 +180,14 @@ def export(args):
             meta['custom_call_note'] = 'cuequivariance-ops custom calls: run only with the same cue ops build'
         fns[(n_pad, e_pad)] = exp
     staged = []
-    for n_pad, e_pad in parse_buckets(args.staged_buckets or []):
-        staged.append(export_staged(model, cutoff, n_pad, e_pad, fdt, out, args.matmul_precision))
+    for b in parse_buckets(args.staged_buckets or []):          # n_pad:e_pad[:k_pad]  (k_pad: owned-row bucket)
+        n_pad, e_pad = b[0], b[1]
+        k_pad = b[2] if len(b) > 2 else None
+        staged.append(export_staged(model, cutoff, n_pad, e_pad, fdt, out, args.matmul_precision,
+                                    residuals=args.staged_residuals, k_pad=k_pad))
     if staged:
         meta['staged'] = {'dims': staged[0]['dims'], 'dim_a': staged[0]['dim_a'], 'cheb': staged[0]['cheb'],
-                          'buckets': [{k: b[k] for k in ('n_pad', 'e_pad', 'stem')} for b in staged]}
+                          'buckets': [{k: b[k] for k in ('n_pad', 'e_pad', 'k_pad', 'stem')} for b in staged]}
         if any(b['custom_calls'] for b in staged):
             meta['custom_call_note'] = 'cuequivariance-ops custom calls: run only with the same cue ops build'
     if recorder is not None:
@@ -209,8 +212,12 @@ def export(args):
             fh.write('staged_dims ' + ' '.join(str(d) for d in st['dims']) + '\n')
             fh.write(f"staged_dim_a {st['dim_a']}\nstaged_cheb {int(st['cheb'])}\n")
             fh.write("staged_signature 2\n")
+            rc = staged[0]['res_counts']
+            if rc:
+                assert all(b['res_counts'] == rc for b in staged), 'residual counts differ between buckets'
+                fh.write('staged_res_counts ' + ' '.join(str(c) for c in rc) + '\n')
             for b in st['buckets']:
-                fh.write(f"staged_bucket {b['n_pad']} {b['e_pad']} {b['stem']}\n")
+                fh.write(f"staged_bucket {b['n_pad']} {b['e_pad']} {b['stem']} {b['k_pad']}\n")
     # serialized xla::CompileOptionsProto for PJRT_Client_Compile (defaults: 1 replica, 1 partition)
     from jax._src.lib import xla_client
     (out / 'compile_options.pb').write_bytes(xla_client.CompileOptions().SerializeAsString())
@@ -304,7 +311,11 @@ def main():
     ap.add_argument('--check', default=None); ap.add_argument('--n-check', type=int, default=5)
     ap.add_argument('--cases', default=None, help='extxyz: write case_<k>.bin test cases (3 frames) for the C++ runtime')
     ap.add_argument('--staged-buckets', nargs='*', default=None,
-                    help='n_pad:e_pad buckets of the per-layer (halo exchange) functions for multi-rank LAMMPS')
+                    help='n_pad:e_pad[:k_pad] buckets of the per-layer (halo exchange) functions for multi-rank LAMMPS; '
+                         'k_pad = owned-row bucket (node-wise work on k_pad rows only, needs n_local <= k_pad)')
+    ap.add_argument('--staged-residuals', action='store_true',
+                    help='also export forward-with-residuals / backward-from-residuals layer functions (no recompute '
+                         'in the backward pass; more device memory)')
     export(ap.parse_args())
 
 
@@ -346,7 +357,7 @@ def stage_irreps(model, cutoff):
     return hs, (_dense(ctx['atomic_basis']).irreps if ctx['atomic_basis'] is not None else None)
 
 
-def make_stage_fns(model, cutoff, n_pad, e_pad):
+def make_stage_fns(model, cutoff, n_pad, e_pad, k_pad=None):
     """Per-layer functions for the halo-exchange LAMMPS mode (nodes 0..n_local-1 owned, then ghosts, then padding;
     edges only for owned receivers).  Dense float arrays between stages:
       prelude(sp, rec, snd, rv, n_real, e_real, n_local) -> (h0[N, d0], A[N, dA], e_pre)       e_pre includes shift
@@ -378,6 +389,8 @@ def make_stage_fns(model, cutoff, n_pad, e_pad):
         a = _dense(ctx['atomic_basis']).array if ctx['atomic_basis'] is not None else jnp.zeros((n_pad, 1), rv.dtype)
         return _dense(ctx['features']).array.astype(rv.dtype), a.astype(rv.dtype), local_sum(e_node.reshape(-1), n_local)
 
+    from bam_omat24 import race_nnx as R
+
     def layer(i):
         def f(h_prev, h_pp, a, sp, rec, snd, rv, n_real, e_real, n_local):
             g, pos0, cell, cut = _graph(sp, rec, snd, rv, n_real, e_real, n_pad, e_pad, cutoff)
@@ -385,8 +398,17 @@ def make_stage_fns(model, cutoff, n_pad, e_pad):
             ctx = model._prelude(pos0, cell, cut, g, atomic_basis=ab, with_pre_strata=False)
             feats = e3nn.IrrepsArray(hs[i], h_prev)
             pf = e3nn.IrrepsArray(hs[i - 1], h_pp) if (cheb and i >= 2) else None   # input of layer i-1
-            out, stratum = model._layer_step(ctx, i, feats, pf)
-            return _dense(out).array.astype(rv.dtype), local_sum(stratum.reshape(-1) * model.scale[...], n_local)
+            if k_pad is None:
+                out, stratum = model._layer_step(ctx, i, feats, pf)
+                return _dense(out).array.astype(rv.dtype), local_sum(stratum.reshape(-1) * model.scale[...], n_local)
+            # owned rows only (n_local <= k_pad): node-wise work on k_pad rows, output padded back to n_pad rows
+            # (the ghost rows are filled by forward communication)
+            with R.node_limit(k_pad):
+                out, stratum = model._layer_step(ctx, i, feats, pf)
+            h = _dense(out).array.astype(rv.dtype)
+            h = jnp.zeros((n_pad, h.shape[1]), h.dtype).at[:k_pad].set(h)
+            e = jnp.sum(jnp.where(jnp.arange(k_pad) < n_local, stratum.reshape(-1) * model.scale[...], 0.0))
+            return h, e
         return f
 
     def layer_vjp(i):
@@ -403,17 +425,40 @@ def make_stage_fns(model, cutoff, n_pad, e_pad):
             return c_hp + ct_add, c_hpp, c_a + ct_a_acc, c_rv + ct_rv_acc
         return fv
 
+    def layer_res(i):
+        """Saved-residual variant (2026-11-06): the forward returns the VJP residuals of the layer as extra outputs, the
+        backward consumes them, so the backward pass does not recompute the layer.  The residual pytree structure is
+        recorded while the forward is traced (holder['treedef']), so the forward must be traced first."""
+        f = layer(i)
+        holder = {}
+
+        def fwd(h_prev, h_pp, a, sp, rec, snd, rv, n_real, e_real, n_local):
+            (h_new, e), pull = jax.vjp(lambda hp, hpp, aa, r: f(hp, hpp, aa, sp, rec, snd, r, n_real, e_real, n_local),
+                                       h_prev, h_pp, a, rv)
+            leaves, treedef = jax.tree.flatten(pull)
+            holder['treedef'], holder['e_dtype'], holder['n_res'] = treedef, e.dtype, len(leaves)
+            return (h_new, e) + tuple(leaves)
+
+        def bwd(*args):
+            *res, ct_h, ct_add, ct_a_acc, ct_rv_acc = args
+            pull = jax.tree.unflatten(holder['treedef'], list(res))
+            c_hp, c_hpp, c_a, c_rv = pull((ct_h, jnp.ones((), holder['e_dtype'])))
+            return c_hp + ct_add, c_hpp, c_a + ct_a_acc, c_rv + ct_rv_acc
+        return fwd, bwd, holder
+
     def prelude_vjp(sp, rec, snd, rv, n_real, e_real, n_local, ct_a, ct_rv_acc=None):
         (h0, a, e), pull = jax.vjp(lambda r: prelude(sp, rec, snd, r, n_real, e_real, n_local), rv)
         g = pull((jnp.zeros_like(h0), ct_a, jnp.ones_like(e)))[0]
         return g if ct_rv_acc is None else g + ct_rv_acc
 
     return {'prelude': prelude, 'prelude_vjp': prelude_vjp, 'layers': [layer(i) for i in range(L)],
-            'layers_vjp': [layer_vjp(i) for i in range(L)], 'dims': [ir.dim for ir in hs],
+            'layers_vjp': [layer_vjp(i) for i in range(L)], 'layers_res': [layer_res(i) for i in range(L)],
+            'dims': [ir.dim for ir in hs],
             'dim_a': (ia.dim if ia is not None else 1), 'cheb': cheb, 'n_layers': L}
 
 
-def staged_energy_forces(fns, species, receivers, senders, rvec, n_real, e_real, n_local, ghost_owner):
+def staged_energy_forces(fns, species, receivers, senders, rvec, n_real, e_real, n_local, ghost_owner,
+                         residuals=False):
     """Reference orchestration of the staged functions as LAMMPS does it with halo exchange on one rank:
     ghost node k (n_local <= k < n_real) is a copy of owned node ghost_owner[k - n_local].  Returns
     (e_local, dE/drvec[e_pad, 3]).  Forward: after every stage the ghost rows of h are overwritten by their owners;
@@ -439,9 +484,14 @@ def staged_energy_forces(fns, species, receivers, senders, rvec, n_real, e_real,
     hs = [fwd_comm(h0)]
     L = fns['n_layers']
     dummy = jnp.zeros((species.shape[0], 1), rvec.dtype)
+    res = [None] * L
     for i in range(L):
         hpp = hs[i - 1] if (fns['cheb'] and i >= 2) else dummy
-        h, ei = fns['layers'][i](hs[i], hpp, a, *args)
+        if residuals:
+            out = fns['layers_res'][i][0](hs[i], hpp, a, *args)
+            h, ei, res[i] = out[0], out[1], out[2:]
+        else:
+            h, ei = fns['layers'][i](hs[i], hpp, a, *args)
         e = e + ei
         hs.append(fwd_comm(h))
     ct_h = [jnp.zeros_like(x) for x in hs]
@@ -449,7 +499,12 @@ def staged_energy_forces(fns, species, receivers, senders, rvec, n_real, e_real,
     ct_rv = jnp.zeros_like(rvec)
     for i in reversed(range(L)):
         hpp = hs[i - 1] if (fns['cheb'] and i >= 2) else dummy
-        c_hp, c_hpp, c_a, c_rv = fns['layers_vjp'][i](hs[i], hpp, a, *args, ct_h[i + 1])
+        if residuals:
+            z_add = jnp.zeros_like(hs[i])
+            c_hp, c_hpp, c_a, c_rv = fns['layers_res'][i][1](*res[i], ct_h[i + 1], z_add, jnp.zeros_like(a),
+                                                               jnp.zeros_like(rvec))
+        else:
+            c_hp, c_hpp, c_a, c_rv = fns['layers_vjp'][i](hs[i], hpp, a, *args, ct_h[i + 1])
         ct_h[i] = rev_comm(ct_h[i] + c_hp)
         if fns['cheb'] and i >= 2:
             ct_h[i - 1] = ct_h[i - 1] + c_hpp       # reverse-communicated when layer i-2 is processed
@@ -459,12 +514,12 @@ def staged_energy_forces(fns, species, receivers, senders, rvec, n_real, e_real,
     return e, ct_rv
 
 
-def export_staged(model, cutoff, n_pad, e_pad, fdt, out, matmul_precision):
+def export_staged(model, cutoff, n_pad, e_pad, fdt, out, matmul_precision, residuals=False, k_pad=None):
     """Export the per-layer functions of one bucket: <stem>_prelude, <stem>_prelude_vjp, <stem>_layer<i>,
     <stem>_layer<i>_vjp (.mlirbc).  Argument order as in make_stage_fns; all float arrays in fdt."""
     import jax
     import jax.numpy as jnp
-    fns = make_stage_fns(model, cutoff, n_pad, e_pad)
+    fns = make_stage_fns(model, cutoff, n_pad, e_pad, k_pad=k_pad)
     dims, da, cheb, L = fns['dims'], fns['dim_a'], fns['cheb'], fns['n_layers']
     i32 = lambda *sh: jax.ShapeDtypeStruct(sh, jnp.int32)
     fl = lambda *sh: jax.ShapeDtypeStruct(sh, fdt)
@@ -482,10 +537,29 @@ def export_staged(model, cutoff, n_pad, e_pad, fdt, out, matmul_precision):
         # vjp: ..., ct_h_new, ct_add (cotangent of h_prev from the Chebyshev term of layer i+1), ct_A acc, ct_rv acc
         jobs.append((f'layer{i}_vjp', fns['layers_vjp'][i],
                      base + (fl(n_pad, dims[i + 1]), fl(n_pad, dims[i]), a_sd, rv_sd)))
-    stem = f'racev2_staged_N{n_pad}_E{e_pad}'
+    res_counts = []
+    if residuals:
+        # forward with residual outputs (only h_new and e cast; residuals keep their dtypes), then the backward
+        for i in range(L):
+            fwd, bwd, holder = fns['layers_res'][i]
+            hpp = fl(n_pad, dims[i - 1]) if (cheb and i >= 2) else fl(n_pad, 1)
+            base = (fl(n_pad, dims[i]), hpp, a_sd) + graph
+            outs = jax.eval_shape(fwd, *base)                     # traces fwd -> holder['treedef']
+            res_sds = tuple(jax.ShapeDtypeStruct(o.shape, o.dtype) for o in outs[2:])
+            res_counts.append(len(res_sds))
+
+            def fwd_cast(*a, _f=fwd):
+                o = _f(*a)
+                return (o[0].astype(fdt), o[1].astype(fdt)) + tuple(o[2:])
+            jobs.append((f'layer{i}_fwdres', fwd_cast, base, False))
+            jobs.append((f'layer{i}_bwdres', bwd, res_sds + (fl(n_pad, dims[i + 1]), fl(n_pad, dims[i]), a_sd, rv_sd),
+                         True))
+    stem = f'racev2_staged_N{n_pad}_E{e_pad}' + (f'_K{k_pad}' if k_pad else '')
     cc_all = set()
-    for name, f, sds in jobs:
-        fj = jax.jit(cast(f), keep_unused=True)          # the C++ runtime passes every argument
+    for job in jobs:
+        name, f, sds = job[:3]
+        do_cast = job[3] if len(job) > 3 else True
+        fj = jax.jit(cast(f) if do_cast else f, keep_unused=True)          # the C++ runtime passes every argument
         with jax.default_matmul_precision(matmul_precision):
             txt = fj.lower(*sds).as_text()
         cc = sorted({l.split('custom_call @')[1].split('(')[0] for l in txt.splitlines() if 'custom_call @' in l})
@@ -495,8 +569,8 @@ def export_staged(model, cutoff, n_pad, e_pad, fdt, out, matmul_precision):
                                     disabled_checks=[jax.export.DisabledSafetyCheck.custom_call(t) for t in cc])(*sds)
         (out / f'{stem}_{name}.mlirbc').write_bytes(exp.mlir_module_serialized)
     print(f'exported {stem}: {len(jobs)} stage functions, dims {dims}, dim_a {da}, chebyshev {cheb}', flush=True)
-    return {'n_pad': n_pad, 'e_pad': e_pad, 'stem': stem, 'dims': dims, 'dim_a': da, 'cheb': cheb,
-            'custom_calls': sorted(cc_all)}
+    return {'n_pad': n_pad, 'e_pad': e_pad, 'k_pad': k_pad or n_pad, 'stem': stem, 'dims': dims, 'dim_a': da,
+            'cheb': cheb, 'custom_calls': sorted(cc_all), 'res_counts': res_counts}
 
 
 if __name__ == '__main__':

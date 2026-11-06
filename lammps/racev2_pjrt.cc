@@ -95,7 +95,13 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
     else if (key == "staged_dim_a") ls >> st_dim_a_;
     else if (key == "staged_cheb") { int c; ls >> c; st_cheb_ = c != 0; }
     else if (key == "staged_signature") ls >> st_sig;
-    else if (key == "staged_bucket") { StagedBucket b; ls >> b.n_pad >> b.e_pad >> b.stem; staged_.push_back(b); }
+    else if (key == "staged_res_counts") { int c; while (ls >> c) st_res_counts_.push_back(c); }
+    else if (key == "staged_bucket") {
+      StagedBucket b;
+      ls >> b.n_pad >> b.e_pad >> b.stem;
+      if (!(ls >> b.k_pad)) b.k_pad = b.n_pad;
+      staged_.push_back(b);
+    }
   }
   if (!staged_.empty() && st_sig != 2)
     throw std::runtime_error("racev2: " + dir_ + " has staged functions of an older signature; re-export it");
@@ -104,9 +110,17 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
   for (auto& b : staged_) {
     b.layer.assign(n_layers_, nullptr);
     b.layer_vjp.assign(n_layers_, nullptr);
+    b.layer_fwdres.assign(n_layers_, nullptr);
+    b.layer_bwdres.assign(n_layers_, nullptr);
+  }
+  {
+    const char* rs = std::getenv("RACEV2_STAGED_RESIDUALS");
+    st_res_ = (int) st_res_counts_.size() == n_layers_ && !(rs && rs[0] == '0');
   }
   std::sort(staged_.begin(), staged_.end(), [](const StagedBucket& a, const StagedBucket& b) {
-    return a.n_pad < b.n_pad || (a.n_pad == b.n_pad && a.e_pad < b.e_pad);
+    if (a.n_pad != b.n_pad) return a.n_pad < b.n_pad;
+    if (a.k_pad != b.k_pad) return a.k_pad < b.k_pad;
+    return a.e_pad < b.e_pad;
   });
   if (signature != 7)
     throw std::runtime_error("racev2: " + dir_ + " was exported with an older function signature (no n_local); "
@@ -189,6 +203,8 @@ Model::~Model() {
     destroy_exe(b.prelude_vjp);
     for (auto* e : b.layer) destroy_exe(e);
     for (auto* e : b.layer_vjp) destroy_exe(e);
+    for (auto* e : b.layer_fwdres) destroy_exe(e);
+    for (auto* e : b.layer_bwdres) destroy_exe(e);
   }
   for (auto& b : buckets_) {
     if (b.exe) {
@@ -530,6 +546,9 @@ std::vector<PJRT_Buffer*> Model::run(PJRT_LoadedExecutable* exe, const std::vect
 void Model::staged_release() {
   for (auto* b : st_graph_) destroy_buffer(api_, b);
   for (auto* b : st_hs_) destroy_buffer(api_, b);
+  for (auto& v : st_resbuf_)
+    for (auto* b : v) destroy_buffer(api_, b);
+  st_resbuf_.clear();
   destroy_buffer(api_, st_a_);
   destroy_buffer(api_, st_cta_);
   destroy_buffer(api_, st_ctrv_);
@@ -548,10 +567,11 @@ void Model::staged_begin(int n, int e, int n_local, const int* species, const in
   if (staged_.empty()) throw std::runtime_error("racev2: " + dir_ + " has no staged (halo exchange) functions; "
                                                 "re-export with --staged-buckets");
   for (auto& b : staged_)
-    if (n < b.n_pad && e <= b.e_pad) { sb_ = &b; break; }
+    if (n < b.n_pad && e <= b.e_pad && n_local <= b.k_pad) { sb_ = &b; break; }
   if (!sb_) {
     std::ostringstream ss;
-    ss << "racev2: no staged bucket fits " << n << " atoms / " << e << " edges (largest " << staged_.back().n_pad
+    ss << "racev2: no staged bucket fits " << n << " atoms (" << n_local << " owned) / " << e << " edges (largest "
+       << staged_.back().n_pad
        << " / " << staged_.back().e_pad << "); export a larger --staged-buckets entry";
     throw std::runtime_error(ss.str());
   }
@@ -569,17 +589,25 @@ void Model::staged_begin(int n, int e, int n_local, const int* species, const in
                upload(&l32, PJRT_Buffer_Type_S32, {})};
   st_dummy_ = zeros(np, 1);                 // cached, not released per evaluation
   st_hs_.assign(n_layers_ + 1, nullptr);
+  st_resbuf_.assign(n_layers_, {});
   st_e_ = e;
   const std::string base = sb_->stem;
   if (!sb_->prelude) {
     sb_->prelude = compile_file(base + "_prelude.mlirbc");
     sb_->prelude_vjp = compile_file(base + "_prelude_vjp.mlirbc");
     for (int i = 0; i < n_layers_; ++i) {
-      sb_->layer[i] = compile_file(base + "_layer" + std::to_string(i) + ".mlirbc");
-      sb_->layer_vjp[i] = compile_file(base + "_layer" + std::to_string(i) + "_vjp.mlirbc");
+      const std::string li = base + "_layer" + std::to_string(i);
+      if (st_res_) {
+        sb_->layer_fwdres[i] = compile_file(li + "_fwdres.mlirbc");
+        sb_->layer_bwdres[i] = compile_file(li + "_bwdres.mlirbc");
+      } else {
+        sb_->layer[i] = compile_file(li + ".mlirbc");
+        sb_->layer_vjp[i] = compile_file(li + "_vjp.mlirbc");
+      }
     }
-    if (verbose_) std::fprintf(stderr, "racev2: compiled staged bucket n_pad %d e_pad %d (%d functions) for %d nodes "
-                               "(%d owned) / %d edges\n", np, ep, 2 + 2 * n_layers_, n, n_local, e);
+    if (verbose_) std::fprintf(stderr, "racev2: compiled staged bucket n_pad %d e_pad %d k_pad %d (%d functions%s) for "
+                               "%d nodes (%d owned) / %d edges\n", np, ep, sb_->k_pad, 2 + 2 * n_layers_,
+                               st_res_ ? ", saved residuals" : "", n, n_local, e);
   }
 }
 
@@ -603,7 +631,8 @@ double Model::staged_layer(int i, const double* h_prev, std::vector<double>& h_n
   PJRT_Buffer* hpp = (st_cheb_ && i >= 2) ? st_hs_[i - 1] : st_dummy_;
   std::vector<PJRT_Buffer*> args = {st_hs_[i], hpp, st_a_};
   args.insert(args.end(), st_graph_.begin(), st_graph_.end());
-  auto outs = run(sb_->layer[i], args, 2);
+  auto outs = st_res_ ? run(sb_->layer_fwdres[i], args, 2 + st_res_counts_[i]) : run(sb_->layer[i], args, 2);
+  if (st_res_) st_resbuf_[i].assign(outs.begin() + 2, outs.end());   // released after the layer's backward
   h_new.resize(static_cast<size_t>(np) * st_dims_[i + 1]);
   download_f(outs[0], h_new.data(), h_new.size());
   double e = 0.0;
@@ -621,11 +650,20 @@ void Model::staged_layer_vjp(int i, const double* ct_h_new, std::vector<double>&
   PJRT_Buffer* add = st_ctadd_ ? st_ctadd_ : zeros(np, st_dims_[i]);
   PJRT_Buffer* cta = st_cta_ ? st_cta_ : zeros(np, st_dim_a_);
   PJRT_Buffer* ctrv = st_ctrv_ ? st_ctrv_ : zeros(ep, 3);
-  std::vector<PJRT_Buffer*> args = {st_hs_[i], hpp, st_a_};
-  args.insert(args.end(), st_graph_.begin(), st_graph_.end());
+  std::vector<PJRT_Buffer*> args;
+  if (st_res_) {
+    args = st_resbuf_[i];
+  } else {
+    args = {st_hs_[i], hpp, st_a_};
+    args.insert(args.end(), st_graph_.begin(), st_graph_.end());
+  }
   args.insert(args.end(), {ct, add, cta, ctrv});
-  auto outs = run(sb_->layer_vjp[i], args, 4);
+  auto outs = run(st_res_ ? sb_->layer_bwdres[i] : sb_->layer_vjp[i], args, 4);
   destroy_buffer(api_, ct);
+  if (st_res_) {
+    for (auto* b : st_resbuf_[i]) destroy_buffer(api_, b);
+    st_resbuf_[i].clear();
+  }
   destroy_buffer(api_, st_ctadd_);
   destroy_buffer(api_, st_cta_);
   destroy_buffer(api_, st_ctrv_);

@@ -173,6 +173,39 @@ def cue_symmetric_contraction(
 # is linear in those weights, so these arrays are the exact design features of a last-layer Bayesian regression.
 READOUT_TAP = None
 
+# When an int K, every interaction layer keeps only the first K node rows after the edge aggregation (the node-wise
+# part of the layer -- x product, linear maps, residual, stratum readout -- is evaluated for those rows only, and
+# the layer returns K rows).  Used by the LAMMPS halo export (owned atoms first, edges only for owned receivers:
+# the ghost rows of a layer output are overwritten by communication anyway).  Read at trace time; default off.
+NODE_LIMIT = None
+
+
+class node_limit:
+    """Context manager: ``with node_limit(K): ...`` sets NODE_LIMIT while tracing a staged layer function."""
+
+    def __init__(self, k):
+        self.k = k
+
+    def __enter__(self):
+        global NODE_LIMIT
+        self.prev, NODE_LIMIT = NODE_LIMIT, self.k
+        return self
+
+    def __exit__(self, *exc):
+        global NODE_LIMIT
+        NODE_LIMIT = self.prev
+        return False
+
+
+def _rows(x, k):
+    """First k rows of an IrrepsArray (dense) or array; None stays None."""
+    if x is None or k is None:
+        return x
+    if isinstance(x, e3nn.IrrepsArray):
+        x = _dense(x)
+        return e3nn.IrrepsArray(x.irreps, x.array[:k])
+    return x[:k]
+
 
 def _jackson_gain(n: int, N: int) -> float:
     """Jackson kernel g_n for N moments (n = 0..N-1), KPM damping (Weisse et al. RMP 78, 275, eq. 71)."""
@@ -832,6 +865,11 @@ class RACEConvolution(nnx.Module):
         the increment that enters the residual stream (0 = stratum dropped)."""
         messages_agg = self.aggregate(features, sh, radial_basis, senders, receivers, edge_scale,
                                       species_pair=(species[receivers], species[senders]))
+        if NODE_LIMIT is not None:
+            # node-wise part for the first NODE_LIMIT rows only (receivers must all be < NODE_LIMIT)
+            k = NODE_LIMIT
+            messages_agg, features, species = _rows(messages_agg, k), _rows(features, k), species[:k]
+            prev_features, drop_scale = _rows(prev_features, k), _rows(drop_scale, k)
         if not self.x_equivariant:
             # x_feats is 1x0e: the tensor product with it is a plain scaling
             if self.tp_backend == "cue":
@@ -1870,27 +1908,34 @@ class RACE(nnx.Module):
         x_readout = (self.x_readouts[i] if self.x_readout_mode in ("mlp", "linear")
                      else (self.x_readouts[0] if (self.x_readout_mode == "layer0" and i == 0) else None))
         f_readout = self.f_readouts[i] if self.use_f_readout else None
+        K = NODE_LIMIT                       # LAMMPS halo export: node-wise work on the first K rows only
+        sp_k = data.nodes["species"] if K is None else data.nodes["species"][:K]
+        if K is not None and (dens_force is not None or self.bond_order is not None):
+            raise NotImplementedError("NODE_LIMIT does not support dens_force / bond_order")
         if self.x_mode == "node_scalar":
             # Receiving node's current scalar (0e) features -> 1x0e
             x_feats = self.x_projs[i](
-                separated_layer_norm(features).filter(keep="0e")
+                separated_layer_norm(_rows(features, K)).filter(keep="0e")
             )
         elif self.x_mode == "node_irreps":
             # Receiving node's current features -> hidden irreps (equivariant x_i)
-            x_feats = self.x_projs[i](separated_layer_norm(features))
+            x_feats = self.x_projs[i](separated_layer_norm(_rows(features, K)))
         elif self.x_mode == "basis":
             if self.x_basis_layers is None or i in self.x_basis_layers:
-                x_feats = _dense(self.x_projs[i](atomic_basis))
+                x_feats = _dense(self.x_projs[i](_rows(atomic_basis, K)))
                 if self.x_norm == "rms":
                     x_feats = _rms_normalize(x_feats)
                 elif self.x_norm == "hill":
                     x_feats = _hill_normalize(
-                        x_feats, self.x_hill[...][min(i, 1) if self.tie_operator else i], species)
+                        x_feats, self.x_hill[...][min(i, 1) if self.tie_operator else i],
+                        species if K is None else species[:K])
                 elif self.x_norm == "spectral":
                     x_feats = _spectral_normalize(self.x_projs[i], x_feats)
             else:
-                x_feats = x_species          # per-species x (scalar-only), as in v7_ab
-        f_energy = (f_readout(data.nodes["species"], features) if f_readout is not None else None)
+                x_feats = _rows(x_species, K)          # per-species x (scalar-only), as in v7_ab
+        else:
+            x_feats = _rows(x_feats, K)
+        f_energy = (f_readout(sp_k, _rows(features, K)) if f_readout is not None else None)
         edge_scale = None
         if self.layer_cutoff is not None and self.layer_cutoff[i] < self.cutoff - 1e-6:
             edge_scale = polynomial_cutoff(
@@ -1941,7 +1986,7 @@ class RACE(nnx.Module):
         if self.bond_order is not None and self.bond_order_shape:
             q = _dense(features).filter(keep="0e").array
             bo_q.append(q * jax.lax.rsqrt(jnp.mean(q * q, axis=-1, keepdims=True) + 1e-6))
-        x_energy = (x_readout(data.nodes["species"], x_feats) if x_readout is not None else None)
+        x_energy = (x_readout(sp_k, x_feats) if x_readout is not None else None)
         if self.stratum_gain == "uniform":
             gain = 1.0
         elif self.stratum_gain == "jackson":

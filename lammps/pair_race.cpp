@@ -176,7 +176,8 @@ void PairRACE::init_style()
   if (halo_mode && !model->has_staged())
     error->all(FLERR, "pair_style race mode halo: the export has no staged functions (export with --staged-buckets)");
   if (comm->me == 0)
-    utils::logmesg(lmp, "pair_style race: mode {}\n", halo_mode ? "halo" : ghost_mode ? "ghost" : "owner");
+    utils::logmesg(lmp, "pair_style race: mode {}{}\n", halo_mode ? "halo" : ghost_mode ? "ghost" : "owner",
+                   halo_mode ? (model->staged_residuals() ? " (saved residuals)" : " (recompute in backward)") : "");
   comm_forward = comm_reverse = 0;
   if (halo_mode) {
     for (int d : model->staged_dims()) comm_forward = std::max(comm_forward, d);

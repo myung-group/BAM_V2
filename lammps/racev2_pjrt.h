@@ -31,10 +31,11 @@ struct Bucket {
 
 // Per-layer functions of one bucket for the halo-exchange mode (export_lammps.py --staged-buckets).
 struct StagedBucket {
-  int n_pad = 0, e_pad = 0;
+  int n_pad = 0, e_pad = 0, k_pad = 0;   // k_pad: owned-row bucket (node-wise work on k_pad rows), = n_pad if absent
   std::string stem;
   PJRT_LoadedExecutable *prelude = nullptr, *prelude_vjp = nullptr;
   std::vector<PJRT_LoadedExecutable*> layer, layer_vjp;   // compiled on first use
+  std::vector<PJRT_LoadedExecutable*> layer_fwdres, layer_bwdres;   // saved-residual variant
 };
 
 class Model {
@@ -65,6 +66,10 @@ class Model {
   const std::vector<int>& staged_dims() const { return st_dims_; }
   int staged_dim_a() const { return st_dim_a_; }
   bool staged_chebyshev() const { return st_cheb_; }
+  // saved-residual mode: the forward keeps the VJP residuals of every layer on the device and the backward uses them
+  // (no recomputation; more memory).  On when the export has them (--staged-residuals) unless
+  // RACEV2_STAGED_RESIDUALS=0.
+  bool staged_residuals() const { return st_res_; }
   void staged_begin(int n, int e, int n_local, const int* species, const int* receivers, const int* senders,
                     const double* rvec);
   int staged_n_pad() const;
@@ -123,6 +128,9 @@ class Model {
   PJRT_Buffer *st_a_ = nullptr, *st_dummy_ = nullptr;
   PJRT_Buffer *st_cta_ = nullptr, *st_ctrv_ = nullptr, *st_ctadd_ = nullptr;   // device accumulators
   std::vector<std::pair<std::pair<int64_t, int64_t>, PJRT_Buffer*>> zeros_;   // cached zero arrays (immutable)
+  bool st_res_ = false;
+  std::vector<int> st_res_counts_;
+  std::vector<std::vector<PJRT_Buffer*>> st_resbuf_;
   PJRT_Buffer* zeros(int64_t rows, int64_t cols);
   bool timing_ = false;
 };

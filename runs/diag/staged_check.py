@@ -78,6 +78,24 @@ def main():
     Fm = np.zeros((n, 3)); np.add.at(Fm, ins[1][:int(ins[5])], g_m); np.add.at(Fm, ins[2][:int(ins[5])], -g_m)
     print(f"staged halo vs monolithic: E {float(e_st):.10f} vs {float(e_m):.10f} |dE| {abs(float(e_st) - float(e_m)):.2e} | "
           f"max |dF| {np.abs(F - Fm).max():.2e} eV/A (max |F| {np.abs(Fm).max():.3f})", flush=True)
+    # 4. owned-rows-only variant (k_pad >= owned atoms): same energy and forces
+    k_pad = int(2 ** np.ceil(np.log2(n + 1)))
+    fk = make_stage_fns(model, cutoff, n_pad, e_pad, k_pad=k_pad)
+    fk['prelude'] = jax.jit(fk['prelude']); fk['prelude_vjp'] = jax.jit(fk['prelude_vjp'])
+    fk['layers'] = [jax.jit(f) for f in fk['layers']]; fk['layers_vjp'] = [jax.jit(f) for f in fk['layers_vjp']]
+    e_k, g_k = staged_energy_forces(fk, jnp.asarray(sp), jnp.asarray(rc), jnp.asarray(sd), jnp.asarray(rv),
+                                    jnp.int32(n_real), jnp.int32(ne), jnp.int32(n), np.array(ghosts))
+    g_k = np.asarray(g_k)[:ne]
+    print(f"staged owned-rows-only (k_pad {k_pad} of n_pad {n_pad}) vs full rows: |dE| {abs(float(e_k) - float(e_st)):.2e} | "
+          f"max |d dE/dr| {np.abs(g_k - g_st).max():.2e}", flush=True)
+    # 3. saved-residual variant (forward returns the VJP residuals, backward consumes them)
+    fns['layers_res'] = [(jax.jit(fw), jax.jit(bw), h) for fw, bw, h in fns['layers_res']]
+    e_r, g_r = staged_energy_forces(fns, jnp.asarray(sp), jnp.asarray(rc), jnp.asarray(sd), jnp.asarray(rv),
+                                    jnp.int32(n_real), jnp.int32(ne), jnp.int32(n), np.array(ghosts), residuals=True)
+    g_r = np.asarray(g_r)[:ne]
+    print(f"staged residual mode vs recompute mode: |dE| {abs(float(e_r) - float(e_st)):.2e} | "
+          f"max |d dE/dr| {np.abs(g_r - g_st).max():.2e} | residual arrays per layer "
+          f"{[h['n_res'] for _, _, h in fns['layers_res']]}", flush=True)
 
 
 if __name__ == '__main__':

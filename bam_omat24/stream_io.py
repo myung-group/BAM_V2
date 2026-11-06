@@ -177,8 +177,9 @@ def _scalar(v):
     return float(v)
 
 
-def decode_row(raw: bytes) -> dict:
-    d = decode_value(raw)
+def decode_row(raw: bytes = None, d: dict = None) -> dict:
+    """raw: the LMDB value (zlib JSON); or d: the already decoded row dict."""
+    d = decode_value(raw) if d is None else d
     if not isinstance(d, dict):
         raise ValueError(f"row is a {type(d).__name__}, not a dict")
     st = _arr(d.get("stress"), np.float64)

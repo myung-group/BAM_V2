@@ -34,9 +34,16 @@ def main():
     ap.add_argument('--batch', type=int, default=16)
     ap.add_argument('--warmup', type=int, default=None, help='lr_warmup_epochs (default of train_3bpa: 10)')
     ap.add_argument('--optimizer', default=None, help='optimizer override (e.g. amsgrad; default: the recipe SOAP)')
+    ap.add_argument('--model', default='race', choices=['race', 'racelr'],
+                    help='racelr: RACE_LR with the Qeq stratum (Ewald) and chi0 from Pauling; the OAM data are '
+                         'neutral, so no charge / spin input')
+    ap.add_argument('--ewald', type=float, nargs=3, default=None, metavar=('ALPHA', 'N_REAL', 'N_RECIP'),
+                    help='Ewald settings for --model racelr (required; choose with runs/diag/check_ewald.py)')
     ap.add_argument('--cutoff', type=float, default=5.0,
                     help='!= 5: avg_n_neighbors recomputed on 500 training structures at this cutoff')
     args = ap.parse_args()
+    if args.model == 'racelr' and args.ewald is None:
+        raise SystemExit('--model racelr needs --ewald ALPHA N_REAL N_RECIP (runs/diag/check_ewald.py)')
     base = json.load(open(BASE))
     for ds in args.datasets:
         meta = json.load(open(args.subset_dir / f'{ds}_meta.json'))
@@ -48,7 +55,7 @@ def main():
             avg_n = sum(len(neighbor_list('i', a, args.cutoff)) / len(a) for a in frames) / len(frames)
         for var in args.variants:
             for seed in args.seeds:
-                name = f'{args.tag}_{ds}_{var}_s{seed}'
+                name = f'{args.tag}_{ds}_{var}{"_lr" if args.model == "racelr" else ""}_s{seed}'
                 c = {k: v for k, v in base.items() if not k.startswith('_') and k not in ('valid_frac', 'note')}
                 c.update({
                     'train_path': meta['train']['path'], 'valid_path': meta['valid']['path'],
@@ -81,6 +88,12 @@ def main():
                 if args.optimizer is not None:
                     c['optimizer'] = args.optimizer
                     c.pop('soap_species_adam', None)
+                if args.model == 'racelr':
+                    c['model'] = 'RACE_LR'
+                    c['long_range'] = {'chi_init': 'pauling', 'chi_init_missing': 'mean',
+                                       'ewald_alpha': args.ewald[0], 'ewald_n_real': int(args.ewald[1]),
+                                       'ewald_n_recip': int(args.ewald[2])}
+                    c['note'] += '; RACE_LR (Qeq + Ewald, chi0 Pauling)'
                 if args.x64:
                     c['x64'] = True
                     c['note'] = c['note'].replace('float32', 'float64')

@@ -176,6 +176,12 @@ sbatch). Every one of those jobs was written but not submitted.
    - Rule: if AMSGrad (or float32 AMSGrad) matches SOAP on validation within the seed spread, use it for OAM
      pretraining (speed). Keep SOAP for the small-data benchmarks and state the regime dependence in the paper.
    - Both lr = 0.01 (not tuned per optimizer); state this.
+   - **V1 on 100k** (user request 2026-11-06): the RACE V1 recipe (all RACEv2 additions removed, AMSGrad, float64)
+     on the same 100k OMat24 data, as the 10k comparison:
+     `sbatch -J v1100k -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 08:00:00 runs/diag/size_screen.sh 30 v1100k L5x128:v1`
+     (V1 was 2× faster per epoch at 10k, so it should take about 4 h). Compare it with sz100k L5x128 (SOAP) and
+     L5x128amsgrad: the AMSGrad control separates the architecture effect from the optimizer effect, which the 10k
+     comparison mixed.
 5. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.
 6. **Paper draft**: fill the TODO/CHECK markers of `docs/paper/RACEv2_draft.md`; mechanism tests of draft §5.4

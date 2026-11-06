@@ -8,6 +8,7 @@
 #        ... size_screen.sh 30 sz100k L5x64 L5x128 L5x192 L4x128    (screening)
 #        ... size_screen.sh 30 sz100k L6x128 L5x128:amsgrad           (deeper model; optimizer control, not a size candidate)
 #        ... size_screen.sh 30 opt100k L5x128:adam L5x128:amsgrad:f32    (optimizer / precision screening; SEED=43 for repeats)
+#        ... size_screen.sh 30 v1100k L5x128:v1                         (RACE V1 recipe on the same 100k data, float64)
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t589a02/BAM_V2
@@ -26,16 +27,17 @@ fi
 RUNS=()
 SEED=${SEED:-42}
 for tok in "${SIZES[@]}"; do
-  # L<layers>x<hidden>[:<optimizer>][:f32]   optimizer: soap (default, species tables by Adam) | amsgrad | adam
+  # L<layers>x<hidden>[:<optimizer>][:f32]   optimizer: soap (default, species tables by Adam) | amsgrad | adam | v1
   IFS=: read -r s opt prec <<< "$tok"
   [ "$opt" = f32 ] && { prec=f32; opt=; }
-  NAME=$s; OPT=(--species-adam); X64=(--x64)
-  if [ -n "$opt" ] && [ "$opt" != soap ]; then OPT=(--optimizer $opt); NAME=${NAME}${opt}; fi
+  NAME=$s; OPT=(--species-adam); X64=(--x64); VAR=v2
+  if [ "$opt" = v1 ]; then OPT=(); VAR=v1                 # RACE V1 recipe (all RACEv2 additions removed, AMSGrad)
+  elif [ -n "$opt" ] && [ "$opt" != soap ]; then OPT=(--optimizer $opt); NAME=${NAME}${opt}; fi
   if [ "$prec" = f32 ]; then X64=(); NAME=${NAME}f32; fi
   L=${s%x*}; L=${L#L}; H=${s#*x}
-  python -I runs/diag/make_oam_configs.py $OUT --tag ${PREFIX}_${NAME} --datasets omat24 --variants v2 "${X64[@]}" "${OPT[@]}" \
+  python -I runs/diag/make_oam_configs.py $OUT --tag ${PREFIX}_${NAME} --datasets omat24 --variants $VAR "${X64[@]}" "${OPT[@]}" \
     --layers $L --hidden $H --warmup 2 --epochs $EPOCHS --seeds $SEED || exit 1
-  RUNS+=(${PREFIX}_${NAME}_omat24_v2_s${SEED})
+  RUNS+=(${PREFIX}_${NAME}_omat24_${VAR}_s${SEED})
 done
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export JAX_COMPILATION_CACHE_DIR=/scratch/t589a02/jax_cache_racev2

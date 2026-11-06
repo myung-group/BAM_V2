@@ -1,0 +1,14 @@
+#!/bin/bash
+# SOAP-curvature Laplace on the 3BPA final recipe (2026-11-06; untested skeleton, see docs/SOAP_Laplace.md).
+# usage: sbatch -J soaplap -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 02:00:00 runs/diag/soap_laplace.sh
+#SBATCH -o runs/slurm/%x_%j.out
+ulimit -c 0
+cd /scratch/t589a02/BAM_V2
+module load miniconda3/py314_26.7.1-1
+source $(conda info --base)/etc/profile.d/conda.sh
+conda activate bam_cue
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
+python -m bam_omat24.soap_laplace input/input_3bpa_omat24_abl3_full_s42_cue.json \
+  --ckpt runs/abl3_full_s42_cue/ckpt_abl3_full_s42_cue.gauge.pkl --out runs/bayes/soap_laplace_abl3_full_s42 \
+  --samples 8 ${MAX_TEST:+--max-test $MAX_TEST} 2>&1 | grep -a -v -E "Delay kernel|it/s\]"

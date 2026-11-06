@@ -122,44 +122,47 @@ Epoch times measured: 834 s (L4x128), 1010 s (L5x128), 1196 s (L6x128), 1419 s (
   - weak scaling 1→8 GPUs on 2 nodes at 88 % (42,496 atoms);
   - halo is still 3.3× slower than owner on one GPU.
 
-## 7. Next steps (in the order the user agreed)
+## 7. Work done without compute (2026-11-06 afternoon, allocation exhausted)
 
-1. **Remaining ablations** (pre-registered, 3 seeds, 500 epochs): `noshell`, `nouff`, `amsgrad`. Configs:
-   `input/input_3bpa_omat24_abl3_{noshell,nouff,amsgrad}_s4{2,3,4}_cue.json`. Also add a plain Adam run and
-   AMSGrad/Adam at lr 5e-3 (1 seed) as a sensitivity check, labelled "not pre-registered". Launcher:
-   `runs/diag/train_runs.sh <run> ...` (one GPU per run). Add the results to the README ablation table and to table 6b
-   of the methods PDF.
-2. **Bayesian last layer** (the user asked for this, then step 3): `runs/diag/bayes_lastlayer.sh`. Run a quick check
-   first with `MAX_TEST=200`.
-   - Method: the readout weights of every stratum (5 × 64) plus a shared bias give an exactly linear model for E
-     and F; the posterior is closed form, with hyperparameters from evidence maximisation on the training set.
-   - The script first checks linearity (features × trained weights must reproduce the network). Then it reports
-     calibration (z RMS, NLL, coverage, Spearman |err|–σ) against the 3-seed deep ensemble on valid, 300/600/1200 K
-     and the dihedral scan.
-   - Possible issues: `jax.jacfwd` through the cue kernels (if it fails, use `BACKEND=e3nn`), and memory on the
-     dihedral set (energies only).
-3. **SOAP-curvature Laplace**: use the Kronecker factors that SOAP keeps (`soap_grouped.py` state) as a KFAC-Laplace
-   posterior over all weights. This is a research idea: the GGN under the Huber loss and the prior precision need to
-   be worked out first.
-4. **Pickle-free data loading** (code done, not yet run on a GPU node):
-   - `runs/diag/graph_loading_check.sh` runs `tests/test_graph_loading.py` and writes the size tables of the 100k
-     subset.
-   - New configs can then use `"graph_cache": false, "graph_workers": 0`.
-   - For OMol25 / OC25 / full OAM, the BAM-GAMP shard pipeline (offline packed shards, a few buckets, streaming) has
-     to be wired into the RACEv2 training loop. This is not started.
-5. **LAMMPS halo speed-ups** (the user said "we can improve the JAX path"):
-   - compute layer outputs for the owned rows only (separate n_local bucket);
-   - keep the forward residuals on the device so the VJPs do not recompute the layers;
-   - device-resident or GPU-aware MPI exchange instead of full host round trips;
-   - finer, independent node and edge buckets;
-   - XLA command buffers.
-   - Validate with `runs/diag/lammps_multi.py --modes halo` and `runs/diag/lammps_weak.py`.
-   - After multi-GPU is final, the user wants the C++ part moved to a new private repo "LAMMPS-JAX" (the user
-     creates it), with only the export wrapper and examples kept in BAM_V2.
-6. Later: full OAM training (OMat24 pretraining → MPtrj + sAlex fine-tuning) at the chosen size; water rerun with
-   repulsion; MD22; MD observables for 3BPA and water; an inference-speed table.
+The user asked for this list ("4번 빼고 순서대로", 2026-11-06) and asked to record it so that Claude Code can continue.
+Each item: what exists, whether it was tested, and the **validation job to run first** (ask the user before every
+sbatch). Every one of those jobs was written but not submitted.
 
-## 8. Pitfalls already paid for
+| # | Item | Files | Tested? | Validation job (not yet run) |
+|---|---|---|---|---|
+| 1a | Paper draft v0 (methods with equations, results, leave-one-out analysis, limitations, reporting statement) | `docs/paper/RACEv2_draft.md` | n/a (text; ablation percentages recomputed by hand) | — |
+| 1b | Audit cross-check of README/PDF against the 2026-11-03 audit; corrections applied (3BPA table + notes, rMD17 test sets, water final recipe wFu1/wFu2, labels, disclosure paragraphs, raw energies, ablation bold, ddof=1 std) | `docs/paper/audit_crosscheck.md`, `README.md`, `docs/methods_pdf_data.json` (PDF rebuilt) | numbers recomputed from the summary JSONs (scratch scripts in the audit report) | — |
+| 2a | LAMMPS halo: saved-residual VJPs (`--staged-residuals`, runtime `RACEV2_STAGED_RESIDUALS`) and owned-row buckets (`--staged-buckets n:e:k`, `race_nnx.NODE_LIMIT`) | `bam_omat24/export_lammps.py`, `bam_omat24/race_nnx.py`, `lammps/racev2_pjrt.*`, `lammps/pair_race.cpp` | compiles; LAMMPS rebuilt; **no run** | `runs/diag/lammps_halo_res.sh`: Python staged check (residual vs recompute, owned rows vs full), then LiPS 664 / 5312 atoms on 4 ranks with residuals on/off |
+| 2b | LAMMPS-JAX repository | `/home01/t589a02/prog/LAMMPS-JAX` (clone of the private github.com/myung-group/LAMMPS-JAX; local history merged, 3 commits ahead, **user pushes**). `/scratch/t589a02/LAMMPS-JAX` = temporary local copy, delete after the push | runtime compiles in the new layout | build LAMMPS from it once (`tools/build_lammps.sh`) |
+| 2c | Streaming (pickle-free) data pipeline: JAX-free readers (extxyz offsets, aselmdb), `graph_arrays` (= `preprocess_graph`), size pass CLI, per-epoch planner (hosts, blocks, packing, lock-step), single-host `StreamLoader` | `bam_omat24/stream_io.py`, `stream_plan.py`, `stream_data.py`, `tests/test_stream_io.py`, design `docs/stream_loader_design.md` | JAX-free tests pass on the login node (4/4); graph and loader equivalence tests skip outside a job | `runs/diag/stream_check.sh` (all stream + graph-loading tests, size pass of the 100k subset with 64 workers). The aselmdb source needs `pip install lmdb` in `bam_cue` (ask first) |
+| 2c' | Not started: `train_3bpa` integration (`data_format: "stream"`), multi-host stacking, data cursor in checkpoints, evaluation sets | see design §4.8–4.12 | — | — |
+| 2d | SOAP-curvature Laplace: theory (EKFAC structure of the SOAP state) and skeleton | `docs/SOAP_Laplace.md`, `bam_omat24/soap_laplace.py` | **untested** | `runs/diag/soap_laplace.sh` after `runs/diag/bayes_lastlayer.sh` (`MAX_TEST=200` first) |
+| 2e | PyTorch port scope (no torch RACEv2 exists; V1 port is approximate; ~10–15 person-days; recommended LAMMPS path ML-IAP unified + Kokkos) | `docs/torch_port_scope.md` | read-only survey | decision for the user: torch port vs keep the PJRT halo path |
+| 3 | Analysis of finished results | — | — | the 100k size screening was still running (see §6); apply `select_size.py` when it ends |
+
+## 8. Next steps (in the order the user agreed)
+
+1. **When the allocation is back**, run the validation jobs of §7 in this order (one small test job first, as the
+   site policy requires):
+   1. `runs/diag/stream_check.sh` (CPU work only);
+   2. `runs/diag/lammps_halo_res.sh`;
+   3. `runs/diag/bayes_lastlayer.sh` (`MAX_TEST=200`, then full);
+   4. `runs/diag/soap_laplace.sh`.
+2. **Remaining ablations** (pre-registered, 3 seeds, 500 epochs): `noshell`, `nouff`, `amsgrad`. Configs:
+   `input/input_3bpa_omat24_abl3_{noshell,nouff,amsgrad}_s4{2,3,4}_cue.json`.
+   - Add a plain Adam run, and AMSGrad / Adam at lr 5e-3 (1 seed each) as a sensitivity check, labelled "not
+     pre-registered".
+   - Launcher: `runs/diag/train_runs.sh <run> ...` (one GPU per run).
+   - Results go into the README ablation table and table 6b of the methods PDF.
+3. **100k size screening**: apply `select_size.py` (§6). Report the AMSGrad control separately.
+4. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
+   the chosen size.
+5. **Paper draft**: fill the TODO/CHECK markers of `docs/paper/RACEv2_draft.md`; mechanism tests of draft §5.4
+   (radial curvature, stratum magnitudes vs T, layer CKA) when compute is available.
+6. Later: water and MD22 (locality), MD observables for 3BPA and water, an inference-speed table, and the 99k
+   evaluation of the final rMD17 models (audit C3).
+
+## 9. Pitfalls already paid for
 
 - SOAP diverges in float32 on OAM data (30–80 steps) and on 3BPA (epochs 107–337); use float64 or `soap_state_dtype`.
 - The repulsion prior is multiplied by the learned global scale (trained s ≈ 0.25). Never call it parameter-free.

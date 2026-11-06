@@ -7,6 +7,7 @@
 #   e.g. ... size_screen.sh 1 szsmk L5x192 L6x128 L5x128 L4x128     (smoke: 1 epoch, time per epoch + memory)
 #        ... size_screen.sh 30 sz100k L5x64 L5x128 L5x192 L4x128    (screening)
 #        ... size_screen.sh 30 sz100k L6x128 L5x128:amsgrad           (deeper model; optimizer control, not a size candidate)
+#        ... size_screen.sh 30 opt100k L5x128:adam L5x128:amsgrad:f32    (optimizer / precision screening; SEED=43 for repeats)
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t589a02/BAM_V2
@@ -23,13 +24,18 @@ if [ ! -f $OUT/omat24_meta.json ]; then
 fi
 [ -f $OUT/omat24_meta.json ] || { echo "ABORT: subset missing"; exit 1; }
 RUNS=()
+SEED=${SEED:-42}
 for tok in "${SIZES[@]}"; do
-  s=${tok%%:*}; OPT=(--species-adam); NAME=$s                      # L<layers>x<hidden>[:<optimizer>]
-  if [ "$tok" != "$s" ]; then OPT=(--optimizer ${tok#*:}); NAME=${s}${tok#*:}; fi
+  # L<layers>x<hidden>[:<optimizer>][:f32]   optimizer: soap (default, species tables by Adam) | amsgrad | adam
+  IFS=: read -r s opt prec <<< "$tok"
+  [ "$opt" = f32 ] && { prec=f32; opt=; }
+  NAME=$s; OPT=(--species-adam); X64=(--x64)
+  if [ -n "$opt" ] && [ "$opt" != soap ]; then OPT=(--optimizer $opt); NAME=${NAME}${opt}; fi
+  if [ "$prec" = f32 ]; then X64=(); NAME=${NAME}f32; fi
   L=${s%x*}; L=${L#L}; H=${s#*x}
-  python -I runs/diag/make_oam_configs.py $OUT --tag ${PREFIX}_${NAME} --datasets omat24 --variants v2 --x64 "${OPT[@]}" \
-    --layers $L --hidden $H --warmup 2 --epochs $EPOCHS || exit 1
-  RUNS+=(${PREFIX}_${NAME}_omat24_v2_s42)
+  python -I runs/diag/make_oam_configs.py $OUT --tag ${PREFIX}_${NAME} --datasets omat24 --variants v2 "${X64[@]}" "${OPT[@]}" \
+    --layers $L --hidden $H --warmup 2 --epochs $EPOCHS --seeds $SEED || exit 1
+  RUNS+=(${PREFIX}_${NAME}_omat24_v2_s${SEED})
 done
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export JAX_COMPILATION_CACHE_DIR=/scratch/t589a02/jax_cache_racev2

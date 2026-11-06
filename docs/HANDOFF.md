@@ -154,12 +154,33 @@ sbatch). Every one of those jobs was written but not submitted.
      pre-registered".
    - Launcher: `runs/diag/train_runs.sh <run> ...` (one GPU per run).
    - Results go into the README ablation table and table 6b of the methods PDF.
-3. **100k size screening**: apply `select_size.py` (§6). Report the AMSGrad control separately.
-4. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
+3. **100k size screening**: apply `select_size.py` (§6). Report the AMSGrad control separately, judged on
+   **validation only**: final-epoch values, plus the mean of the last 5 epochs and the force MAE as secondary numbers.
+   The validation curves fluctuate by 5–10 % per epoch, and the train loss (raw weights, running mean) is not
+   comparable with validation (EMA weights).
+   - Interim reading at epoch 23 (L5x128, 1 seed): SOAP and AMSGrad tie on validation. Validation loss 0.433 vs
+     0.419 and force MAE 154.8 vs 154.8 meV/Å (epochs 19–23). AMSGrad has the lower train loss (0.187 vs 0.238) and
+     is about 31 % faster per epoch (520 vs 760 s).
+   - On 3BPA (500 epochs) SOAP was clearly better: 1200 K force 49.3 vs AMSGrad 60.1 vs Adam β=0.95 82.8. So the
+     optimizer may be data-regime dependent; report it that way.
+4. **Optimizer / precision screening for OAM pretraining** (agreed with the user 2026-11-06; 1 GPU each, about 4.5 h
+   per run at about 520 s/epoch, 100k OMat24, 30 epochs):
+   ```
+   sbatch -J opt100k -p normal --comment="field=sciai;appl=jax" --gres=gpu:2 -t 08:00:00 runs/diag/size_screen.sh 30 opt100k L5x128:adam L5x128:amsgrad:f32
+   SEED=43 sbatch -J opt100k_s43 -p normal --comment="field=sciai;appl=jax" --gres=gpu:2 -t 10:00:00 --export=ALL,SEED=43 runs/diag/size_screen.sh 30 sz100k L5x128 L5x128:amsgrad
+   ```
+   - Plain Adam on OAM has not been tried.
+   - AMSGrad in float32 has never completed an OAM run: check that it does not diverge (SOAP does), then measure the
+     speed.
+   - The extra seed (43) of SOAP and AMSGrad decides the tie.
+   - Rule: if AMSGrad (or float32 AMSGrad) matches SOAP on validation within the seed spread, use it for OAM
+     pretraining (speed). Keep SOAP for the small-data benchmarks and state the regime dependence in the paper.
+   - Both lr = 0.01 (not tuned per optimizer); state this.
+5. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.
-5. **Paper draft**: fill the TODO/CHECK markers of `docs/paper/RACEv2_draft.md`; mechanism tests of draft §5.4
+6. **Paper draft**: fill the TODO/CHECK markers of `docs/paper/RACEv2_draft.md`; mechanism tests of draft §5.4
    (radial curvature, stratum magnitudes vs T, layer CKA) when compute is available.
-6. Later: water and MD22 (locality), MD observables for 3BPA and water, an inference-speed table, and the 99k
+7. Later: water and MD22 (locality), MD observables for 3BPA and water, an inference-speed table, and the 99k
    evaluation of the final rMD17 models (audit C3).
 
 ## 9. Pitfalls already paid for

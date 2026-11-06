@@ -68,5 +68,8 @@
  "pair_repulsion_switch_width": 0.3,
  "ckpt_last_every": 50,
  "total_charge_key": "charge",
- "note": "local GPU test (limited GPU use): r37_uffw03 recipe with a reduced model (hidden 64, 3 layers, lmax 2), 1000-structure balanced training subset, 200 epochs"
+ "note": "local GPU test (limited GPU use): r37_uffw03 recipe with a reduced model (hidden 64, 3 layers, lmax 2), 1000-structure balanced training subset, 200 epochs",
+ "long_range": {
+  "chi_init": "zero"
+ }
 }

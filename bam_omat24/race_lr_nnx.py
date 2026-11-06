@@ -11,7 +11,10 @@ The total charge Q of each graph comes from data.globals['charge'] (0 if absent;
 info key given by cfg "total_charge_key").  Charges are latent: trained from energies and forces only (no charge
 labels), as in latent-charge / 4G-HDNNP-type models.  Forces and stress follow from autodiff through the linear
 solve.  Config: "model": "RACE_LR", "long_range": {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6,
-"head_hidden": 32, "chi_init": "zero" | "pauling", "chi_init_scale": 3.0, "hard_init": 5.0}.  Optional charge
+"head_hidden": 32, "chi_init": "pauling" (default since 2026-11-07) | "zero", "chi_init_scale": 3.0, "hard_init": 5.0,
+"sr_switch": [r_on, r_off] (switch the Coulomb energy off below r_on, smoothly on by r_off; charges unswitched)}.
+Fragments: nodes['fragment'] + globals['fragment_charges'] (cfg "fragment_key" / "fragment_charges_key") constrain
+the total charge of every fragment of a structure separately.  Optional charge
 loss on reference charges (e.g. Hirshfeld): cfg "charge_label_key" + "charge_weight" (train_3bpa; default off).
 Charge / spin embedding: "charge_spin_embedding": true adds MLP(Q, 2S+1 - 1) (zero-initialised output) to the
 layer-0 scalars; the spin comes from data.globals['spin'] (cfg "total_spin_key", default 1).  "qeq": false switches
@@ -26,12 +29,15 @@ import jax.numpy as jnp
 import jraph
 from flax import nnx
 
-from bam_omat24.long_range import coulomb_direct, ewald_matrix_rows, qeq_solve
+from bam_omat24.long_range import coulomb_direct, ewald_matrix_rows, qeq_solve, short_range_part
 from bam_omat24.race_nnx import RACE, _dense
 
 LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_hidden": 32, "chi_scale": 1.0,
-               "hard_init": 5.0, "chi_init": "zero", "chi_init_scale": 3.0, "chi_init_missing": "error", "qeq": True,
-               "charge_spin_embedding": False, "cs_hidden": 32}
+               "hard_init": 5.0, "chi_init": "pauling", "chi_init_scale": 3.0, "chi_init_missing": "mean", "qeq": True,
+               "charge_spin_embedding": False, "cs_hidden": 32, "sr_switch": None}
+# chi_init default "pauling" since 2026-11-07 (user decision): with chi = 0 a neutral structure has an exactly zero
+# gradient of the Qeq energy with respect to chi, so a neutral-only dataset never develops charges.  Configs written
+# before that date pin "chi_init": "zero".
 
 # Pauling electronegativities (CRC Handbook values as in common tables; noble gases He, Ne, Ar have none).  Used only
 # by "chi_init": "pauling": chi0_Z = chi_init_scale * (chi_P(Z) - mean over the species), in eV.  chi_init_scale = 3 eV
@@ -137,20 +143,45 @@ class RACE_LR(RACE):
             gamma = self._ewald_batch(positions, cell, sigma, node_graph, same, n_graphs)
         else:
             gamma = coulomb_direct(positions, sigma, same)
-        q, e = qeq_solve(chi, hard, sigma, gamma, node_graph, node_mask, Q, n_graphs)
+        # constraint groups: one per graph, or one per (graph, fragment) when the data carry fragments
+        # (nodes['fragment'] in 0..F-1, globals['fragment_charges'] (G, F)): each fragment keeps its own integer charge,
+        # so no fractional charge flows between distant fragments (e.g. protein and ligand); Coulomb still couples them
+        nodes = data.nodes if isinstance(data.nodes, dict) else {}
+        glb = data.globals if isinstance(data.globals, dict) else {}
+        if 'fragment' in nodes and 'fragment_charges' in glb:
+            fq = jnp.asarray(glb['fragment_charges'], dt).reshape(n_graphs, -1)
+            n_frag = fq.shape[1]
+            group = node_graph * n_frag + jnp.clip(jnp.asarray(nodes['fragment'], jnp.int32), 0, n_frag - 1)
+            Qg, n_groups = fq.reshape(-1), n_graphs * n_frag
+        else:
+            group, Qg, n_groups = node_graph, Q, n_graphs
+        gamma_e = None
+        if self.lr['sr_switch'] is not None:
+            r_on, r_off = (float(x) for x in self.lr['sr_switch'])
+            if self.periodic and cell is not None:
+                cells = self._safe_cells(cell, n_graphs)
+                sr = short_range_part(positions, sigma, same, r_on, r_off, cells[node_graph], n_img=1)
+            else:
+                sr = short_range_part(positions, sigma, same, r_on, r_off)
+            gamma_e = gamma - sr
+        q, e = qeq_solve(chi, hard, sigma, gamma, group, node_mask, Qg, n_groups, gamma_energy=gamma_e)
         out = dict(out)
         out['node_energies'] = out['node_energies'] + e.reshape(out['node_energies'].shape).astype(out['node_energies'].dtype)
         out['charges'] = q
         return out
 
+    @staticmethod
+    def _safe_cells(cell, n_graphs):
+        """Padding graphs have a zero cell (inverse infinite): give them a large finite cell.  Their rows are masked
+        anyway, but infinite values in a masked branch still turn gradients into NaN (0 * inf)."""
+        cells = cell.reshape(n_graphs, 3, 3)
+        ok = (jnp.abs(jnp.linalg.det(cells)) > 1e-6)[:, None, None]
+        return jnp.where(ok, cells, 100.0 * jnp.eye(3, dtype=cells.dtype))
+
     def _ewald_batch(self, positions, cell, sigma, node_graph, same, n_graphs):
         """Ewald matrix of a batch of periodic graphs: every row uses the cell of its own graph; pairs of different
         graphs are masked (memory N^2 x images + N x k-vectors; small cells, see the design doc)."""
-        cells = cell.reshape(n_graphs, 3, 3)
-        # padding graphs have a zero cell (inverse infinite): give them a large finite cell. Their rows are masked
-        # anyway, but infinite values in a masked branch still turn gradients into NaN (0 * inf)
-        ok = (jnp.abs(jnp.linalg.det(cells)) > 1e-6)[:, None, None]
-        cells = jnp.where(ok, cells, 100.0 * jnp.eye(3, dtype=cells.dtype))
+        cells = self._safe_cells(cell, n_graphs)
         lr = self.lr
         gamma = ewald_matrix_rows(positions, cells[node_graph], sigma, float(lr['ewald_alpha']),
                                   int(lr['ewald_n_real']), int(lr['ewald_n_recip']))

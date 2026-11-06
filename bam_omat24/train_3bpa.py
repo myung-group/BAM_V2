@@ -117,6 +117,9 @@ Config keys (in addition to the model hyper-parameters, see README):
                        race_lr_nnx.py; options in "long_range": ewald_alpha, ewald_n_real, ewald_n_recip, head_hidden,
                        chi_scale, hard_init) | "Nequip"
     total_charge_key : extxyz info key of the total charge per structure (RACE_LR; default none = neutral)
+    fragment_key     : per-atom integer array of fragment ids (e.g. "is_ligand"); with "fragment_charges_key" (info list
+                       of the fragment charges, default "fragment_charges") and "n_fragments" (default 2), RACE_LR
+                       constrains the total charge of every fragment (no charge flow between fragments; default none)
     total_spin_key   : extxyz info key of the spin multiplicity 2S+1 (RACE_LR charge/spin embedding; default none)
     charge_label_key : extxyz per-atom array of reference charges, e.g. "hirshfeld_charges" (RACE_LR; default none)
     charge_weight    : weight of the charge loss mean_i (q_i - q_ref_i)^2 in e^2 (needs charge_label_key; default 0 =
@@ -192,6 +195,16 @@ DEFAULT_ATOM_ENERGIES = [
     -1484.9814568572233,
     -2041.9816003861047,
 ]
+
+
+def fragments_of(cfg: Dict):
+    """(fragment array key, fragment charges info key, n_fragments) for RACE_LR per-fragment charge constraints, or
+    None.  cfg "fragment_key" (e.g. "is_ligand"), "fragment_charges_key" (default "fragment_charges"),
+    "n_fragments" (default 2)."""
+    fk = cfg.get('fragment_key')
+    if not fk:
+        return None
+    return (fk, cfg.get('fragment_charges_key', 'fragment_charges'), int(cfg.get('n_fragments', 2)))
 
 
 def _get(cfg: Dict, key: str, default: Any = None) -> Any:
@@ -354,7 +367,7 @@ def build_datasets(cfg: Dict, fout):
     # graph_cache false: no pickle cache (neighbour lists recomputed at start, graph_workers processes)
     gl = dict(use_cache=bool(_get(cfg, 'graph_cache', True)), n_workers=_graph_workers(cfg),
               charge_key=_get(cfg, 'total_charge_key', None), charge_label_key=_get(cfg, 'charge_label_key', None),
-              spin_key=_get(cfg, 'total_spin_key', None))
+              spin_key=_get(cfg, 'total_spin_key', None), fragments=fragments_of(cfg))
     all_graphs = load_3bpa_graphs(train_path, atomic_numbers, atom_energies, cutoff,
                                   frames=train_frames, **gl)
     if not bool(_get(cfg, 'periodic', False)) and any('cell' in g.globals for g in all_graphs[:1000]):

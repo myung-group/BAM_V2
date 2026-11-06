@@ -45,6 +45,7 @@ def preprocess_graph(
     charge_key: Optional[str] = None,
     charge_label_key: Optional[str] = None,
     spin_key: Optional[str] = None,
+    fragments: Optional[Sequence] = None,
 ) -> jraph.GraphsTuple:
     """ase.Atoms -> GraphsTuple for a non-periodic molecule.
 
@@ -76,6 +77,26 @@ def preprocess_graph(
         glob["charge"] = np.array([float(atoms.info.get(charge_key, 0.0))], dtype=np.float32)
     if spin_key:       # spin multiplicity 2S+1 of the structure (RACE_LR charge/spin embedding); default 1
         glob["spin"] = np.array([float(atoms.info.get(spin_key, 1.0))], dtype=np.float32)
+    if fragments:      # (fragment array key, fragment charges info key, max fragments): per-fragment Qeq constraints
+        fkey, fqkey, n_frag = fragments[0], fragments[1], int(fragments[2])
+        q_tot = float(atoms.info.get(charge_key, 0.0)) if charge_key else 0.0
+        frag = atoms.arrays.get(fkey)
+        frag = np.zeros(len(atoms), np.int32) if frag is None else np.asarray(frag).astype(np.int32).reshape(-1)
+        if frag.min() < 0 or frag.max() >= n_frag:
+            raise ValueError(f"fragment ids {frag.min()}..{frag.max()} outside 0..{n_frag - 1}")
+        if fqkey in atoms.info:
+            fq = np.asarray(atoms.info[fqkey], np.float64).reshape(-1)
+            if len(fq) > n_frag:
+                raise ValueError(f"{len(fq)} fragment charges > n_fragments {n_frag}")
+            fq = np.concatenate([fq, np.zeros(n_frag - len(fq))])
+            if charge_key and abs(fq.sum() - q_tot) > 1e-6:
+                raise ValueError(f"fragment charges {fq.tolist()} do not sum to the total charge {q_tot}")
+        elif len(np.unique(frag)) == 1:       # one fragment only (e.g. a ligand or protein part): it carries Q
+            fq = np.zeros(n_frag); fq[frag[0]] = q_tot
+        else:
+            raise ValueError(f"structure with fragments {np.unique(frag).tolist()} but no info[{fqkey!r}]")
+        nodes["fragment"] = frag
+        glob["fragment_charges"] = fq.astype(np.float32)[None]
     if charge_label_key:   # per-atom reference charges (RACE_LR optional charge loss), e.g. Hirshfeld; only when asked
         nodes["ref_charges"] = np.asarray(atoms.arrays[charge_label_key], dtype=np.float32).reshape(-1)
     if periodic:
@@ -246,11 +267,12 @@ def compute_dataset_stats(
 
 def _cache_path(xyz_path: Path, cutoff: float, atom_energies: Sequence[float], cache_dir: Optional[Path],
                 charge_key: Optional[str] = None, charge_label_key: Optional[str] = None,
-                spin_key: Optional[str] = None) -> Path:
+                spin_key: Optional[str] = None, fragments: Optional[Sequence] = None) -> Path:
     tag = hashlib.md5(np.asarray(atom_energies, dtype=np.float64).tobytes()).hexdigest()[:8]
     cache_dir = xyz_path.parent if cache_dir is None else Path(cache_dir)
     q = ((f"_q-{charge_key}" if charge_key else "") + (f"_ql-{charge_label_key}" if charge_label_key else "")
-         + (f"_s-{spin_key}" if spin_key else ""))
+         + (f"_s-{spin_key}" if spin_key else "")
+         + (f"_f-{fragments[0]}-{fragments[1]}-{int(fragments[2])}" if fragments else ""))
     return cache_dir / f"{xyz_path.stem}_omat24_cutoff_{cutoff}_e0_{tag}{q}.pkl"
 
 
@@ -260,24 +282,26 @@ def load_frames(xyz_path: str | Path) -> List[ase.Atoms]:
 
 def _graphs_chunk(args):
     """Worker of build_graphs: one chunk of frames -> graphs (module level: picklable for process pools)."""
-    frames, atomic_numbers, atom_energies, cutoff, charge_key, charge_label_key, spin_key = args
+    frames, atomic_numbers, atom_energies, cutoff, charge_key, charge_label_key, spin_key, fragments = args
     atom_indices = atomic_numbers_to_indices(atomic_numbers)
     return [preprocess_graph(a, atom_indices, atom_energies, cutoff, targets=True, charge_key=charge_key,
-                             charge_label_key=charge_label_key, spin_key=spin_key)
+                             charge_label_key=charge_label_key, spin_key=spin_key, fragments=fragments)
             for a in frames]
 
 
 def build_graphs(frames, atomic_numbers, atom_energies, cutoff, n_workers: int = 1, chunk: int = 256,
                  desc: str = "graphs", charge_key: Optional[str] = None,
-                 charge_label_key: Optional[str] = None, spin_key: Optional[str] = None) -> List[jraph.GraphsTuple]:
+                 charge_label_key: Optional[str] = None, spin_key: Optional[str] = None,
+                 fragments: Optional[Sequence] = None) -> List[jraph.GraphsTuple]:
     """Graphs of a list of frames; n_workers > 1 runs the neighbour searches in a process pool (forkserver: no fork
     of a process that already initialised JAX / CUDA).  Order is preserved."""
     if n_workers <= 1 or len(frames) <= chunk:
-        return _graphs_chunk((frames, atomic_numbers, atom_energies, cutoff, charge_key, charge_label_key, spin_key))
+        return _graphs_chunk((frames, atomic_numbers, atom_energies, cutoff, charge_key, charge_label_key, spin_key,
+                              fragments))
     import concurrent.futures as cf
     import multiprocessing as mp
     jobs = [(frames[k:k + chunk], list(atomic_numbers), list(atom_energies), cutoff, charge_key, charge_label_key,
-             spin_key)
+             spin_key, fragments)
             for k in range(0, len(frames), chunk)]
     out: List[jraph.GraphsTuple] = []
     with cf.ProcessPoolExecutor(max_workers=n_workers, mp_context=mp.get_context("forkserver")) as ex:
@@ -319,12 +343,13 @@ def load_3bpa_graphs(
     charge_key: Optional[str] = None,
     charge_label_key: Optional[str] = None,
     spin_key: Optional[str] = None,
+    fragments: Optional[Sequence] = None,
 ) -> List[jraph.GraphsTuple]:
     """Read an extxyz file into graphs.  use_cache: pickle cache next to the file (read if present, else written);
     use_cache=False recomputes the neighbour lists (n_workers processes) and writes nothing."""
     xyz_path = Path(xyz_path)
     assert xyz_path.exists(), f"{xyz_path} does not exist"
-    cache = _cache_path(xyz_path, cutoff, atom_energies, cache_dir, charge_key, charge_label_key, spin_key)
+    cache = _cache_path(xyz_path, cutoff, atom_energies, cache_dir, charge_key, charge_label_key, spin_key, fragments)
     if use_cache and cache.exists():
         with open(cache, "rb") as f:
             return pickle.load(f)
@@ -333,7 +358,7 @@ def load_3bpa_graphs(
         frames = load_frames(xyz_path)
     graphs = build_graphs(frames, atomic_numbers, atom_energies, cutoff, n_workers=n_workers,
                           desc=f"graphs {xyz_path.name}", charge_key=charge_key,
-                          charge_label_key=charge_label_key, spin_key=spin_key)
+                          charge_label_key=charge_label_key, spin_key=spin_key, fragments=fragments)
     if use_cache:
         with open(cache, "wb") as f:
             pickle.dump(graphs, f)

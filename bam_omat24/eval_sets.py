@@ -24,7 +24,7 @@ from bam_omat24.training_utils import (load_checkpoint, replicate_pytree, make_s
                                        evaluate_sharded)
 
 
-def _frames_to_graphs(frames, atom_indices, atom_energies, cutoff, charge_key=None, spin_key=None):
+def _frames_to_graphs(frames, atom_indices, atom_energies, cutoff, charge_key=None, spin_key=None, fragments=None):
     """charge_key: the config's total_charge_key (RACE_LR); None keeps the graphs as before."""
     has_forces = all(("forces" in a.calc.results) if a.calc is not None else False for a in frames)
     graphs = []
@@ -34,7 +34,7 @@ def _frames_to_graphs(frames, atom_indices, atom_energies, cutoff, charge_key=No
         if "forces" not in a.calc.results:
             a.calc.results["forces"] = np.zeros((len(a), 3))
         graphs.append(preprocess_graph(a, atom_indices, atom_energies, cutoff, charge_key=charge_key,
-                                       spin_key=spin_key))
+                                       spin_key=spin_key, fragments=fragments))
     return graphs, has_forces
 
 
@@ -99,7 +99,8 @@ def main():
                 continue
             graphs, _ = _frames_to_graphs(fr, atom_indices, atom_energies, cutoff,
                                           charge_key=T._get(cfg, 'total_charge_key', None),
-                                          spin_key=T._get(cfg, 'total_spin_key', None))
+                                          spin_key=T._get(cfg, 'total_spin_key', None),
+                                          fragments=T.fragments_of(cfg))
             has_forces = file_has_forces
             m = evaluate(graphs)
             e_rmse, e_mae = m["energy_rmse_total"] * 1e3, m["energy_mae_total"] * 1e3

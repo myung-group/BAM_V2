@@ -79,6 +79,7 @@
  "long_range": {
   "ewald_alpha": 0.3,
   "ewald_n_real": 1,
-  "ewald_n_recip": 8
+  "ewald_n_recip": 8,
+  "chi_init": "zero"
  }
 }

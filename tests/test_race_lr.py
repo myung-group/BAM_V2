@@ -68,14 +68,14 @@ def test_qeq_conserves_charge_and_is_optimal(x64):
     assert np.ptp(grad[:4]) < 1e-9 and np.ptp(grad[4:8]) < 1e-9
 
 
-def _lr_model(seed=0):
+def _lr_model(seed=0, lr=None):
     from flax import nnx
     from bam_omat24.race_lr_nnx import RACE_LR
     return RACE_LR(n_species=4, lmax=2, cutoff=5.0, hidden_irreps="16x0e + 16x1o + 16x2e", n_layers=2,
                    radial_basis_size=8, radial_mlp_size=16, radial_mlp_layers=2, mlp_init_scale=4.0, shift=0.0,
                    scale=1.0, avg_n_neighbors=20.0, atom_energies=ATOM_ENERGIES, l_train=True, periodic=False,
                    x_mode="species", rngs=nnx.Rngs(seed), species_radii=[0.31, 0.76, 0.71, 0.66],
-                   long_range={"chi_scale": 1.0})
+                   species_z=ATOMIC_NUMBERS, long_range={"chi_scale": 1.0, **(lr or {})})
 
 
 def test_race_lr_forces_rotation_and_charge(x64, graph):
@@ -123,7 +123,7 @@ def test_race_output_keys_unchanged(graph):
 
 
 def test_chi_init_pauling():
-    """chi_init 'pauling': chi0 = 3 eV x (Pauling - mean); the default stays zero."""
+    """chi_init 'pauling' (the default since 2026-11-07): chi0 = 3 eV x (Pauling - mean); 'zero' when asked."""
     import jax.numpy as jnp
     from flax import nnx
     from bam_omat24.race_lr_nnx import RACE_LR, PAULING
@@ -131,12 +131,17 @@ def test_chi_init_pauling():
               radial_mlp_size=8, radial_mlp_layers=1, mlp_init_scale=4.0, shift=0.0, scale=1.0, avg_n_neighbors=10.0,
               atom_energies=ATOM_ENERGIES, l_train=True, periodic=False, x_mode="species", rngs=nnx.Rngs(0),
               species_radii=[0.31, 0.76, 0.71, 0.66], species_z=ATOMIC_NUMBERS)
-    assert np.all(np.asarray(RACE_LR(**kw, long_range={}).chi0[...]) == 0.0)
-    m = RACE_LR(**kw, long_range={"chi_init": "pauling"})
+    assert np.all(np.asarray(RACE_LR(**kw, long_range={"chi_init": "zero"}).chi0[...]) == 0.0)
+    m = RACE_LR(**kw, long_range={})
     v = np.array([PAULING[z] for z in ATOMIC_NUMBERS])
     assert np.allclose(np.asarray(m.chi0[...]), 3.0 * (v - v.mean()), atol=1e-6)
-    with pytest.raises(ValueError):
-        RACE_LR(**{**kw, 'species_z': [1, 6, 7, 2]}, long_range={"chi_init": "pauling"})   # He: no value
+    with pytest.raises(ValueError):                                                   # He: no value
+        RACE_LR(**{**kw, 'species_z': [1, 6, 7, 2]}, long_range={"chi_init": "pauling", "chi_init_missing": "error"})
+    m2 = RACE_LR(**{**kw, 'species_z': [1, 6, 7, 2]}, long_range={})                     # default: mean for He
+    v2 = np.array([2.20, 2.55, 3.04, np.mean([2.20, 2.55, 3.04])])
+    assert np.allclose(np.asarray(m2.chi0[...]), 3.0 * (v2 - v2.mean()), atol=1e-6)
+    with pytest.raises(ValueError):                                                   # Pauling needs species_z
+        RACE_LR(**{k: v for k, v in kw.items() if k != 'species_z'}, long_range={})
 
 
 def test_charge_loss_term(x64, graph):
@@ -183,7 +188,7 @@ def _cs_model(qeq, seed=0):
                    radial_basis_size=8, radial_mlp_size=16, radial_mlp_layers=2, mlp_init_scale=4.0, shift=0.0,
                    scale=1.0, avg_n_neighbors=20.0, atom_energies=ATOM_ENERGIES, l_train=True, periodic=False,
                    x_mode="species", rngs=nnx.Rngs(seed), species_radii=[0.31, 0.76, 0.71, 0.66],
-                   long_range={"qeq": qeq, "charge_spin_embedding": True})
+                   species_z=ATOMIC_NUMBERS, long_range={"qeq": qeq, "charge_spin_embedding": True})
 
 
 def test_charge_spin_embedding(x64, graph):
@@ -327,3 +332,149 @@ def test_race_lr_periodic_float32_gradients_finite():
     g = jax.grad(loss)(p)
     bad = [jax.tree_util.keystr(k) for k, v in jax.tree_util.tree_leaves_with_path(g) if not bool(jnp.all(jnp.isfinite(v)))]
     assert not bad, bad
+
+
+
+def _two_fragments(graph, q_frag):
+    """The 3BPA graph split into two fragments (first 10 atoms = 0, the rest = 1) with the given fragment charges."""
+    n = int(graph.n_node.sum())
+    frag = np.zeros(graph.nodes['positions'].shape[0], np.int32); frag[10:n] = 1
+    return graph._replace(nodes={**graph.nodes, 'fragment': frag},
+                          globals={**graph.globals, 'charge': np.array([sum(q_frag), 0.0]),
+                                   'fragment_charges': np.array([q_frag, [0.0, 0.0]])})
+
+
+def test_fragment_charge_constraints(x64, graph):
+    """Per-fragment constraints: each fragment carries exactly its charge (here +1 / -1, total 0), unlike the global
+    constraint, and forces = -dE/dx still hold."""
+    import jax
+    import jax.numpy as jnp
+    model, g = as_float64(_lr_model(), pad_single(graph))
+    n = int(g.n_node[0])
+    run = lambda gr: model(jax.tree.map(jnp.asarray, gr))
+    gf = _two_fragments(g, [1.0, -1.0])
+    out = run(gf)
+    q = np.asarray(out['charges'])
+    assert abs(q[:10].sum() - 1.0) < 1e-10 and abs(q[10:n].sum() + 1.0) < 1e-10 and np.all(q[n:] == 0.0)
+    q0 = np.asarray(run(g._replace(globals={**g.globals, 'charge': np.array([0.0, 0.0])}))['charges'])
+    assert abs(q0[:10].sum() - 1.0) > 0.1                    # the global constraint does not fix the fragment charge
+    p = np.asarray(gf.nodes['positions']); h = 1e-5
+    pp, pm = p.copy(), p.copy(); pp[12, 1] += h; pm[12, 1] -= h
+    ep = float(run(gf._replace(nodes={**gf.nodes, 'positions': pp}))['energy'][0])
+    em = float(run(gf._replace(nodes={**gf.nodes, 'positions': pm}))['energy'][0])
+    assert abs(-(ep - em) / (2 * h) - float(out['forces'][12, 1])) < 1e-6
+
+
+def test_fragments_in_graph(frame):
+    from conftest import preprocess_graph, atomic_numbers_to_indices, CUTOFF
+    ai = atomic_numbers_to_indices(ATOMIC_NUMBERS)
+    a = frame.copy(); a.calc = frame.calc
+    a.arrays['is_ligand'] = (np.arange(len(a)) >= 10).astype(int)
+    a.info.update(charge=1, fragment_charges=[2, -1])
+    g = preprocess_graph(a, ai, ATOM_ENERGIES, CUTOFF, charge_key='charge', fragments=('is_ligand', 'fragment_charges', 2))
+    assert g.nodes['fragment'].tolist() == a.arrays['is_ligand'].tolist()
+    assert g.globals['fragment_charges'].tolist() == [[2.0, -1.0]]
+    b = frame.copy(); b.calc = frame.calc; b.info['charge'] = -1                    # no fragment array: one fragment
+    gb = preprocess_graph(b, ai, ATOM_ENERGIES, CUTOFF, charge_key='charge', fragments=('is_ligand', 'fragment_charges', 2))
+    assert gb.globals['fragment_charges'].tolist() == [[-1.0, 0.0]]
+    a.info['fragment_charges'] = [2, 0]                                             # does not sum to the charge
+    with pytest.raises(ValueError):
+        preprocess_graph(a, ai, ATOM_ENERGIES, CUTOFF, charge_key='charge', fragments=('is_ligand', 'fragment_charges', 2))
+    del a.info['fragment_charges']                                                  # two fragments, no charges
+    with pytest.raises(ValueError):
+        preprocess_graph(a, ai, ATOM_ENERGIES, CUTOFF, charge_key='charge', fragments=('is_ligand', 'fragment_charges', 2))
+
+
+def test_short_range_switch_molecular(x64, graph):
+    """sr_switch: no effect when every pair is beyond r_off; otherwise a different energy with the same charges, and
+    forces = -dE/dx."""
+    import jax
+    import jax.numpy as jnp
+    g = pad_single(graph)
+    g = g._replace(globals={**g.globals, 'charge': np.array([1.0, 0.0])})
+    run = lambda m, gr: m(jax.tree.map(jnp.asarray, gr))
+    m0, g64 = as_float64(_lr_model(), g)
+    m_far, _ = as_float64(_lr_model(lr={"sr_switch": [0.01, 0.02]}), g)
+    m_sw, _ = as_float64(_lr_model(lr={"sr_switch": [2.0, 4.0]}), g)
+    r0, rf, rs = run(m0, g64), run(m_far, g64), run(m_sw, g64)
+    assert abs(float(rf['energy'][0]) - float(r0['energy'][0])) < 1e-9
+    assert abs(float(rs['energy'][0]) - float(r0['energy'][0])) > 1e-4
+    assert np.allclose(np.asarray(rs['charges']), np.asarray(r0['charges']), atol=1e-12)
+    p = np.asarray(g64.nodes['positions']); h = 1e-5
+    for i, c in [(3, 0), (20, 2)]:
+        pp, pm = p.copy(), p.copy(); pp[i, c] += h; pm[i, c] -= h
+        ep = float(run(m_sw, g64._replace(nodes={**g64.nodes, 'positions': pp}))['energy'][0])
+        em = float(run(m_sw, g64._replace(nodes={**g64.nodes, 'positions': pm}))['energy'][0])
+        assert abs(-(ep - em) / (2 * h) - float(rs['forces'][i, c])) < 1e-6
+
+
+def test_short_range_switch_periodic_stress(x64):
+    """Periodic sr_switch (images |n| <= 1): stress = (1/V) dE/d(strain) and forces = -dE/dx."""
+    a = _cell(1)
+    model, _ = as_float64(_periodic_lr_model({"ewald_alpha": 0.5, "ewald_n_real": 3, "ewald_n_recip": 10,
+                                              "sr_switch": [1.5, 3.5]}), _graph(a))
+    g = _f64(_graph(a))
+    g = g._replace(globals={**g.globals, 'charge': np.array([0.0]), 'spin': np.array([1.0])})
+    out = model(g)
+    stress = np.asarray(out["stress"])[0]
+    cell0 = np.asarray(g.globals["cell"][0]); pos0 = np.asarray(g.nodes["positions"])
+
+    def e_of(pos, cell):
+        gg = g._replace(nodes={**g.nodes, "positions": pos},
+                        globals={**g.globals, "cell": cell[None], "volume": np.array([abs(np.linalg.det(cell))])})
+        return float(np.asarray(model(gg)["energy"])[0])
+    h, vol, fd = 1e-5, abs(np.linalg.det(cell0)), []
+    for (u, v) in [(0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1)]:
+        eps = np.zeros((3, 3)); eps[u, v] += h / 2; eps[v, u] += h / 2
+        fd.append((e_of(pos0 @ (np.eye(3) + eps).T, cell0 @ (np.eye(3) + eps).T)
+                   - e_of(pos0 @ (np.eye(3) - eps).T, cell0 @ (np.eye(3) - eps).T)) / (2 * h) / vol)
+    assert np.allclose(stress, np.array(fd), rtol=1e-4, atol=1e-7), (stress, fd)
+    pp, pm = pos0.copy(), pos0.copy(); pp[6, 2] += h; pm[6, 2] -= h
+    assert abs(-(e_of(pp, cell0) - e_of(pm, cell0)) / (2 * h) - float(out['forces'][6, 2])) < 1e-6
+
+
+def test_predict_api_and_species_refit(tmp_path, frame):
+    """bam_omat24.predict: the Predictor reproduces model + E0 of a checkpoint, returns Qeq charges that sum to the
+    total charge, and the training-split species refit recovers per-element energy offsets."""
+    import io
+    import jax
+    import jax.numpy as jnp
+    from bam_omat24 import train_3bpa as T
+    from bam_omat24.training_utils import save_checkpoint
+    from bam_omat24.predict import load, species_refit
+    from bam_omat24.data_3bpa import load_frames
+    cfg = {"model": "RACE_LR", "atomic_numbers": ATOMIC_NUMBERS, "atom_energies": ATOM_ENERGIES, "cutoff": 5.0,
+           "hidden_size": 8, "lmax": 1, "n_layers": 1, "radial_mlp_size": 8, "radial_mlp_layers": 1,
+           "avg_n_neighbors": 15.0, "tp_backend": "e3nn", "total_charge_key": "charge", "x64": False,
+           "long_range": {"chi_init": "pauling"}, "node_bucket_size": 16, "edge_bucket_size": 256}
+    stats = {'shift_raw': 0.0, 'scale': 1.0, 'avg_n_neighbors': 15.0, 'n_graphs': 1, 'n_atoms': 1}
+    graphdef, params, *_ = T.build_model({**cfg, 'learning_rate': 1e-3}, 4, ATOM_ENERGIES, stats, io.StringIO())
+    ck = tmp_path / 'ckpt.pkl'
+    save_checkpoint({'config': cfg, 'ema_params': params}, str(ck))
+    frames = load_frames(T.Path(__file__).resolve().parents[1] / 'dataset_3BPA' / 'train_300K.xyz')[:6]
+    for i, a in enumerate(frames):
+        a.info['charge'] = [0, 1, -1, 0, 1, 0][i]
+    p = load(ck)
+    e, f = p.predict(frames)
+    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
+    from flax import nnx
+    model = nnx.merge(graphdef, params)
+    a = frames[1]
+    g = pad_single(preprocess_graph(a, atomic_numbers_to_indices(ATOMIC_NUMBERS), ATOM_ENERGIES, 5.0, targets=False,
+                                    charge_key='charge'))
+    g = g._replace(globals={**g.globals, 'charge': np.array([1.0, 0.0])})
+    ref = float(model(jax.tree.map(jnp.asarray, g))['energy'][0]) + sum(
+        ATOM_ENERGIES[ATOMIC_NUMBERS.index(z)] for z in a.numbers)
+    assert abs(e[1] - ref) < 1e-3 * max(1.0, abs(ref)) and f[1].shape == (len(a), 3)
+    q = p.charges(frames)
+    assert all(abs(qi.sum() - c) < 1e-4 for qi, c in zip(q, [0, 1, -1, 0, 1, 0]))
+    # species refit: labels = prediction + known per-element offsets -> the refit recovers them (single composition
+    # here, so only the composition total is identifiable: compare the corrected energies)
+    from ase.calculators.singlepoint import SinglePointCalculator
+    off = np.array([0.01, -0.02, 0.03, 0.005])
+    for a, ei, fi in zip(frames, e, f):
+        a.calc = SinglePointCalculator(a, energy=float(ei - p.counts([a])[0] @ off), forces=fi)
+    r = species_refit(ck, frames)
+    assert r['rmse_after_eV'] < 1e-4
+    e2, _ = load(ck).predict(frames)
+    assert np.allclose(e2, [a.get_potential_energy() for a in frames], atol=1e-3)

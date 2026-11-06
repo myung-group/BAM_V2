@@ -1,6 +1,6 @@
 """Long-range electrostatics for RACE_LR (2026-11-06; docs/RACE_LR_design.md): Gaussian-charge Coulomb matrices
 (direct sum for molecules / clusters, Ewald sum for periodic cells) and charge equilibration (Qeq) with a total-charge
-constraint per graph.  Pure jax.numpy, differentiable with respect to positions, cell and the Qeq parameters.
+constraint per graph (or per fragment of a graph), and an optional short-range switch of the energy.  Pure jax.numpy, differentiable with respect to positions, cell and the Qeq parameters.
 
 Units: Å, e, eV;  K_COULOMB = e^2 / (4 pi eps0) = 14.399645 eV Å.
 
@@ -34,6 +34,35 @@ def coulomb_direct(pos, sigma, same):
     r = jnp.sqrt(jnp.where(off, r2, 1.0))                         # safe sqrt (no NaN gradient on the diagonal)
     g = K_COULOMB * jax.scipy.special.erf(r / (math.sqrt(2.0) * _pair_sigma(sigma))) / r
     return jnp.where(off, g, 0.0)
+
+
+def sr_switch(r, r_on: float, r_off: float):
+    """Short-range switch for the electrostatic ENERGY (2026-11-07): 0 for r <= r_on, 1 for r >= r_off, C2 smoothstep
+    x^3 (10 - 15 x + 6 x^2) in between.  Pairs closer than r_off are partly left to the learned short-range strata
+    (no double counting there); the Qeq charges themselves are solved with the unswitched matrix."""
+    x = jnp.clip((r - r_on) / (r_off - r_on), 0.0, 1.0)
+    return x * x * x * (10.0 - 15.0 * x + 6.0 * x * x)
+
+
+def short_range_part(pos, sigma, same, r_on: float, r_off: float, cell_rows=None, n_img: int = 0):
+    """The part (1 - switch(r)) K erf(r / (sqrt(2) s_ij)) / r of the Gaussian-charge Coulomb matrix (zero diagonal of
+    the n = 0 image), summed over the lattice images |n_k| <= n_img for periodic graphs (cell_rows (N, 3, 3), the cell
+    of each atom's graph; None = molecules).  Subtracting it from the Coulomb / Ewald matrix gives the switched energy
+    matrix.  Only pairs with r < r_off contribute, so n_img = 1 suffices when r_off is below the shortest cell
+    height."""
+    if cell_rows is None:
+        d = (pos[None, :, :] - pos[:, None, :])[:, :, None, :]                     # (N, N, 1, 3)
+    else:
+        rng = np.arange(-n_img, n_img + 1)
+        shifts = jnp.asarray(np.stack(np.meshgrid(rng, rng, rng, indexing='ij'), -1).reshape(-1, 3), pos.dtype)
+        T = jnp.einsum('sc,icd->isd', shifts, cell_rows)
+        d = pos[None, :, None, :] - pos[:, None, None, :] + T[:, None, :, :]       # (N, N, S, 3)
+    r2 = jnp.sum(d * d, axis=-1)
+    use = (r2 > 1e-12) & (r2 < r_off * r_off) & same[:, :, None]
+    r = jnp.sqrt(jnp.where(use, r2, 1.0))
+    s = _pair_sigma(sigma)[:, :, None]
+    g = K_COULOMB * jax.scipy.special.erf(r / (math.sqrt(2.0) * s)) / r * (1.0 - sr_switch(r, r_on, r_off))
+    return jnp.sum(jnp.where(use, g, 0.0), axis=-1)
 
 
 def ewald_matrix(pos, cell, sigma, alpha, n_real: int = 2, n_recip: int = 6):
@@ -82,10 +111,14 @@ def ewald_matrix_rows(pos, cell_rows, sigma, alpha, n_real: int = 2, n_recip: in
     return gamma
 
 
-def qeq_solve(chi, hard, sigma, gamma, node_graph, node_mask, total_charge, n_graphs):
+def qeq_solve(chi, hard, sigma, gamma, node_graph, node_mask, total_charge, n_graphs, gamma_energy=None):
     """Charge equilibration for a batch of graphs.  chi, hard, sigma (N,); gamma (N, N) Coulomb matrix (pairs of
     different graphs / padding must be 0); node_graph (N,) graph index; node_mask (N,) real nodes;
-    total_charge (G,).  Returns (q (N,), per-atom energy e_i = chi_i q_i + 1/2 q_i (A q)_i)."""
+    total_charge (G,).  Returns (q (N,), per-atom energy e_i = chi_i q_i + 1/2 q_i (A q)_i).
+    node_graph / total_charge / n_graphs are the constraint GROUPS: graphs, or (graph, fragment) pairs for per-fragment
+    total charges (RACE_LR fragments); gamma still couples every pair of the same graph.
+    gamma_energy: the Coulomb matrix used in the energy (e.g. with a short-range switch); default gamma.  The charges
+    always come from gamma."""
     N = chi.shape[0]
     diag = jnp.where(node_mask, hard + K_COULOMB / (SQRT_PI * sigma), 1.0)
     A = jnp.where(node_mask[:, None] & node_mask[None, :], gamma, 0.0) + jnp.diag(diag)
@@ -95,6 +128,8 @@ def qeq_solve(chi, hard, sigma, gamma, node_graph, node_mask, total_charge, n_gr
     rhs = jnp.concatenate([jnp.where(node_mask, -chi, 0.0), jnp.where(empty > 0, 0.0, total_charge)])
     sol = jnp.linalg.solve(M, rhs)
     q = jnp.where(node_mask, sol[:N], 0.0)
+    if gamma_energy is not None:
+        A = jnp.where(node_mask[:, None] & node_mask[None, :], gamma_energy, 0.0) + jnp.diag(diag)
     Aq = (A - jnp.diag(jnp.where(node_mask, 0.0, 1.0))) @ q
     e = jnp.where(node_mask, chi * q + 0.5 * q * Aq, 0.0)
     return q, e

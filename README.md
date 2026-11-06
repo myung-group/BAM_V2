@@ -5,8 +5,11 @@ RACEv2 is an improved version of RACE, an E(3)-equivariant message-passing inter
 operation, the edge tensor product, runs on the CUDA kernels of NVIDIA cuequivariance-jax (`"tp_backend": "cue"`).
 The `_cue` suffix of the config files refers to these kernels; it is not a PyTorch package.
 
-Every result below was trained on the official training split of its dataset only: no pretraining, no extra data,
-no data augmentation. All equations, tables and figures are collected in
+Every result below was trained on the training split of its dataset only: no pretraining, no extra data, no data
+augmentation. The UFF repulsion is an external empirical prior (fixed functional form and radii, one learned global
+scale); results without it are in the ablation. Water has no official split (two splits are used, see below), and Si
+uses 95 % of the GAP-18 training set. Models that use pretraining (MACE-OFF fine-tunes such as MMEA, ELoRA) or
+semi-empirical baselines (NN-xTB) are not compared. All equations, tables and figures are collected in
 [`docs/RACEv2_methods_summary.pdf`](docs/RACEv2_methods_summary.pdf) (in Korean).
 
 ![RACEv2 architecture](docs/RACEv2_architecture_en.png)
@@ -26,19 +29,52 @@ no data augmentation. All equations, tables and figures are collected in
 
 Default size: 5 layers, lmax 3, cutoff 5 Å, 128 channels (256 for rMD17 and MD22, 64 for water).
 
+The locality claim of the title is not tested by the molecular benchmarks below: 3BPA, AcAc and the rMD17 molecules
+fit inside the 5 × 5 Å receptive field. MD22 is planned for this purpose.
+
+**Reporting.**
+- Checkpoints are selected on validation (EMA weights).
+- After training, a single per-atom energy constant δ* is refitted in closed form on the training split only; the
+  forces are unchanged. Its effect depends on the dataset:
+  - ≤ 0.01 meV/molecule on 3BPA and AcAc at 1500 epochs, and up to 0.007 meV on rMD17;
+  - 0.07–0.18 meV/atom on Si;
+  - a factor of 5 on the LiPS 19k energy MAE (0.100 → 0.020 meV/atom), and up to 4 meV/molecule in the 500-epoch
+    ablation.
+  Energy cells show the refitted value; raw values are given where the refit matters.
+- ± values and seed spreads are sample standard deviations (ddof = 1) over 3 initialisation seeds on one fixed split;
+  split variance is not included.
+- Test exposure: the test sets were evaluated during training (every 100 epochs; LiPS every 30–600) and were seen
+  during development of the recipe (about 38 screening rounds on 3BPA). Checkpoints were selected on validation only,
+  but recipe choices were not (see the 3BPA note).
+
 ## Results (mean of 3 seeds, checkpoint selected on validation)
 
-### 3BPA (RMSE, E in meV/molecule / F in meV/Å, trained on 500 frames at 300 K)
+### 3BPA (RMSE, E in meV/molecule / F in meV/Å; train 450 + valid 50 frames at 300 K; test 1669 / 2138 / 2139 / 7047 frames; 3 seeds)
 
 | Model | 300 K | 600 K | 1200 K | Dihedral |
 |---|---|---|---|---|
-| **RACEv2** | **1.56 / 6.31** | **6.05 / 15.92** | **22.20 / 45.16** | 16.67 / 19.09 |
-| RACE V1 | 3.4 / 12.1 | 11.7 / 31.8 | 37.5 / 115.3 | — |
-| GRACE (PRX 2024) | 1.7 / 7.6 | 7.3 / 19.2 | 25.8 / 61.7 | **7.4 / 15.3** |
-| TACE | 2.69 / 8.68 | 8.10 / 19.88 | 23.42 / 54.26 | 11.0 / 16.45 |
+| **RACEv2** (UFF-nb, chosen after test, see note) | 1.56 / **6.31** | **6.05 / 15.92** | 22.20 / **45.16** | 16.67 / 19.09 |
+| RACEv2 ZBL-nb (rule fixed in advance) | 1.62 / 6.53 | 7.44 / 16.89 | 24.68 / 50.79 | 10.44 / 17.42 |
+| RACE V1 (published, single model) | 3.4 / 12.1 | 11.7 / 31.8 | 37.5 / 115.3 | — |
+| GRACE/ACE(g) (PRX 2024, 5 fits) | 1.7 / 7.6 | 7.3 / 19.2 | 25.8 / 61.7 | **7.4 / 15.3** |
+| PACE (TMLR 2024, 3 seeds) | 2.4 / 9.1 | 7.9 / 21.4 | 29.6 / 60.7 | 7.6 / 16.0 |
+| TACE spe-cart ν=3 (1 seed) | 2.69 / 8.68 | 8.10 / 19.88 | 23.42 / 54.26 | 11.0 / 16.45 |
+| SpinGTP | 2.9 / 9.0 | 9.6 / 21.0 | 29.0 / 61.4 | 8.9 / **15.3** |
+| ICTP_full (5 runs) | 2.70 / 9.45 | 10.74 / 22.99 | 29.80 / 62.82 | 9.82 / 17.52 |
 | MACE | 3.0 / 8.8 | 9.7 / 21.8 | 29.8 / 62.0 | 7.8 / 16.5 |
 
-### rMD17 (MAE, official split, 1000 training frames, L5h256) vs the best published values
+Notes:
+- **Recipe choice.** The UFF-nb repulsion (switch width 0.3 Å) was chosen after inspecting the 600 K, 1200 K and
+  dihedral test errors. The rule fixed in advance ("1200 K force ≤ +10 % of the base, lowest dihedral energy")
+  selects the ZBL-nb variant, shown as the second row. The expected selection bias is 1–2 seed standard deviations
+  (about 0.4–0.8 meV and 0.7–1.4 meV/Å at 1200 K).
+- **Energies.** The 300 K energy is within the seed spread of GRACE (not a significant difference). The 1200 K
+  energy is below the single-seed TACE value by less than the expected selection bias.
+- **Dihedral.** The dihedral scan is a limitation: every listed reference except V1 has lower dihedral errors.
+  TACE ν=2 reaches 7.6 meV on the dihedral energy.
+- **MAE** (tail-dominated columns), 3-seed mean, E / F: 1200 K 14.19 / 24.62, dihedral 5.94 / 6.28.
+
+### rMD17 (MAE, E meV/molecule / F meV/Å; official split 01: 950 training + 50 validation frames from the 1000-frame training set, 1000 test frames; L5h256) vs the best published values
 
 For every molecule the lowest published energy error and the lowest published force error were picked separately.
 Bold marks the better value.
@@ -56,22 +92,35 @@ Bold marks the better value.
 | toluene | 0.6 | **0.13** | 0.19 (GotenNet) | 2.7 | **0.78** | 1.04 (FreeCG) |
 | uracil | 0.7 | 0.20 | 0.2 (ACE(g)) | 4.4 | **1.43** | 1.7 (ACE(g)) |
 
-Against the best published values RACEv2 wins 7, ties 2 and loses 1 in energy (meV) and wins 8, ties 1 and loses 1
-in forces (meV/Å); differences within the rounding digit count as ties. RACE V1 reported 7 molecules; on those
-RACEv2 is 64–87 % lower in energy and 58–75 % lower in forces. The reference models were tested on the remaining
-~99k frames, our table uses the official 1000 test frames; evaluating on the ~99k frames gives nearly identical values.
+On split 01 (3 seeds), RACEv2 has the lowest error among the listed values for 7 molecules in energy and 8 in
+forces. Benzene is worse in both, and ethanol and uracil are equal at the reported precision. Test sets differ:
+- PACE (like MACE) uses the official 1000 test frames used here;
+- ACE(g) and GotenNet use the remaining ~99k frames;
+- FreeCG does not state its test set.
+
+For an earlier model (seed 42; aspirin, ethanol, paracetamol, uracil), the ~99k evaluation agreed closely with
+test-1000. The final models have not been evaluated on the ~99k frames yet. RACE V1 reported 7 molecules; on those,
+RACEv2 is 64–87 % lower in energy and 58–75 % lower in forces.
 
 ### Other benchmarks
 
 | Benchmark | RACEv2 | Reference |
 |---|---|---|
-| AcAc 300 K / 600 K (RMSE E/F) | 0.46/3.06 · 5.32/15.55 | PACE 0.73/4.2 · 3.8/16.9 |
-| Si GAP-18 → RSS (RMSE meV/atom, meV/Å) | 15.65 / 106.7 | XPOT-ACE 20.5 / 139 |
-| Si GAP-18 → compressed MD | 4.47 / 69.0 | GAP-18 15.7 / 125 |
-| LiPS 19k (MAE meV/atom, meV/Å) | 0.020 / 1.20 | FreeCG force 1.2, GemNet-T 1.3 |
+| AcAc 300 K / 600 K (RMSE, E meV/molecule / F meV/Å, test 650 / 650) | 0.46/3.06 · 5.32/15.55 | PACE 0.73/4.2 · 3.8/16.9 (TMLR 2024 Tab. 3, 3 seeds, 5000 epochs; the paper labels Tab. 4 as MAE) · ICTP 0.75 (full, 300 K E) · 4.43/22.90 (sym, 600 K) · MACE 0.9/5.1 · 4.6/22.4 |
+| Si GAP-18 → RSS (RMSE meV/atom, meV/Å) | 15.65 / 106.7 | XPOT-ACE-3F 20.5 / 139 (du Toit et al. JCTC 2024, single fit) |
+| Si GAP-18 → compressed MD | 4.47 / 69.0 | GAP-18 evaluated by us 15.7 / 125 (no published RMSE on this set; not the MQ-MD set of du Toit et al.) |
+| LiPS 19k (MAE meV/atom, meV/Å) | 0.020 (raw 0.100) / 1.20 | tie with FreeCG force 1.2; GemNet-T 1.3 |
 | LiPS learning curve 2500/1000/100/10 (force MAE) | 2.02 / 3.17 / 9.46 / 34.1 | NequIP 4.7, CarNet 5.6, CAMP 21.6 / 76.4 |
-| LiPS MD 50 ps × 5 (stability / RDF / Li diffusivity error) | 50 ps / 0.044 / 0.43 | NequIP 50 / 0.04 / 0.34, GemNet-T 0.24 |
-| Water split 1 / 2 (RMSE meV/H₂O, meV/Å; rerun with repulsion in progress) | 3.38/63.6 · 0.64/21.96 | MACE 64-0 on the same splits 4.5/64.8 · 0.9/23.2 |
+| LiPS MD 50 ps × 5 (stability / RDF / Li diffusivity error) | 50 ps / 0.044 / 0.43 | NequIP 50 / 0.04 / 0.34, GemNet-T 50 / 0.04 / 0.24, E2GNN D error 0.21 (direct forces); Fu et al. Table 6 |
+| Water split 1 / 2 (RMSE, E meV/H₂O / F meV/Å; 3 seeds; split 2 test = last 200 frames, all PIMD) | 3.38/63.6 · 0.57/21.84 | MACE 64-0 retrained on the same splits (stage 2, 1 seed): 4.5/64.8 · 0.75–1.05/23.2 (split-2 energy from logs rounded to 0.1 meV/atom; not decidable) |
+
+Notes on this table:
+- **AcAc:** the 600 K energy is worse than PACE, ICTP and MACE. Its RMSE is dominated by a few frames (MAE 1.69).
+  The AcAc dihedral and H-transfer sets are not reported yet.
+- **Si:** only ACE/GAP baselines exist on these test sets; no MPNN has been evaluated with this protocol.
+- **LiPS MD:** our Li diffusivity error is higher than NequIP, GemNet-T and E2GNN (0.43 vs 0.21–0.34 ×10⁻⁹ m²/s).
+- **Water:** the differences to MACE are within the bootstrap confidence interval on split 1 (one test frame carries
+  about 70 % of the force error). The split-2 energies cannot be compared because the MACE logs are rounded.
 
 ### Ablation (3BPA, 500 epochs, mean of 3 seeds)
 
@@ -79,18 +128,23 @@ One component at a time is reverted to RACE V1. Each cell: refitted energy RMSE 
 
 | Variant | 300 K | 600 K | 1200 K | Dihedral | 1200 K force change |
 |---|---|---|---|---|---|
-| **Final recipe** | **1.87 / 6.70** | **6.52 / 16.63** | **22.89 / 46.42** | 16.74 / **19.28** | reference |
-| V1 atomic feature (species embedding) | 2.55 / 9.52 | 9.80 / 22.69 | 29.86 / 61.44 | **15.36** / 19.95 | +32 % |
+| Final recipe | 1.87 / 6.70 | 6.52 / 16.63 | **22.89 / 46.42** | 16.74 / 19.28 | reference |
+| V1 atomic feature (species embedding) | 2.55 / 9.52 | 9.80 / 22.69 | 29.86 / 61.44 | 15.36 / 19.95 | +32 % |
 | No Gaussian radial prior | 2.05 / 7.22 | 7.34 / 18.93 | 28.22 / 60.12 | 28.06 / 23.32 | +30 % |
 | No hill (plain RMS) | 2.20 / 7.36 | 7.60 / 19.08 | 26.68 / 56.67 | 21.04 / 20.17 | +22 % |
 | No Chebyshev residual | 1.94 / 6.85 | 6.81 / 17.32 | 27.75 / 52.39 | 17.79 / 20.16 | +13 % |
 | No LayerScale | 2.27 / 7.24 | 7.19 / 18.27 | 28.15 / 51.77 | 17.74 / 20.30 | +12 % |
 | V1 message normalisation (LayerNorm + 1/√⟨N⟩) | 2.12 / 6.81 | 6.78 / 17.00 | 25.73 / 49.41 | 19.44 / 20.18 | +6 % |
-| V1 update (gate) | 1.80 / 6.39 | 6.41 / 16.26 | 24.15 / 46.91 | 15.07 / 18.60 | +1 % |
+| V1 update (gate) | **1.80 / 6.39** | **6.41 / 16.26** | 24.15 / 46.91 | **15.07 / 18.60** | +1 % |
 
-Apart from the gate update, reverting any single component worsens both energies and forces at 600 K and 1200 K, and
-the gap grows with temperature. The V1 atomic feature improves only the dihedral energy (15.36 vs 16.74), within the
-seed spread of 2.8. Removing LayerScale also raises the seed spread of the 1200 K force error from 0.96 to 3.41.
+Bold marks the lowest value per column. Apart from the gate update, reverting any single component worsens both
+energies and forces at 600 K and 1200 K, and the absolute gap grows with temperature. The V1 atomic feature improves
+only the dihedral energy (15.36 vs 16.74), within the seed spread (sample std over 3 seeds: 3.5). Removing LayerScale
+also raises the seed spread (sample std) of the 1200 K force error from 1.17 to 4.18.
+
+At 500 epochs the energy constant is not converged: the refit lowers the 300 K energy RMSE of the final recipe from
+3.34 to 1.87 meV, and that of the variants by 0.1–4.2 meV. Without the refit, three variants have a lower 300 K
+energy than the final recipe. The 600 K and 1200 K orderings are the same with raw energies.
 Reverting to the gate update is equal or better except for the 1200 K energy (+6 %); the linear update shows no gain
 in this setting. Removing the Gaussian radial prior gives the worst dihedral scan (28.06 vs 16.74 meV, +68 %) and
 the second-largest 1200 K force increase. Remaining variants: no shell channels, no UFF, AMSGrad instead of SOAP.
@@ -116,7 +170,8 @@ Test set (1,000 structures, checkpoint selected on validation):
 | sAlex | **RACEv2** | **166** | **306 / 104** | **1.13** | 71 s |
 | sAlex | V1 | 178 | 344 / 120 | 1.34 | 30 s |
 
-RACEv2 is better on every metric of all three datasets: energy MAE 7–31 % lower, force RMSE 11–35 % lower, stress
+In this single-seed comparison, which mixes the architecture and the optimizer (V1 also uses AMSGrad), RACEv2 is better
+on every metric of all three datasets: energy MAE 7–31 % lower, force RMSE 11–35 % lower, stress
 MAE 14–20 % lower. It is 2–2.4× slower per epoch: refreshing the SOAP eigenbases takes 40–60 % of a step
 (`runs/diag/soap_profile.py`).
 The per-atom energy errors (100–180 meV) are large for both recipes. With 89 elements and 10k structures, the

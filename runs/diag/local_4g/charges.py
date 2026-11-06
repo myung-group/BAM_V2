@@ -42,13 +42,13 @@ for b in loader:
     fid = np.asarray(b.globals['frame_id']).reshape(-1); off = np.concatenate([[0], np.cumsum(np.asarray(b.n_node))])
     for g in np.flatnonzero(gmask):
         q[fid[g]] = qb[off[g]:off[g + 1]]
-lab = np.array([a.info['subset'] for a in frames])
+lab = np.array([a.info.get('subset', f"Q={int(a.info.get('charge', 0)):+d}") for a in frames])
 qkey = cfg.get('charge_label_key') or next(k for k in ('hirshfeld_charges', 'ref_charges') if k in frames[0].arrays)
 h = [a.arrays[qkey] for a in frames]
 for k in sorted(set(lab)):
     qq = np.concatenate([q[i] for i in np.flatnonzero(lab == k)]); hh = np.concatenate([h[i] for i in np.flatnonzero(lab == k)])
     tot = np.array([q[i].sum() for i in np.flatnonzero(lab == k)])
-    print(f'{k:22s} atoms {len(qq):6d}  corr(q, Hirshfeld) {np.corrcoef(qq, hh)[0, 1]:+.3f}  RMSE {np.sqrt(((qq - hh) ** 2).mean()):.3f} e  '
+    print(f'{k:22s} atoms {len(qq):6d}  corr(q, ref) {np.corrcoef(qq, hh)[0, 1]:+.3f}  RMSE {np.sqrt(((qq - hh) ** 2).mean()):.3f} e  '
           f'|q| mean {np.abs(qq).mean():.3f} vs {np.abs(hh).mean():.3f}  sum q [{tot.min():+.4f}, {tot.max():+.4f}]')
 np.savez(out, q=np.array(q, dtype=object), h=np.array(h, dtype=object), subset=lab,
          symbols=np.array([a.get_chemical_symbols() for a in frames], dtype=object))

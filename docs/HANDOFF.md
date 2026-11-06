@@ -207,6 +207,10 @@ sbatch). Every one of those jobs was written but not submitted.
      - Full OMol scale needs the stream loader integrated (2c'), and a block-diagonal Qeq solve. The current solve is
        dense over the whole batch.
      - Ewald fixes for jit, float32 and the periodic guard: `docs/local_test_report.md` §9.
+     - Local pilot on the public OpenFF redistribution of the neutral OMol25 ANI-2x part (report §11):
+       - AMSGrad f32 is about 10× faster than SOAP f64 on the RTX 4060 Ti, at equal or slightly better accuracy.
+       - The Löwdin charge loss fixes the charges (r 0.93) but not the errors there.
+       - Latent charges on neutral data are meaningless (r −0.15).
    See `docs/RACE_LR_design.md` §3.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.

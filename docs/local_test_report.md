@@ -434,3 +434,36 @@ charge column gives the correlation of q with Hirshfeld per state, and in bracke
      should become the default.
 
 These are one-seed, reduced-budget numbers. The HPC runs at full size decide.
+
+## 11. OMol25 pilot on the public OpenFF redistribution (2026-11-07)
+
+**Setup.**
+- Data: `data_local/omol25_openff/sub10k`, the OMol25 ANI-2x part as redistributed by OpenFF. All structures are
+  neutral and closed-shell, with Löwdin charges.
+- Split: 10,000 training and 1,000 validation structures from the official train rows; the test set is the 2,932
+  official val rows.
+- Model: hidden 64, 3 layers, lmax 2, 30 epochs, one seed, the same GPU limits as before.
+- The energy refit is per composition, fitted on the validation split, so it uses train-split rows only.
+
+| model | optimiser | E (meV/atom) | F RMSE (meV/Å) | time | q vs Löwdin r | mean abs(q), model / DFT |
+|---|---|---|---|---|---|---|
+| RACE | SOAP f64 | 86.8 | 833 | 59 min | – | – |
+| RACE | AMSGrad f32 | 85.6 | 782 | 6 min | – | – |
+| RACE_LR (Pauling) | SOAP f64 | 92.0 | 776 | 60 min | −0.15 | 0.011 / 0.253 |
+| RACE_LR (Pauling) | AMSGrad f32 | **78.6** | **749** | 7 min | −0.16 | 0.153 / 0.253 |
+| + Löwdin loss 0.1 | SOAP f64 | 94.0 | 808 | 60 min | +0.93 | 0.198 / 0.253 |
+| + Löwdin loss 0.1 | AMSGrad f32 | 88.2 | 795 | 7 min | +0.89 | 0.195 / 0.253 |
+
+**Reading.**
+- **Optimiser.** AMSGrad in float32 is about 10× faster on this GPU (GeForce float64 is slow) and as accurate or
+  slightly better. It never diverged.
+- **Training length.** All runs are far from converged. The median per-structure force RMSE is about 160–175 meV/Å,
+  while the RMSE is 750–830 meV/Å, so a few frames carry very large errors.
+- **Latent charges are meaningless on neutral molecules.** They are anti-correlated with Löwdin (r −0.15).
+- **The Löwdin loss fixes the charges but not the errors.** It gives r 0.89–0.93, but unlike on the 4G systems
+  (§10) the energies and forces do not improve. Possible causes are undertraining, neutral-only data, and the Löwdin
+  partitioning. With one seed the differences may be noise.
+- **Consequences for the OMol pretraining plan.**
+  - Prefer AMSGrad float32, pending the OAM seed check of the HANDOFF.
+  - The value of a charge loss for pretraining is not shown on neutral data. Decide it on the official OMol25 with
+    charged states.

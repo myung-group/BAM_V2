@@ -117,6 +117,7 @@ Config keys (in addition to the model hyper-parameters, see README):
                        race_lr_nnx.py; options in "long_range": ewald_alpha, ewald_n_real, ewald_n_recip, head_hidden,
                        chi_scale, hard_init) | "Nequip"
     total_charge_key : extxyz info key of the total charge per structure (RACE_LR; default none = neutral)
+    total_spin_key   : extxyz info key of the spin multiplicity 2S+1 (RACE_LR charge/spin embedding; default none)
     charge_label_key : extxyz per-atom array of reference charges, e.g. "hirshfeld_charges" (RACE_LR; default none)
     charge_weight    : weight of the charge loss mean_i (q_i - q_ref_i)^2 in e^2 (needs charge_label_key; default 0 =
                        latent charges, no charge labels used)
@@ -352,9 +353,14 @@ def build_datasets(cfg: Dict, fout):
 
     # graph_cache false: no pickle cache (neighbour lists recomputed at start, graph_workers processes)
     gl = dict(use_cache=bool(_get(cfg, 'graph_cache', True)), n_workers=_graph_workers(cfg),
-              charge_key=_get(cfg, 'total_charge_key', None), charge_label_key=_get(cfg, 'charge_label_key', None))
+              charge_key=_get(cfg, 'total_charge_key', None), charge_label_key=_get(cfg, 'charge_label_key', None),
+              spin_key=_get(cfg, 'total_spin_key', None))
     all_graphs = load_3bpa_graphs(train_path, atomic_numbers, atom_energies, cutoff,
                                   frames=train_frames, **gl)
+    if not bool(_get(cfg, 'periodic', False)) and any('cell' in g.globals for g in all_graphs[:1000]):
+        # periodic graphs (pbc in the xyz) with a molecular model ignore the image shifts and the cell: stop
+        raise ValueError(f"{train_path} holds periodic structures (pbc) but the config has periodic false; "
+                         "set \"periodic\": true")
     valid_path = _get(cfg, 'valid_path', None)
     if valid_path:
         # fixed validation file (benchmark split); every frame of train_path is used for training

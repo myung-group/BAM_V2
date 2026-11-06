@@ -12,7 +12,10 @@ info key given by cfg "total_charge_key").  Charges are latent: trained from ene
 labels), as in latent-charge / 4G-HDNNP-type models.  Forces and stress follow from autodiff through the linear
 solve.  Config: "model": "RACE_LR", "long_range": {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6,
 "head_hidden": 32, "chi_init": "zero" | "pauling", "chi_init_scale": 3.0, "hard_init": 5.0}.  Optional charge
-loss on reference charges (e.g. Hirshfeld): cfg "charge_label_key" + "charge_weight" (train_3bpa; default off).  Periodic graphs: Ewald per graph (dense, for small cells; see design
+loss on reference charges (e.g. Hirshfeld): cfg "charge_label_key" + "charge_weight" (train_3bpa; default off).
+Charge / spin embedding: "charge_spin_embedding": true adds MLP(Q, 2S+1 - 1) (zero-initialised output) to the
+layer-0 scalars; the spin comes from data.globals['spin'] (cfg "total_spin_key", default 1).  "qeq": false switches
+the Qeq stratum off (embedding-only variant).  Periodic graphs: Ewald per graph (dense, for small cells; see design
 doc for limits).
 """
 from __future__ import annotations
@@ -27,7 +30,8 @@ from bam_omat24.long_range import coulomb_direct, ewald_matrix_rows, qeq_solve
 from bam_omat24.race_nnx import RACE, _dense
 
 LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_hidden": 32, "chi_scale": 1.0,
-               "hard_init": 5.0, "chi_init": "zero", "chi_init_scale": 3.0}
+               "hard_init": 5.0, "chi_init": "zero", "chi_init_scale": 3.0, "chi_init_missing": "error", "qeq": True,
+               "charge_spin_embedding": False, "cs_hidden": 32}
 
 # Pauling electronegativities (CRC Handbook values as in common tables; noble gases He, Ne, Ar have none).  Used only
 # by "chi_init": "pauling": chi0_Z = chi_init_scale * (chi_P(Z) - mean over the species), in eV.  chi_init_scale = 3 eV
@@ -51,33 +55,71 @@ class RACE_LR(RACE):
         self.lr = lr
         rngs = kw['rngs']
         n_species = kw['n_species']
-        n0 = sum(mul for mul, ir in e3nn.Irreps(kw['hidden_irreps']) if ir == e3nn.Irrep('0e'))
-        h = int(lr['head_hidden'])
-        self.lr_head1 = nnx.Linear(n0, h, rngs=rngs)
-        self.lr_head2 = nnx.Linear(h, 2, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
-        chi_init = str(lr['chi_init'])
-        if chi_init == 'zero':
-            chi0 = jnp.zeros((n_species,), jnp.float32)
-        elif chi_init == 'pauling':
-            zs = self.species_z
-            if zs is None or len(zs) != n_species:
-                raise ValueError("chi_init 'pauling' needs species_z (one atomic number per species)")
-            missing = [z for z in zs if z not in PAULING]
-            if missing:
-                raise ValueError(f"chi_init 'pauling': no Pauling electronegativity for Z={missing}")
-            v = jnp.asarray([PAULING[z] for z in zs], jnp.float32)
-            chi0 = float(lr['chi_init_scale']) * (v - jnp.mean(v))
-        else:
-            raise ValueError(f"long_range chi_init must be 'zero' or 'pauling', got {chi_init!r}")
-        self.chi0 = nnx.Param(chi0)
-        # hardness J = softplus(raw) > 0, initialised at hard_init (eV/e^2); Gaussian widths from covalent radii
-        raw = jnp.log(jnp.expm1(jnp.asarray(float(lr['hard_init']))))
-        self.hard0 = nnx.Param(jnp.full((n_species,), raw, jnp.float32))
-        radii = kw.get('species_radii') or [1.0] * n_species
-        self.log_sigma = nnx.Param(jnp.log(jnp.asarray(radii, jnp.float32)))
+        self.qeq = bool(lr['qeq'])
+        self.cs_embed = bool(lr['charge_spin_embedding'])
+        if self.qeq:     # electronegativity / hardness head, chi0, J0, sigma: only with the Qeq stratum
+            n0 = sum(mul for mul, ir in e3nn.Irreps(kw['hidden_irreps']) if ir == e3nn.Irrep('0e'))
+            h = int(lr['head_hidden'])
+            self.lr_head1 = nnx.Linear(n0, h, rngs=rngs)
+            self.lr_head2 = nnx.Linear(h, 2, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
+            chi_init = str(lr['chi_init'])
+            if chi_init == 'zero':
+                chi0 = jnp.zeros((n_species,), jnp.float32)
+            elif chi_init == 'pauling':
+                zs = self.species_z
+                if zs is None or len(zs) != n_species:
+                    raise ValueError("chi_init 'pauling' needs species_z (one atomic number per species)")
+                missing = [z for z in zs if z not in PAULING]
+                if missing and lr['chi_init_missing'] != 'mean':
+                    raise ValueError(f"chi_init 'pauling': no Pauling electronegativity for Z={missing} "
+                                     "(set long_range chi_init_missing 'mean' to start them at the species mean)")
+                known = [PAULING[z] for z in zs if z in PAULING]
+                fill = sum(known) / len(known)
+                v = jnp.asarray([PAULING.get(z, fill) for z in zs], jnp.float32)
+                chi0 = float(lr['chi_init_scale']) * (v - jnp.mean(v))
+            else:
+                raise ValueError(f"long_range chi_init must be 'zero' or 'pauling', got {chi_init!r}")
+            self.chi0 = nnx.Param(chi0)
+            # hardness J = softplus(raw) > 0, initialised at hard_init (eV/e^2); Gaussian widths from covalent radii
+            raw = jnp.log(jnp.expm1(jnp.asarray(float(lr['hard_init']))))
+            self.hard0 = nnx.Param(jnp.full((n_species,), raw, jnp.float32))
+            radii = kw.get('species_radii') or [1.0] * n_species
+            self.log_sigma = nnx.Param(jnp.log(jnp.asarray(radii, jnp.float32)))
+        # charge / spin embedding (optional): (Q, 2S+1 - 1) of the graph -> MLP -> added to the layer-0 scalars.
+        # Output layer at zero, so the model starts as RACE (also for a later fine-tuning from a RACE checkpoint).
+        if self.cs_embed:
+            n_e = self.embed_irreps.dim          # layer-0 features are scalars (0e) first, then the DeNS 1o block
+            self.cs_mlp1 = nnx.Linear(2, int(lr['cs_hidden']), rngs=rngs)
+            self.cs_mlp2 = nnx.Linear(int(lr['cs_hidden']), n_e, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
+        if not (self.qeq or self.cs_embed):
+            raise ValueError("long_range: qeq false and charge_spin_embedding false is plain RACE; use model RACE")
+
+    def _graph_globals(self, data, dt):
+        n_graphs = data.n_node.shape[0]
+        g = data.globals if isinstance(data.globals, dict) else {}
+        Q = g.get('charge')
+        S = g.get('spin')
+        Q = jnp.zeros((n_graphs,), dt) if Q is None else jnp.asarray(Q, dt).reshape(n_graphs)
+        S = jnp.ones((n_graphs,), dt) if S is None else jnp.asarray(S, dt).reshape(n_graphs)
+        return Q, S
+
+    def _prelude(self, positions, cell, cutoff, data, *args, **kw):
+        ctx = super()._prelude(positions, cell, cutoff, data, *args, **kw)
+        if self.cs_embed:
+            f = ctx['features']
+            dt = f.array.dtype
+            Q, S = self._graph_globals(data, dt)
+            z = self.cs_mlp2(jax.nn.silu(self.cs_mlp1(jnp.stack([Q, S - 1.0], axis=-1)))).astype(dt)   # (G, n_e)
+            n_nodes = f.shape[0]
+            node_graph = jnp.repeat(jnp.arange(data.n_node.shape[0]), data.n_node, total_repeat_length=n_nodes)
+            add = jnp.zeros_like(f.array).at[:, :z.shape[1]].set(z[node_graph])
+            ctx['features'] = e3nn.IrrepsArray(f.irreps, f.array + add)
+        return ctx
 
     def node_energies(self, positions, cell, cutoff, data, *args, **kw):
         out = super().node_energies(positions, cell, cutoff, data, *args, **kw)
+        if not self.qeq:
+            return out
         species = data.nodes['species']
         n_nodes = species.shape[0]
         n_graphs = data.n_node.shape[0]
@@ -89,8 +131,7 @@ class RACE_LR(RACE):
         chi = (self.chi0[...][species] + float(self.lr['chi_scale']) * z[:, 0]).astype(dt)
         hard = jax.nn.softplus(self.hard0[...][species] + z[:, 1]).astype(dt)
         sigma = jnp.exp(self.log_sigma[...][species]).astype(dt)
-        Q = data.globals.get('charge') if isinstance(data.globals, dict) else None
-        Q = jnp.zeros((n_graphs,), dt) if Q is None else jnp.asarray(Q, dt).reshape(n_graphs)
+        Q, _ = self._graph_globals(data, dt)
         same = (node_graph[:, None] == node_graph[None, :]) & node_mask[:, None] & node_mask[None, :]
         if self.periodic and cell is not None:
             gamma = self._ewald_batch(positions, cell, sigma, node_graph, same, n_graphs)
@@ -106,6 +147,10 @@ class RACE_LR(RACE):
         """Ewald matrix of a batch of periodic graphs: every row uses the cell of its own graph; pairs of different
         graphs are masked (memory N^2 x images + N x k-vectors; small cells, see the design doc)."""
         cells = cell.reshape(n_graphs, 3, 3)
+        # padding graphs have a zero cell (inverse infinite): give them a large finite cell. Their rows are masked
+        # anyway, but infinite values in a masked branch still turn gradients into NaN (0 * inf)
+        ok = (jnp.abs(jnp.linalg.det(cells)) > 1e-6)[:, None, None]
+        cells = jnp.where(ok, cells, 100.0 * jnp.eye(3, dtype=cells.dtype))
         lr = self.lr
         gamma = ewald_matrix_rows(positions, cells[node_graph], sigma, float(lr['ewald_alpha']),
                                   int(lr['ewald_n_real']), int(lr['ewald_n_recip']))

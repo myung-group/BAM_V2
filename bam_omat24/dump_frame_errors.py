@@ -53,7 +53,8 @@ def main():
     for xyz in args.xyz:
         frames = load_frames(xyz)
         graphs, has_forces = _frames_to_graphs(frames, atom_indices, atom_energies, cutoff,
-                                               charge_key=T._get(cfg, "total_charge_key", None))
+                                               charge_key=T._get(cfg, "total_charge_key", None),
+                                               spin_key=T._get(cfg, "total_spin_key", None))
         if cfg.get("x64"):
             graphs = T._cast_graphs(graphs, np.float64)
         graphs = _tag_frames(graphs)

@@ -7,6 +7,9 @@ import numpy as np
 import pytest
 
 from conftest import ATOMIC_NUMBERS, ATOM_ENERGIES, pad_single, random_rotation, as_float64
+# imported at module level: train_3bpa forces float32 when it is first imported, which would undo the x64 fixture
+from bam_omat24.train_3bpa import element_shell_radii, COVALENT_RADII  # noqa: E402
+from test_oam_stress import ZS, _cell, _graph, _f64  # noqa: E402
 
 MADELUNG_NACL = 1.747564594633
 
@@ -171,3 +174,156 @@ def test_ref_charges_in_graph(graph, frame):
                           charge_label_key='hirshfeld_charges')
     assert 'ref_charges' not in g0.nodes and set(g1.nodes) == set(g0.nodes) | {'ref_charges'}
     assert np.allclose(g1.nodes['ref_charges'], a.arrays['hirshfeld_charges'])
+
+
+def _cs_model(qeq, seed=0):
+    from flax import nnx
+    from bam_omat24.race_lr_nnx import RACE_LR
+    return RACE_LR(n_species=4, lmax=2, cutoff=5.0, hidden_irreps="16x0e + 16x1o + 16x2e", n_layers=2,
+                   radial_basis_size=8, radial_mlp_size=16, radial_mlp_layers=2, mlp_init_scale=4.0, shift=0.0,
+                   scale=1.0, avg_n_neighbors=20.0, atom_energies=ATOM_ENERGIES, l_train=True, periodic=False,
+                   x_mode="species", rngs=nnx.Rngs(seed), species_radii=[0.31, 0.76, 0.71, 0.66],
+                   long_range={"qeq": qeq, "charge_spin_embedding": True})
+
+
+def test_charge_spin_embedding(x64, graph):
+    """Embedding only (qeq false): equals RACE at init; once trained it depends on Q and 2S+1 and stays
+    rotation invariant with forces = -dE/dx."""
+    import jax
+    import jax.numpy as jnp
+    from conftest import make_model
+    g = pad_single(graph)
+    m_cs, g64 = as_float64(_cs_model(qeq=False), g)
+    m_race, _ = as_float64(make_model(seed=0), g)
+
+    def run(model, gr, Q=0.0, S=1.0):
+        gr = gr._replace(globals={**gr.globals, 'charge': np.array([Q, 0.0]), 'spin': np.array([S, 1.0])})
+        return model(jax.tree.map(jnp.asarray, gr))
+    e_race = float(m_race(jax.tree.map(jnp.asarray, g64))['energy'][0])
+    assert abs(float(run(m_cs, g64, 1.0, 3.0)['energy'][0]) - e_race) < 1e-9          # zero-initialised output
+    assert 'charges' not in run(m_cs, g64)
+    rng = np.random.default_rng(0)
+    m_cs.cs_mlp2.kernel.value = jnp.asarray(rng.normal(0, 0.3, m_cs.cs_mlp2.kernel.value.shape))
+    e00, e10, e03 = (float(run(m_cs, g64, Q, S)['energy'][0]) for Q, S in [(0, 1), (1, 1), (0, 3)])
+    assert abs(e10 - e00) > 1e-4 and abs(e03 - e00) > 1e-4
+    r0 = run(m_cs, g64, 1.0, 2.0)
+    u, _, vt = np.linalg.svd(random_rotation(3).astype(np.float64)); R = u @ vt
+    p = np.asarray(g64.nodes['positions'])
+    rot = run(m_cs, g64._replace(nodes={**g64.nodes, 'positions': p @ R.T}), 1.0, 2.0)
+    assert abs(float(rot['energy'][0]) - float(r0['energy'][0])) < 1e-9
+    h = 1e-5
+    pp, pm = p.copy(), p.copy(); pp[5, 1] += h; pm[5, 1] -= h
+    ep = float(run(m_cs, g64._replace(nodes={**g64.nodes, 'positions': pp}), 1.0, 2.0)['energy'][0])
+    em = float(run(m_cs, g64._replace(nodes={**g64.nodes, 'positions': pm}), 1.0, 2.0)['energy'][0])
+    assert abs(-(ep - em) / (2 * h) - float(r0['forces'][5, 1])) < 1e-6
+
+
+def test_charge_spin_embedding_with_qeq_and_options(x64, graph, frame):
+    import jax
+    import jax.numpy as jnp
+    from bam_omat24.race_lr_nnx import RACE_LR
+    from conftest import preprocess_graph, atomic_numbers_to_indices, CUTOFF
+    m, g = as_float64(_cs_model(qeq=True), pad_single(graph))
+    g = g._replace(globals={**g.globals, 'charge': np.array([1.0, 0.0]), 'spin': np.array([2.0, 1.0])})
+    out = m(jax.tree.map(jnp.asarray, g))
+    assert abs(float(np.asarray(out['charges'])[:int(g.n_node[0])].sum()) - 1.0) < 1e-10
+    with pytest.raises(ValueError):
+        RACE_LR(**{k: v for k, v in dict(n_species=4, lmax=1, cutoff=5.0, hidden_irreps="8x0e", n_layers=1,
+                radial_basis_size=4, radial_mlp_size=8, radial_mlp_layers=1, mlp_init_scale=4.0, shift=0.0,
+                scale=1.0, avg_n_neighbors=10.0, atom_energies=ATOM_ENERGIES, l_train=True, periodic=False,
+                x_mode="species").items()}, rngs=__import__('flax').nnx.Rngs(0),
+                long_range={"qeq": False, "charge_spin_embedding": False})
+    a = frame.copy(); a.calc = frame.calc; a.info['spin'] = 3
+    g1 = preprocess_graph(a, atomic_numbers_to_indices(ATOMIC_NUMBERS), ATOM_ENERGIES, CUTOFF, spin_key='spin')
+    g0 = preprocess_graph(a, atomic_numbers_to_indices(ATOMIC_NUMBERS), ATOM_ENERGIES, CUTOFF)
+    assert float(g1.globals['spin'][0]) == 3.0 and 'spin' not in g0.globals
+
+
+def _periodic_lr_model(ewald):
+    from flax import nnx
+    from bam_omat24.race_lr_nnx import RACE_LR
+    return RACE_LR(n_species=len(ZS), lmax=2, cutoff=5.0, hidden_irreps="16x0e + 16x1o + 16x2e", n_layers=2,
+                   radial_basis_size=8, radial_mlp_size=16, radial_mlp_layers=2, mlp_init_scale=4.0, shift=0.0,
+                   scale=1.0, avg_n_neighbors=30.0, atom_energies=[0.0] * len(ZS), l_train=True, periodic=True,
+                   x_mode="basis", x_norm="hill", residual="chebyshev", layer_scale=0.5, update="linear",
+                   readout_mode="gated", message_norm="avg", radial_prior={"type": "gaussian", "sigma": 0.224},
+                   radial_shells=True, species_shell_radii=element_shell_radii(ZS), pair_repulsion="uff",
+                   pair_repulsion_switch=1.25, pair_repulsion_switch_width=0.3, species_z=ZS,
+                   species_radii=[COVALENT_RADII[z] for z in ZS], rngs=nnx.Rngs(0),
+                   long_range={"charge_spin_embedding": True, "chi_init": "pauling", **ewald})
+
+
+def test_race_lr_periodic_stress_forces_translation(x64):
+    """Periodic RACE_LR (Ewald + embedding, Q = +1, 2S+1 = 2): stress = (1/V) dE/d(strain), forces = -dE/dx, and
+    the energy is unchanged when one atom moves by a lattice vector (converged Ewald sums)."""
+    import jax
+    import jax.numpy as jnp
+    a = _cell(1)
+    model, _ = as_float64(_periodic_lr_model({"ewald_alpha": 0.5, "ewald_n_real": 3, "ewald_n_recip": 10}), _graph(a))
+    rng = np.random.default_rng(0)
+    model.cs_mlp2.kernel.value = jnp.asarray(rng.normal(0, 0.3, model.cs_mlp2.kernel.value.shape))
+
+    def prep(atoms):
+        g = _f64(_graph(atoms))
+        return g._replace(globals={**g.globals, 'charge': np.array([1.0]), 'spin': np.array([2.0])})
+    g = prep(a)
+    out = model(g)
+    assert abs(float(np.asarray(out['charges']).sum()) - 1.0) < 1e-10
+    stress = np.asarray(out["stress"])[0]
+    cell0 = np.asarray(g.globals["cell"][0]); pos0 = np.asarray(g.nodes["positions"])
+    vol = abs(np.linalg.det(cell0))
+
+    def e_of(pos, cell):
+        gg = g._replace(nodes={**g.nodes, "positions": pos},
+                        globals={**g.globals, "cell": cell[None], "volume": np.array([abs(np.linalg.det(cell))])})
+        return float(np.asarray(model(gg)["energy"])[0])
+    h = 1e-5
+    fd = []
+    for (u, v) in [(0, 0), (1, 1), (2, 2), (1, 2), (0, 2), (0, 1)]:
+        eps = np.zeros((3, 3)); eps[u, v] += h / 2; eps[v, u] += h / 2
+        fd.append((e_of(pos0 @ (np.eye(3) + eps).T, cell0 @ (np.eye(3) + eps).T)
+                   - e_of(pos0 @ (np.eye(3) - eps).T, cell0 @ (np.eye(3) - eps).T)) / (2 * h) / vol)
+    assert np.allclose(stress, np.array(fd), rtol=1e-4, atol=1e-7), (stress, fd)
+    pp, pm = pos0.copy(), pos0.copy(); pp[2, 0] += h; pm[2, 0] -= h
+    assert abs(-(e_of(pp, cell0) - e_of(pm, cell0)) / (2 * h) - float(out['forces'][2, 0])) < 1e-6
+    from ase.calculators.singlepoint import SinglePointCalculator
+    b = a.copy(); b.positions[4] += a.cell[0] - a.cell[2]
+    b.calc = SinglePointCalculator(b, energy=-50.0, forces=np.zeros((len(b), 3)), stress=np.zeros(6))
+    e_b = float(np.asarray(model(prep(b))["energy"])[0])
+    assert abs(e_b - float(np.asarray(out["energy"])[0])) < 1e-6, (e_b, float(out["energy"][0]))
+
+
+def test_race_lr_periodic_under_jit(x64):
+    """The Ewald stratum must trace under jax.jit (the trainer jits the step): same energy and stress as eager."""
+    import jax
+    a = _cell(2)
+    model, _ = as_float64(_periodic_lr_model({"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6}), _graph(a))
+    g = _f64(_graph(a))
+    g = g._replace(globals={**g.globals, 'charge': np.array([0.0]), 'spin': np.array([1.0])})
+    eager = model(g)
+    jitted = jax.jit(lambda gg: model(gg))(g)
+    assert abs(float(eager['energy'][0]) - float(jitted['energy'][0])) < 1e-9
+    assert np.allclose(np.asarray(eager['stress']), np.asarray(jitted['stress']), atol=1e-10)
+
+
+def test_race_lr_periodic_float32_gradients_finite():
+    """float32, a batch with several padding graphs (zero cells) and large k vectors (exp(-k^2/4 alpha^2) underflows):
+    the gradients of energy, forces and stress with respect to every parameter stay finite."""
+    import jax
+    import jax.numpy as jnp
+    import jraph
+    from flax import nnx
+    gs = [_graph(_cell(s)) for s in (0, 1)]
+    b = jraph.batch(gs)
+    b = jraph.pad_with_graphs(b, int(b.n_node.sum()) + 5, int(b.n_edge.sum()) + 40, 6)
+    b = b._replace(globals={**b.globals, 'charge': np.zeros(6, np.float32), 'spin': np.ones(6, np.float32)})
+    b = jax.tree.map(jnp.asarray, b)
+    m = _periodic_lr_model({"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 10})
+    gd, p = nnx.split(m, nnx.Param)
+
+    def loss(p):
+        out = nnx.merge(gd, p)(b)
+        return jnp.sum(out['energy'][:2]) + jnp.sum(out['forces'] ** 2) + 1e3 * jnp.sum(out['stress'][:2] ** 2)
+    g = jax.grad(loss)(p)
+    bad = [jax.tree_util.keystr(k) for k, v in jax.tree_util.tree_leaves_with_path(g) if not bool(jnp.all(jnp.isfinite(v)))]
+    assert not bad, bad

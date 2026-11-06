@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 
 import jax
+import numpy as np
 import jax.numpy as jnp
 
 K_COULOMB = 14.399645
@@ -62,14 +63,17 @@ def ewald_matrix_rows(pos, cell_rows, sigma, alpha, n_real: int = 2, n_recip: in
     s = _pair_sigma(sigma)[:, :, None]
     real = jnp.where(zero, 0.0, (jax.scipy.special.erf(r / (math.sqrt(2.0) * s)) - jax.scipy.special.erf(alpha * r)) / r)
     gamma = K_COULOMB * jnp.sum(real, axis=-1)
-    rng_m = jnp.arange(-n_recip, n_recip + 1)
-    m = jnp.stack(jnp.meshgrid(rng_m, rng_m, rng_m, indexing='ij'), -1).reshape(-1, 3).astype(pos.dtype)
-    m = m[jnp.any(m != 0, axis=-1)]                                 # (M, 3), static
+    rng_m = np.arange(-n_recip, n_recip + 1)                        # numpy: a static constant also under jit
+    m = np.stack(np.meshgrid(rng_m, rng_m, rng_m, indexing='ij'), -1).reshape(-1, 3)
+    m = jnp.asarray(m[np.any(m != 0, axis=-1)], dtype=pos.dtype)    # (M, 3), m = 0 excluded
     vol = jnp.abs(jnp.linalg.det(cell_rows))                        # (N,)
     recip = 2.0 * math.pi * jnp.swapaxes(jnp.linalg.inv(cell_rows), -1, -2)       # (N, 3, 3) rows b_k
     k = jnp.einsum('mc,icd->imd', m, recip)                         # (N, M, 3)
     k2 = jnp.sum(k * k, axis=-1)
-    w = jnp.sqrt((4.0 * math.pi * K_COULOMB / vol)[:, None] * jnp.exp(-k2 / (4.0 * alpha ** 2)) / k2)   # (N, M)
+    # sqrt(4 pi K / V * exp(-k^2 / 4 alpha^2) / k^2) written without a sqrt of the exponential: in float32 the
+    # exponential underflows to 0 at large k, and d sqrt(x)/dx at x = 0 is infinite (NaN gradients, e.g. stress)
+    w = (jnp.sqrt(4.0 * math.pi * K_COULOMB / vol)[:, None] * jnp.exp(-k2 / (8.0 * alpha ** 2))
+         * jax.lax.rsqrt(k2))                                       # (N, M)
     ph = jnp.einsum('imd,id->im', k, pos)
     C, S = w * jnp.cos(ph), w * jnp.sin(ph)
     gamma = gamma + C @ C.T + S @ S.T

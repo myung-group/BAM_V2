@@ -94,8 +94,10 @@ def test_race_lr_forces_rotation_and_charge(x64, graph):
         ep = float(run(g._replace(nodes={**g.nodes, 'positions': pp}), 0.0)['energy'][0])
         em = float(run(g._replace(nodes={**g.nodes, 'positions': pm}), 0.0)['energy'][0])
         assert abs(-(ep - em) / (2 * h) - float(r0['forces'][i, c])) < 1e-6
-    # rotation invariance
-    R = random_rotation(3).astype(np.float64)
+    # rotation invariance. random_rotation returns float32 (orthogonal only to ~5e-8, which alone moves E by ~2e-9
+    # here, for RACE as well), so snap it to the nearest exact float64 rotation (polar factor) before the 1e-9 check.
+    u, _, vt = np.linalg.svd(random_rotation(3).astype(np.float64))
+    R = u @ vt
     rot = run(g._replace(nodes={**g.nodes, 'positions': p @ R.T}), 0.0)
     assert abs(float(rot['energy'][0]) - float(r0['energy'][0])) < 1e-9
     # the energy depends on the total charge (charge-dependent model) and the charges sum to it

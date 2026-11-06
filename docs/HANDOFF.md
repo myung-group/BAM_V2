@@ -102,15 +102,13 @@ exact conversion commands and splits, and the md5s of the outputs. The converter
 
 ## 6. State on 2026-11-06 (allocation exhausted; no new jobs possible)
 
-**Running when the session ended** (HANGANG job ids):
-- `1224124 sz100k` (4 GPUs): L5x64, L5x128, L5x192, L4x128, 30 epochs on 100k OMat24.
-- `1224125 sz100k_b` (2 GPUs): L6x128 and L5x128 with AMSGrad (an optimizer control, not a size candidate).
-- `1221822 bamjax_oam`: the user's own BAM-GAMP job. Do not touch it.
-
-When the size screening finishes, apply the rule (validation only):
-`python -I runs/diag/select_size.py sz100k_L5x64_omat24_v2_s42 sz100k_L5x128_omat24_v2_s42 sz100k_L5x192_omat24_v2_s42 sz100k_L4x128_omat24_v2_s42 sz100k_L6x128_omat24_v2_s42`.
-Report the AMSGrad control separately (SOAP vs AMSGrad on OAM), then update README section "Model size on 100k OMat24 structures".
-Epoch times measured: 834 s (L4x128), 1010 s (L5x128), 1196 s (L6x128), 1419 s (L5x192) on one GH200, float64.
+**Size screening finished** (2026-11-06 19:21; jobs 1224124 / 1224125 COMPLETED):
+- The rule selects **L5x64** (11.7M parameters): final-epoch validation F RMSE 281.0, the only size within 2 %.
+- All sizes are within the epoch-to-epoch noise in force MAE (148–155 meV/Å).
+- The AMSGrad control ties with SOAP on validation (last-5-epoch F MAE 150.6 vs 152.3) and is 1.5× faster per epoch.
+- Table and figure: README "Model size on 100k OMat24 structures". Reproduce with
+  `python -I runs/diag/select_size.py sz100k_L5x64_omat24_v2_s42 sz100k_L5x128_omat24_v2_s42 sz100k_L5x192_omat24_v2_s42 sz100k_L4x128_omat24_v2_s42 sz100k_L6x128_omat24_v2_s42 --controls sz100k_L5x128amsgrad_omat24_v2_s42`.
+- The user's own job `1221822 bamjax_oam` (BAM-GAMP) was still running. Do not touch it.
 
 **Done in this session** (numbers in README):
 - OAM 10k subsets: RACEv2 beats V1 on all three datasets. Settings adopted for OAM: float64 (SOAP diverges in
@@ -155,7 +153,7 @@ sbatch). Every one of those jobs was written but not submitted.
      pre-registered".
    - Launcher: `runs/diag/train_runs.sh <run> ...` (one GPU per run).
    - Results go into the README ablation table and table 6b of the methods PDF.
-3. **100k size screening**: apply `select_size.py` (§6). Report the AMSGrad control separately, judged on
+3. **100k size screening** (done, see §6). The AMSGrad comparison is judged on
    **validation only**: final-epoch values, plus the mean of the last 5 epochs and the force MAE as secondary numbers.
    The validation curves fluctuate by 5–10 % per epoch, and the train loss (raw weights, running mean) is not
    comparable with validation (EMA weights).

@@ -197,13 +197,41 @@ Notes from the screening:
   Adam for the species-indexed tables keeps the force error of full SOAP and is 16–22 % faster; it is used from
   here on. A 6 Å cutoff is not better on these subsets and is 12–17 % slower; 5 Å is kept.
 
-#### Model size on 100k OMat24 structures (in progress)
+#### Model size on 100k OMat24 structures
 
-100k training / 2k validation / 1k test structures, float64, species tables by Adam, 30 epochs. Candidates: L5×64,
-L5×128, L5×192, L4×128, L6×128 (layers × channels), plus L5×128 with AMSGrad as an optimizer control. The selection
-rule was fixed before the runs (`docs/size_screening_protocol_2026-11-03.md`, validation only): candidates within
-+10 % of the best validation energy RMSE, then the lowest validation force RMSE, ties (< 2 %) to the smaller model.
-Time per epoch on one GH200: 834 s (L4×128), 1010 s (L5×128), 1196 s (L6×128), 1419 s (L5×192).
+Setup: 100k training / 2k validation / 1k test structures, float64, species tables by Adam, 30 epochs, 1 seed.
+The selection rule was fixed before the runs (`docs/size_screening_protocol_2026-11-03.md`), on validation only:
+1. keep the candidates within +10 % of the best final-epoch validation energy RMSE;
+2. among them, take the lowest validation force RMSE;
+3. ties (< 2 %) go to the smaller model.
+
+`runs/diag/select_size.py` applies the rule. The L5×128 run with AMSGrad is an optimizer control, not a size
+candidate.
+
+![Size screening curves](docs/fig_size_screen_100k.png)
+
+Validation errors (E in meV/atom, F in meV/Å). The first four columns use the final-epoch EMA weights; the
+last-5-epoch mean is a secondary number, not part of the rule.
+
+| Model | Params | E RMSE | E MAE | F RMSE | F MAE | F MAE, last-5-epoch mean | Time per epoch |
+|---|---|---|---|---|---|---|---|
+| **L5×64 (selected)** | 11.7 M | 106.3 | 61.9 | **281.0** | 148.1 | 150.6 | 515 s |
+| L5×128 | 45.9 M | **103.4** | 60.9 | 296.5 | 152.0 | 152.3 | 766 s |
+| L4×128 | 36.0 M | 105.3 | 61.2 | 296.8 | 152.2 | 151.8 | 605 s |
+| L5×192 | 102.5 M | 105.1 | 62.6 | 299.3 | 152.2 | 154.5 | 1231 s |
+| L6×128 | 55.7 M | 103.8 | 59.9 | 314.9 | 152.2 | 154.6 | 956 s |
+| L5×128, AMSGrad (control) | 45.9 M | 100.4 | 56.7 | 272.3 | 145.7 | 150.6 | 517 s |
+
+- **Selection.** All five sizes fall within +10 % in energy. L5×64 has the lowest force RMSE, and no other size is
+  within 2 % of it, so the rule selects L5×64 (4× fewer parameters than L5×128).
+- **Size barely matters.** The force MAE of all sizes lies within 148–155 meV/Å, about the epoch-to-epoch
+  fluctuation (5–10 %). At 100k structures and 30 epochs, data, not model size, limits the error.
+- **Deeper model.** L6×128 has repeated force-RMSE spikes; one epoch reached 2,944 meV/Å.
+- **Optimizer.** AMSGrad and SOAP tie on validation: last-5-epoch force MAE 150.6 vs 152.3 (L5×128). AMSGrad is
+  1.5× faster per epoch, while on 3BPA SOAP is clearly better. Planned next: plain Adam, AMSGrad in float32, a
+  second seed, and the V1 recipe on the same 100k data.
+- **Cost of 10× more data.** From 10k to 100k structures, the test errors of L5×128 fell to about 0.57× (energy MAE
+  110 → 62 meV/atom, force MAE 261 → 153 meV/Å), with 30 instead of 100 epochs.
 
 ### RACE_LR: charge equilibration and long-range electrostatics (preliminary, 2026-11-06)
 
@@ -285,8 +313,8 @@ See "Charge handling variants" above. Next checks:
 - the error at reduced cutoff, compared with RACE;
 - the hardness and electronegativity initialisation, or an optional Hirshfeld charge loss as in 4G-HDNNP.
 
-Work in progress: 100k size comparison, ablations without shell channels / UFF / SOAP (AMSGrad), last-layer Bayesian
-uncertainty, water rerun with repulsion, MD22.
+Work in progress: optimizer/precision checks at 100k, ablations without shell channels / UFF / SOAP (AMSGrad),
+last-layer Bayesian uncertainty, water rerun with repulsion, MD22.
 
 ## LAMMPS (`pair_style race`, experimental)
 

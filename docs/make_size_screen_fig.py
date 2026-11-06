@@ -1,4 +1,4 @@
-"""100k OMat24 size screening: per-epoch training losses and validation errors of the size candidates (SOAP with
+"""100k OMat24 size screening: per-epoch validation loss and errors of the size candidates (SOAP with
 species tables by Adam, float64) and the optimizer control (L5x128 with AMSGrad), runs sz100k_<L>x<H>[amsgrad]_omat24_v2_s42.
 
     ~/.conda/envs/bam_cue/bin/python docs/make_size_screen_fig.py  -> docs/fig_size_screen_100k.{png,pdf}
@@ -20,8 +20,8 @@ RUNS = [("L5x64", "#2a78d6", "o", "-"), ("L5x128", "#eb6834", "s", "-"), ("L5x19
         ("L5x128amsgrad", "#eb6834", "x", "--")]
 LABEL = {"L5x128amsgrad": "L5x128 AMSGrad (control)"}
 INK, MUTED, GRID = "#1f2328", "#5b6068", "#e3e5e8"
-PANELS = [("train_E", "train energy loss (Huber, per atom)"), ("train_F", "train force loss (Huber)"),
-          ("val_E", "valid energy RMSE (meV/structure)"), ("val_F", "valid force RMSE (meV/Å)")]
+PANELS = [("val_loss", "valid loss (Huber, EMA weights)"), ("val_Emae", "valid energy MAE (meV/structure)"),
+          ("val_F", "valid force RMSE (meV/Å)"), ("val_Fmae", "valid force MAE (meV/Å)")]
 
 
 def read_log(run):
@@ -34,7 +34,8 @@ def read_log(run):
             continue
         p = [x.split() for x in line.split("|")]
         tr = [float(x) for x in p[1]]; va = [float(x) for x in p[2]]
-        rows[int(p[0][2])] = dict(time=float(p[0][3]), train_E=tr[1], train_F=tr[2], val_E=va[1], val_F=va[2])
+        rows[int(p[0][2])] = dict(time=float(p[0][3]), train_E=tr[1], train_F=tr[2], val_loss=va[0], val_E=va[1],
+                                  val_F=va[2], val_Emae=va[3], val_Fmae=va[4])
     if not rows:
         return None
     eps = sorted(rows)
@@ -86,12 +87,12 @@ def main():
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     for ext in ("png", "pdf"):
         fig.savefig(os.path.join(ROOT, "docs", f"fig_size_screen_100k.{ext}"), dpi=170)
-    print(f"{'run':26s} {'epoch':>5s} {'s/epoch':>8s} {'valid E RMSE':>13s} {'valid F RMSE':>13s}")
+    print(f"{'run':26s} {'epoch':>5s} {'s/epoch':>8s} {'valid E MAE':>12s} {'valid F RMSE':>13s} {'valid F MAE':>12s}")
     for name, *_ in RUNS:
         lg = logs[name]
         if lg is not None:
             print(f"{LABEL.get(name, name):26s} {lg['epoch'][-1]:5d} {np.median(lg['time'][1:]):8.0f} "
-                  f"{lg['val_E'][-1]:13.1f} {lg['val_F'][-1]:13.2f}")
+                  f"{lg['val_Emae'][-1]:12.1f} {lg['val_F'][-1]:13.2f} {lg['val_Fmae'][-1]:12.2f}")
 
 
 if __name__ == "__main__":

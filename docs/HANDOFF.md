@@ -189,6 +189,11 @@ sbatch). Every one of those jobs was written but not submitted.
      (`data_prep/convert_4ghdnnp.py`, `docs/DATASETS.md` §16; copy `data_local/4ghdnnp/` to HANGANG). Decisions
      (2026-11-06): `atom_energies` = the train-only offsets of `e0.json`, the seeded 90/10 split of `split.json`, and
      plain 3D Ewald with the default α 0.3 / n_real 2 / n_recip 6 for Au2/MgO (converged; no dipole correction);
+     A local small-budget GPU test exists (`docs/local_test_report.md` §7). Ag3 shows a large gain for RACE_LR, the
+     carbon chain about 25 %, and NaCl none at that budget. Raw energy errors of the multi-composition systems are
+     dominated by a per-composition offset, so report them with a train-only per-composition gauge refit (or add a
+     per-species `gauge_refit`: decision for the user). Evaluate with `dump_frame_errors` / `eval_sets` from
+     2026-11-06 on, since they now pass `total_charge_key`;
    - step 3: SPICE / OMol25 and LAMMPS long-range coupling.
    See `docs/RACE_LR_design.md` §3.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at

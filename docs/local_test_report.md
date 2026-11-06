@@ -182,3 +182,92 @@ Epoch 1 includes the JIT compilation.
 - Python 3.12 came from conda, because the system Python is 3.10.
 - pip's NVIDIA extra index fails DNS on this PC, so uv was used.
 - `tqdm` and `natsort` must be added to the install line of `docs/LOCAL_TEST_PROMPT.md`.
+
+## 7. Local GPU test on the 4G-HDNNP systems (reduced budget, 2026-11-06 evening)
+
+The user asked whether step 2 can run on this PC and said that a data subset is fine for a local test. These
+numbers are a **small-budget check, not the step-2 result**. The HPC runs (full training split, full recipe) remain
+the result.
+
+**Setup.**
+- GPU: NVIDIA RTX 4060 Ti 16 GB (driver 535, CUDA 12.2), shared with the desktop.
+- Environment: the user's conda env `bam_cue` (jax 0.12.0.1 with jax-cuda12, cuequivariance 0.13.0), run unchanged.
+  The repo's `bam_omat24` was the one imported, which was checked. That env also has an editable install of
+  another clone.
+- **Limited GPU use** (`runs/diag/local_4g/run_limited.sh`), because full GPU use had lagged the desktop:
+  - CUDA MPS from a user-level daemon with its own pipe directory, at most 50 % of the SMs
+    (`GPU_SM_PCT`, set it to 30 if the desktop still lags);
+  - XLA with no preallocation, at most 40 % of the GPU memory;
+  - `nice 10` for the CPU side.
+- Model: the r37_uffw03 recipe (cue, float64, SOAP, UFF repulsion) with a **reduced size**: hidden 64, 3 layers,
+  lmax 2.
+  - With the full size (5.9 M parameters), an epoch of 1000 carbon-chain structures took 183 s. The reduced model
+    took 11 s.
+  - Float64 on a GeForce card is slow, and float64 was kept on purpose.
+  - RACE_LR and RACE use exactly the same settings. `avg_n_neighbors` is the value of each training subset.
+- Data (`data_prep/subset_4ghdnnp.py`):
+  - The training set is 1000 structures, 500 of each charge state or structure family. For Au2/MgO it is 100
+    structures, 50 of each, because one Au2/MgO structure costs about 76 carbon-chain structures.
+  - The test set is the full test split.
+  - Configs are in `input/local_4g/`. The runs used 200 epochs, and 20 for Au2/MgO, run by
+    `runs/diag/local_4g/queue.sh`.
+- Wall time: Ag3 25 min, carbon chain 37 min and NaCl 39 min per model, and Au2/MgO 6 min. No NaN occurred and
+  every run exited 0.
+
+**Evaluation.**
+- Per-frame errors come from `bam_omat24.dump_frame_errors`.
+- Fix: it, and `eval_sets`, now pass the config's `total_charge_key`. Before, they built every graph as neutral, so
+  RACE_LR was evaluated with the wrong total charge. The trainer's own test evaluation was already correct.
+  The per-frame numbers match the trainer's numbers.
+- The raw energy errors of the carbon chain and NaCl were dominated by a constant offset per composition, in the
+  training set as well. The trainer's `gauge_refit` is a single per-atom shift, which cannot remove an offset
+  between two compositions.
+- So the table also gives a **per-composition gauge refit**: a least-squares fit of the training residuals on the
+  element counts, applied to the test set (`runs/diag/local_4g/by_state.py`).
+  - It uses no test labels.
+  - For Ag3 (one element) it is a single shift and cannot hide a charge-state error.
+
+Test split, energy RMSE in meV (raw → after the per-composition refit), force RMSE in meV/Å:
+
+| system | state | RACE_LR E | RACE E | RACE_LR F | RACE F |
+|---|---|---|---|---|---|
+| Ag3 | Ag3+ | 2.0 → 2.2 | 116 → 299 | 2.9 | 164 |
+| Ag3 | Ag3− | 39 → 39 | 1601 → 1567 | 18.7 | 5651 |
+| Ag3 | all | **28.9 → 28.8** | **1178 → 1169** | **13.9** | **4152** |
+| carbon chain | C10H2 | 41.5 → 3.2 | 273 → 4.6 | 17.5 | 25.4 |
+| carbon chain | C10H3+ | 2.1 → 2.1 | 121 → 2.5 | 12.2 | 13.1 |
+| carbon chain | all | 29.3 → **2.7** | 211 → **3.7** | **15.1** | **20.2** |
+| NaCl | Na8Cl8+ | 72 → 30 | 144 → 29 | 47.0 | 44.8 |
+| NaCl | Na9Cl8+ | 220 → 23 | 28 → 25 | 37.0 | 41.7 |
+| NaCl | all | 163 → 26.8 | 104 → 27.1 | 42.4 | 43.3 |
+| Au2/MgO | all (100 train, 20 ep) | 1032 → 284 | 268 → 269 | 140.7 | 141.5 |
+
+**Reading.**
+1. **Ag3: a clear, structural gain.** RACE cannot tell Ag3+ from Ag3− where their geometries overlap.
+   - Its Ag3− errors have a long tail: the median |ΔE| is 31 meV, but the 99th percentile is 7.1 eV. Single frames
+     reach a force RMSE of 76 eV/Å.
+   - Its training was unstable. The best checkpoint is epoch 45, and the validation force RMSE was 14.9 eV/Å at
+     epoch 200.
+   - RACE_LR is stable and about 40 times better in energy and 300 times better in force.
+2. **Carbon chain: a modest gain.**
+   - The large raw energy difference (29 vs 211 meV) is a composition offset and not a physics effect: a local
+     model can represent the offset between C10H2 and C10H3+.
+   - After the refit, RACE_LR is better by about 25 % in energy and in force. The gain is largest for the neutral
+     C10H2 force (17.5 vs 25.4 meV/Å).
+   - **An earlier chat message claimed a 7–10× energy gain here. That was this offset artifact.**
+3. **NaCl: no difference at this budget** (26.8 vs 27.1 meV, 42.4 vs 43.3 meV/Å).
+   - The paper shows the NaCl effect along the path of one Na atom. The random test split may not resolve it, and
+     both models are far from converged.
+   - On the HPC, also evaluate the path or scan if it can be built from the data. The archive marks no path.
+4. **Au2/MgO: pipeline check only.** The periodic Ewald stratum trains on the GPU without problems. 100 structures
+   and 20 epochs say nothing about doping.
+
+**Consequences for the HPC step 2.**
+- Report the energy errors with a per-composition gauge refit (train only), or train long enough that the
+  composition offset converges. Otherwise multi-composition systems (carbon chain, NaCl, Au2/MgO) compare offsets
+  rather than models.
+  - The cleanest fix is a per-species version of `gauge_refit` in the trainer. It is not implemented, and it is a
+    decision for the user.
+- Use `dump_frame_errors` / `eval_sets` from this commit on, so that RACE_LR gets the total charge.
+- Watch for RACE instability on Ag3. Its validation loss jumps after epoch 45, so the best-checkpoint selection
+  matters.

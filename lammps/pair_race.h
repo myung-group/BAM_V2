@@ -11,7 +11,12 @@
      ghost : any number of ranks / GPUs / nodes; the graph has owned + ghost atoms, the ghost cutoff is raised to
              n_layers * cutoff + skin so the owned atoms see their full receptive field; the energy is the sum over
              the owned atoms, forces on ghosts are sent back to their owners by LAMMPS (newton pair on).
-     auto  : owner for one rank, ghost otherwise.
+     halo  : any number of ranks; per-layer halo exchange (needs an export with --staged-buckets).  The graph has
+             owned + ghost atoms with the normal ghost cutoff (cutoff + skin) and edges for owned centres only; the
+             node features are exchanged with forward communication after every layer and their cotangents with
+             reverse communication in the backward pass.  Memory and work per rank scale with the owned atoms
+             instead of the (n_layers x cutoff) ghost shell of mode ghost.
+     auto  : owner for one rank; halo for several ranks when the export has staged functions, ghost otherwise.
    gpu auto: device = node-local rank (SLURM_LOCALID / OMPI_COMM_WORLD_LOCAL_RANK / MPI_LOCALRANKID / PMI_LOCAL_RANK)
              modulo the visible GPUs; with one visible GPU per rank (recommended) it is 0.
    units   : metal (eV, A) or real (kcal/mol, A; energies, forces and virial scaled).
@@ -47,22 +52,34 @@ class PairRACE : public Pair {
   void coeff(int, char **) override;
   void init_style() override;
   double init_one(int, int) override;
+  int pack_forward_comm(int, int *, double *, int, int *) override;
+  void unpack_forward_comm(int, int, double *) override;
+  int pack_reverse_comm(int, int, double *) override;
+  void unpack_reverse_comm(int, int *, double *) override;
 
  protected:
   void allocate();
   int local_rank() const;
+  void compute_halo(int eflag, int vflag);
+  void comm_rows(std::vector<double> &a, int dim, bool forward);
 
   std::unique_ptr<racev2::Model> model;
   std::string plugin_so, export_dir;
   int gpu_index;              // -1 = auto
-  int mode;                   // 0 auto, 1 owner, 2 ghost
+  int mode;                   // 0 auto, 1 owner, 2 ghost, 3 halo
   bool ghost_mode;            // resolved in init_style
+  bool halo_mode;             // resolved in init_style
   double cutoff, cutoffsq, energy_unit;
   std::vector<int> type2species;    // LAMMPS type (1-based) -> model species index, -1 = unmapped
   std::vector<double> species_e0;   // per-species reference energy added to the model energy (eV)
   // work arrays
   std::vector<int> species, receivers, senders;
   std::vector<double> rvec, e_atom, dEdr;
+  // halo mode: node features h_0..h_L and their cotangents (rows = LAMMPS atom index), comm target
+  std::vector<std::vector<double>> hs, cts;
+  double t_comm = 0.0;
+  double *comm_ptr = nullptr;
+  int comm_dim = 0;
 };
 
 }    // namespace LAMMPS_NS

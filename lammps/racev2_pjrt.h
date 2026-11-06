@@ -10,6 +10,8 @@
 // per-species E0 (see atom_energy0()).  Forces: F_i += g, F_j -= g; virial W = -sum r (x) g.
 #pragma once
 
+#include <cstdint>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -17,6 +19,7 @@ struct PJRT_Api;
 struct PJRT_Client;
 struct PJRT_Device;
 struct PJRT_LoadedExecutable;
+struct PJRT_Buffer;
 
 namespace racev2 {
 
@@ -24,6 +27,14 @@ struct Bucket {
   int n_pad = 0, e_pad = 0;
   std::string file;
   PJRT_LoadedExecutable* exe = nullptr;  // compiled on first use
+};
+
+// Per-layer functions of one bucket for the halo-exchange mode (export_lammps.py --staged-buckets).
+struct StagedBucket {
+  int n_pad = 0, e_pad = 0;
+  std::string stem;
+  PJRT_LoadedExecutable *prelude = nullptr, *prelude_vjp = nullptr;
+  std::vector<PJRT_LoadedExecutable*> layer, layer_vjp;   // compiled on first use
 };
 
 class Model {
@@ -45,6 +56,31 @@ class Model {
                         const int* senders, const double* rvec, std::vector<double>& e_atom_pad,
                         std::vector<double>& dEdr_pad);
 
+  // ---- staged (per-layer halo exchange) evaluation, one call sequence per force evaluation:
+  //   staged_begin -> staged_prelude -> [forward comm h_0] -> for i: staged_layer(i) -> [forward comm h_{i+1}]
+  //   -> for i = L-1..0: staged_layer_vjp(i) -> [reverse comm of ct_h_i, ghost rows zeroed] -> staged_finish
+  // Node rows: 0..n_local-1 owned, n_local..n-1 ghosts (copies of atoms owned elsewhere or periodic images),
+  // edges only for owned receivers.  Host feature arrays have staged_n_pad() rows of staged_dims()[i] values.
+  bool has_staged() const { return !staged_.empty(); }
+  const std::vector<int>& staged_dims() const { return st_dims_; }
+  int staged_dim_a() const { return st_dim_a_; }
+  bool staged_chebyshev() const { return st_cheb_; }
+  void staged_begin(int n, int e, int n_local, const int* species, const int* receivers, const int* senders,
+                    const double* rvec);
+  int staged_n_pad() const;
+  double staged_prelude(std::vector<double>& h0);
+  // h_prev: the layer input after forward communication (kept on the device for the backward pass)
+  double staged_layer(int i, const double* h_prev, std::vector<double>& h_new);
+  // ct_h_new: cotangent of the layer output (after reverse communication); returns the cotangent of the layer
+  // input (including the Chebyshev contribution of layer i+1, accumulated on the device), to be reverse
+  // communicated.  The cotangents of the atomic basis and of rvec are accumulated on the device.
+  void staged_layer_vjp(int i, const double* ct_h_new, std::vector<double>& ct_h_prev);
+  // seconds spent in executions, uploads and downloads since construction (RACEV2_TIMING=1 prints them at exit)
+  double t_exec = 0.0, t_up = 0.0, t_down = 0.0;
+  long n_exec = 0;
+  // dE_local/drvec of the e real edges (3*e values); releases the device buffers of this evaluation
+  void staged_finish(std::vector<double>& dEdr);
+
   double cutoff() const { return cutoff_; }
   int n_layers() const { return n_layers_; }
   const std::vector<int>& atomic_numbers() const { return z_; }
@@ -57,6 +93,12 @@ class Model {
   Bucket& bucket_for(int n, int e);
   void compile(Bucket& b);
   void setup_cue(const std::string& kernels, const std::string& lib, const std::string& dep);
+  PJRT_LoadedExecutable* compile_file(const std::string& file);
+  PJRT_Buffer* upload(const void* data, int type, const std::vector<int64_t>& dims);
+  PJRT_Buffer* upload_f(const double* data, const std::vector<int64_t>& dims);   // f64 or converted to f32
+  void download_f(PJRT_Buffer* b, double* dst, size_t count);
+  std::vector<PJRT_Buffer*> run(PJRT_LoadedExecutable* exe, const std::vector<PJRT_Buffer*>& args, int n_out);
+  void staged_release();
 
   const PJRT_Api* api_ = nullptr;
   void* dl_ = nullptr;
@@ -70,6 +112,19 @@ class Model {
   int n_layers_ = 0, api_major_ = -1, api_minor_ = -1;
   bool verbose_ = true;
   bool f32_ = false;   // model exported in float32: rvec converted on input, outputs converted to double
+  // staged
+  std::vector<StagedBucket> staged_;
+  std::vector<int> st_dims_;
+  int st_dim_a_ = 1;
+  bool st_cheb_ = false;
+  StagedBucket* sb_ = nullptr;
+  int st_e_ = 0;
+  std::vector<PJRT_Buffer*> st_graph_, st_hs_;
+  PJRT_Buffer *st_a_ = nullptr, *st_dummy_ = nullptr;
+  PJRT_Buffer *st_cta_ = nullptr, *st_ctrv_ = nullptr, *st_ctadd_ = nullptr;   // device accumulators
+  std::vector<std::pair<std::pair<int64_t, int64_t>, PJRT_Buffer*>> zeros_;   // cached zero arrays (immutable)
+  PJRT_Buffer* zeros(int64_t rows, int64_t cols);
+  bool timing_ = false;
 };
 
 }  // namespace racev2

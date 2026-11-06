@@ -1,5 +1,5 @@
 """pair_style race across ranks / GPUs: run 0 of a LiPS supercell with (1 rank owner) as the reference vs
-(1 rank ghost), (N ranks ghost, one GPU each); then NVE timings.  Run inside a Slurm GPU job.
+(1 rank ghost|halo), (N ranks ghost|halo, one GPU each); then NVE timings.  Run inside a Slurm GPU job.
 
     python runs/diag/lammps_multi.py --serial <lmp> --mpi <lmp_mpi> --plugin <so> --export <dir> --xyz <extxyz>
         --rep 2 2 2 --ranks 2 4 [--nodes 1] [--steps 200]
@@ -67,6 +67,7 @@ def main():
     ap.add_argument('--ranks', type=int, nargs='+', default=[2, 4]); ap.add_argument('--nodes', type=int, default=1)
     ap.add_argument('--steps', type=int, default=200); ap.add_argument('--tag', default='multi')
     ap.add_argument('--skip-serial-ghost', action='store_true')
+    ap.add_argument('--modes', nargs='+', default=['ghost'], help='multi-rank modes to compare: ghost, halo')
     a = ap.parse_args()
     import ase.io
     from ase.data import chemical_symbols
@@ -86,6 +87,10 @@ def main():
             tail = open(os.path.join(work, log)).read()[-2500:] if os.path.exists(os.path.join(work, log)) else ''
             print(tail); return False
         print(f'  ran {" ".join(cmd[-3:])} in {time.time() - t0:.0f} s', flush=True)
+        info = [l for l in (r.stderr + open(os.path.join(work, log)).read()).splitlines()
+                if 'compiled staged' in l or 'timing' in l]
+        for l in sorted(set(info))[:8]:
+            print('   ', l.strip(), flush=True)
         return True
 
     # reference: 1 rank, owner mode (validated against Python, runs/diag/lammps_validate.py)
@@ -95,8 +100,8 @@ def main():
         return
     E0, P0, F0, perf0, et0 = parse(work, 'log.owner', 'owner')
     print(f'reference 1 rank owner: E {E0:.10f} eV, |P|max {np.abs(P0).max():.1f} bar, {perf0} steps/s', flush=True)
-    cases = [] if a.skip_serial_ghost else [('ghost', 1)]
-    cases += [('ghost', n) for n in a.ranks]
+    cases = [] if a.skip_serial_ghost else [(m, 1) for m in a.modes]
+    cases += [(m, n) for m in a.modes for n in a.ranks]
     for mode, n in cases:
         inp = write_inputs(work, a.plugin, a.export, syms, mode, a.steps)
         if n == 1:

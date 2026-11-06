@@ -81,6 +81,7 @@ One component at a time is reverted to RACE V1. Each cell: refitted energy RMSE 
 |---|---|---|---|---|---|
 | **Final recipe** | **1.87 / 6.70** | **6.52 / 16.63** | **22.89 / 46.42** | 16.74 / **19.28** | reference |
 | V1 atomic feature (species embedding) | 2.55 / 9.52 | 9.80 / 22.69 | 29.86 / 61.44 | **15.36** / 19.95 | +32 % |
+| No Gaussian radial prior | 2.05 / 7.22 | 7.34 / 18.93 | 28.22 / 60.12 | 28.06 / 23.32 | +30 % |
 | No hill (plain RMS) | 2.20 / 7.36 | 7.60 / 19.08 | 26.68 / 56.67 | 21.04 / 20.17 | +22 % |
 | No Chebyshev residual | 1.94 / 6.85 | 6.81 / 17.32 | 27.75 / 52.39 | 17.79 / 20.16 | +13 % |
 | No LayerScale | 2.27 / 7.24 | 7.19 / 18.27 | 28.15 / 51.77 | 17.74 / 20.30 | +12 % |
@@ -91,7 +92,8 @@ Apart from the gate update, reverting any single component worsens both energies
 the gap grows with temperature. The V1 atomic feature improves only the dihedral energy (15.36 vs 16.74), within the
 seed spread of 2.8. Removing LayerScale also raises the seed spread of the 1200 K force error from 0.96 to 3.41.
 Reverting to the gate update is equal or better except for the 1200 K energy (+6 %); the linear update shows no gain
-in this setting. Remaining variants: no radial prior, no shell channels, no UFF, AMSGrad instead of SOAP.
+in this setting. Removing the Gaussian radial prior gives the worst dihedral scan (28.06 vs 16.74 meV, +68 %) and
+the second-largest 1200 K force increase. Remaining variants: no shell channels, no UFF, AMSGrad instead of SOAP.
 
 ### OAM subset comparison (RACEv2 vs V1, 2026-11-06)
 
@@ -116,9 +118,9 @@ Test set (1,000 structures, checkpoint selected on validation):
 
 RACEv2 is better on every metric of all three datasets: energy MAE 7–31 % lower, force RMSE 11–35 % lower, stress
 MAE 14–20 % lower. It is 2–2.4× slower per epoch: refreshing the SOAP eigenbases takes 40–60 % of a step
-(`runs/diag/soap_profile.py`); a less frequent refresh and Adam for the species tables are being tested.
+(`runs/diag/soap_profile.py`).
 The per-atom energy errors (100–180 meV) are large for both recipes. With 89 elements and 10k structures, the
-element-specific weights (89 % of the RACEv2 parameters) see little data; a 100k-structure subset will follow.
+element-specific weights (89 % of the RACEv2 parameters) see little data.
 
 Notes from the screening:
 - SOAP diverges in float32 on these data within 30–80 steps, independently of learning rate, implementation and TF32;
@@ -126,32 +128,79 @@ Notes from the screening:
 - Stress-loss weight: 10, 100 and 1000 (30 epochs) give nearly the same stress error, while 100 and 1000 make energies
   and forces worse. Stress is learned through the energy and forces; its error is not limited by the loss weight.
   Weight 10 was kept (chosen on validation).
-- A 6 Å cutoff (vs 5 Å) is being tested on the same subsets.
+- Speed-ups of the SOAP optimizer and the cutoff (30 epochs, validation; energy MAE meV/atom / force RMSE meV/Å,
+  time per epoch):
 
-Work in progress: remaining 4 ablations, cutoff check, 100k-subset size comparison, LAMMPS multi-GPU, water rerun
-with repulsion, MD22.
+  | Variant | OMat24 | MPtrj | sAlex |
+  |---|---|---|---|
+  | RACEv2 (SOAP on every tensor, refresh every 10 steps) | 127 / 528, 93 s | 152 / 337, 118 s | 186 / 365, 76 s |
+  | refresh every 50 steps | 135 / 566, 67 s | 156 / 348, 91 s | 202 / 368, 53 s |
+  | **species tables by Adam** | 135 / 522, 75 s | 150 / 341, 99 s | 188 / 365, 59 s |
+  | both | 146 / 551, 64 s | 152 / 352, 88 s | 179 / 364, 46 s |
+  | cutoff 6 Å | 135 / 561, 104 s | 148 / 350, 138 s | 196 / 365, 85 s |
+
+  Adam for the species-indexed tables keeps the force error of full SOAP and is 16–22 % faster; it is used from
+  here on. A 6 Å cutoff is not better on these subsets and is 12–17 % slower; 5 Å is kept.
+
+#### Model size on 100k OMat24 structures (in progress)
+
+100k training / 2k validation / 1k test structures, float64, species tables by Adam, 30 epochs. Candidates: L5×64,
+L5×128, L5×192, L4×128, L6×128 (layers × channels), plus L5×128 with AMSGrad as an optimizer control. The selection
+rule was fixed before the runs (`docs/size_screening_protocol_2026-11-03.md`, validation only): candidates within
++10 % of the best validation energy RMSE, then the lowest validation force RMSE, ties (< 2 %) to the smaller model.
+Time per epoch on one GH200: 834 s (L4×128), 1010 s (L5×128), 1196 s (L6×128), 1419 s (L5×192).
+
+Work in progress: 100k size comparison, ablations without shell channels / UFF / SOAP (AMSGrad), last-layer Bayesian
+uncertainty, water rerun with repulsion, MD22.
 
 ## LAMMPS (`pair_style race`, experimental)
 
 The trained model is exported to StableHLO (`bam_omat24/export_lammps.py`) and run from C++ through the PJRT CUDA
-plugin that ships with jaxlib (`lammps/`). Neither Python nor JAX is needed at run time.
+plugin that ships with jaxlib (`lammps/`). Neither Python nor JAX is needed at run time. The cuEquivariance kernels
+are recompiled in the C++ process from a record written at export and registered with the plugin (FFI).
 
 ```
-pair_style race <site-packages>/jax_plugins/xla_cuda12/xla_cuda_plugin.so <export dir> [gpu auto|<index>] [mode auto|owner|ghost]
+pair_style race <site-packages>/jax_plugins/xla_cuda12/xla_cuda_plugin.so <export dir> [gpu auto|<index>] [mode auto|owner|halo|ghost]
 pair_coeff * * Li P S
 ```
 
-- `mode owner` (one MPI rank): graph of the owned atoms, ghost neighbours mapped to their owned images. Fastest.
-- `mode ghost` (any number of ranks / GPUs): owned + ghost atoms, ghost cutoff raised to n_layers × cutoff + skin;
-  the energy is summed over the owned atoms, forces on ghosts are returned to their owners by LAMMPS.
-- `mode auto` picks owner for one rank and ghost otherwise; `gpu auto` uses the node-local rank.
-- Units: metal and real.
+- `mode owner` (one MPI rank): graph of the owned atoms, ghost neighbours mapped to their owned images. Fastest on
+  one GPU.
+- `mode halo` (any number of ranks, GPUs and nodes): per-layer halo exchange, as in other message-passing potentials
+  with spatial decomposition (e.g. SevenNet). The export contains one function per layer and its vector-Jacobian
+  product (`--staged-buckets`). Each rank holds its owned atoms plus one ghost shell (cutoff + skin), with edges for
+  owned centres only. The node features are sent to the ghosts with LAMMPS forward communication after every layer.
+  In the backward pass, the ghost-row cotangents are returned to their owners with reverse communication (including
+  the Chebyshev term that reads layer i−2). Memory per rank scales with the owned atoms.
+- `mode ghost`: single evaluation on owned + ghost atoms with the ghost cutoff raised to n_layers × cutoff + skin.
+  Simple, but memory grows with the (5 × 5 Å) ghost shell; out of memory above ~1k atoms per rank.
+- `mode auto`: owner for one rank, halo for several ranks when the export has the staged functions (ghost otherwise);
+  `gpu auto` uses the node-local rank. Units: metal and real.
 
-Validation on LiPS (83 atoms, one GPU): `run 0` energy, forces and pressure match Python within 2×10⁻¹³ eV,
-9×10⁻¹⁴ eV/Å and 10⁻³ bar; in NVE (0.25 fs, 1 ps) the total energy changes by 0.001 meV/atom.
-Current limits: e3nn backend only (cue kernels are compiled inside the Python process), 28 steps/s on this system
-(the JAX MD driver reaches ~76; to be optimised), multi-GPU validation in progress.
-Build: `bash lammps/build_lammps.sh <LAMMPS source> <build dir> [mpi|serial]`. Plan: `docs/RACEv2_lammps_export_plan_2026-11-06.md`.
+Validation (LiPS model, cue kernels, float64):
+
+| Test | Result |
+|---|---|
+| owner, 83 atoms, vs Python | energy 2×10⁻¹³ eV, forces 9×10⁻¹⁴ eV/Å, pressure 10⁻³ bar; NVE drift 0.001 meV/atom per ps |
+| owner speed, 1 GH200 | 83 atoms: 7.3 ms per force call; 664 atoms: 30 steps/s; 5,312 atoms: 4.1 steps/s |
+| halo on 1, 2, 4 ranks vs owner (664 and 5,312 atoms) | \|ΔE\| ≤ 1×10⁻⁹ eV, max \|ΔF\| 1×10⁻¹⁴ eV/Å, \|ΔP\| ≤ 4×10⁻¹⁰ bar; NVE conserved |
+
+Weak scaling of `mode halo` (5,312 atoms per GPU, replicated LiPS frame; energy per cell and forces of equivalent
+atoms agree with the 1-GPU run within 4×10⁻¹² eV and 2×10⁻¹² eV/Å):
+
+| GPUs (nodes) | Atoms | Steps/s | 10³ atom-steps/s | Efficiency vs 1 GPU |
+|---|---|---|---|---|
+| 1 (1) | 5,312 | 1.24 | 6.6 | 100 % |
+| 2 (1) | 10,624 | 0.87 | 9.2 | 70 % |
+| 4 (1) | 21,248 | 1.13 | 24.0 | 91 % |
+| 8 (2) | 42,496 | 1.09 | 46.3 | 88 % |
+
+On one GPU halo is 3.3× slower than owner (4.1 steps/s). Three costs cause this: the vector-Jacobian products
+recompute each layer, the ghost shell doubles the nodes, and there are 12 sequential executions per step. Halo is
+for systems that do not fit on one GPU. The 2-GPU point is low because of slower host↔device copies with two ranks;
+not yet understood.
+Build: `bash lammps/build_lammps.sh <LAMMPS source> <build dir> [mpi|serial]`. Tests: `runs/diag/lammps_multi.py`,
+`runs/diag/lammps_weak.py`, `runs/diag/staged_check.py`.
 
 ## Installation
 

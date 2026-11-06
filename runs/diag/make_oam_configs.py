@@ -28,6 +28,12 @@ def main():
     ap.add_argument('--variants', nargs='+', default=['v2', 'v1'])
     ap.add_argument('--x64', action='store_true', help='float64 model + optimizer (the benchmark setting)')
     ap.add_argument('--stress-weight', type=float, default=10.0)
+    ap.add_argument('--layers', type=int, default=None, help='n_layers override (size screening)')
+    ap.add_argument('--hidden', type=int, default=None, help='hidden_size override (size screening)')
+    ap.add_argument('--species-adam', action='store_true', help='soap_species_adam (species tables by Adam)')
+    ap.add_argument('--batch', type=int, default=16)
+    ap.add_argument('--warmup', type=int, default=None, help='lr_warmup_epochs (default of train_3bpa: 10)')
+    ap.add_argument('--optimizer', default=None, help='optimizer override (e.g. amsgrad; default: the recipe SOAP)')
     ap.add_argument('--cutoff', type=float, default=5.0,
                     help='!= 5: avg_n_neighbors recomputed on 500 training structures at this cutoff')
     args = ap.parse_args()
@@ -50,7 +56,7 @@ def main():
                     'atomic_numbers': meta['atomic_numbers'], 'atom_energies': meta['atom_energies'],
                     'e0_mode': 'isolated', 'avg_n_neighbors': round(avg_n, 3), 'cutoff': args.cutoff,
                     'periodic': True, 'stress_loss': True, 'stress_weight': args.stress_weight,
-                    'x64': False, 'batch_size': 16, 'pad_mode': 'fixed', 'pack_max_graphs': 64,
+                    'x64': False, 'pad_mode': 'fixed', 'pack_max_graphs': 64,
                     'n_epochs': args.epochs, 'lr_schedule_patience': 10, 'eval_test_every': 10,
                     'ckpt_last_every': 5, 'restart': True, 'seed': seed,
                     'log_file': f'runs/{name}_cue/loss_{name}_cue.out',
@@ -62,6 +68,19 @@ def main():
                 })
                 if var == 'v1':
                     c.update(V1_FLIPS)
+                if args.layers is not None:
+                    c['n_layers'] = args.layers
+                if args.hidden is not None:
+                    c['hidden_size'] = args.hidden
+                    c.pop('hidden_irreps', None)
+                if args.species_adam:
+                    c['soap_species_adam'] = True
+                c['batch_size'] = args.batch
+                if args.warmup is not None:
+                    c['lr_warmup_epochs'] = args.warmup
+                if args.optimizer is not None:
+                    c['optimizer'] = args.optimizer
+                    c.pop('soap_species_adam', None)
                 if args.x64:
                     c['x64'] = True
                     c['note'] = c['note'].replace('float32', 'float64')

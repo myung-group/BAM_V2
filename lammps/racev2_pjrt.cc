@@ -4,6 +4,7 @@
 #include <dlfcn.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -72,7 +73,9 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
   // ---- metadata
   std::istringstream meta(read_file(dir_ + "/racev2_lammps_meta.txt"));
   std::string line;
-  int signature = 6;
+  int signature = 6, st_sig = 1;
+  const char* tm = std::getenv("RACEV2_TIMING");
+  timing_ = tm && tm[0] == '1';
   std::string cue_kernels, cue_lib, cue_dep;
   while (std::getline(meta, line)) {
     std::istringstream ls(line);
@@ -88,7 +91,23 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
     else if (key == "cue_kernels") ls >> cue_kernels;
     else if (key == "cue_lib") ls >> cue_lib;
     else if (key == "cue_dep") ls >> cue_dep;
+    else if (key == "staged_dims") { int d; while (ls >> d) st_dims_.push_back(d); }
+    else if (key == "staged_dim_a") ls >> st_dim_a_;
+    else if (key == "staged_cheb") { int c; ls >> c; st_cheb_ = c != 0; }
+    else if (key == "staged_signature") ls >> st_sig;
+    else if (key == "staged_bucket") { StagedBucket b; ls >> b.n_pad >> b.e_pad >> b.stem; staged_.push_back(b); }
   }
+  if (!staged_.empty() && st_sig != 2)
+    throw std::runtime_error("racev2: " + dir_ + " has staged functions of an older signature; re-export it");
+  if (!staged_.empty() && (int) st_dims_.size() != n_layers_ + 1)
+    throw std::runtime_error("racev2: staged_dims does not have n_layers + 1 entries in " + dir_);
+  for (auto& b : staged_) {
+    b.layer.assign(n_layers_, nullptr);
+    b.layer_vjp.assign(n_layers_, nullptr);
+  }
+  std::sort(staged_.begin(), staged_.end(), [](const StagedBucket& a, const StagedBucket& b) {
+    return a.n_pad < b.n_pad || (a.n_pad == b.n_pad && a.e_pad < b.e_pad);
+  });
   if (signature != 7)
     throw std::runtime_error("racev2: " + dir_ + " was exported with an older function signature (no n_local); "
                              "re-export it with bam_omat24/export_lammps.py");
@@ -152,6 +171,25 @@ Model::Model(const std::string& plugin_so, const std::string& export_dir, int de
 
 Model::~Model() {
   if (!api_) return;
+  if (timing_)
+    std::fprintf(stderr, "racev2 timing: %ld executions %.3f s, uploads %.3f s, downloads %.3f s\n", n_exec, t_exec,
+                 t_up, t_down);
+  staged_release();
+  for (auto& z : zeros_) destroy_buffer(api_, z.second);
+  auto destroy_exe = [this](PJRT_LoadedExecutable* e) {
+    if (!e) return;
+    PJRT_LoadedExecutable_Destroy_Args d;
+    std::memset(&d, 0, sizeof(d));
+    d.struct_size = PJRT_LoadedExecutable_Destroy_Args_STRUCT_SIZE;
+    d.executable = e;
+    api_->PJRT_LoadedExecutable_Destroy(&d);
+  };
+  for (auto& b : staged_) {
+    destroy_exe(b.prelude);
+    destroy_exe(b.prelude_vjp);
+    for (auto* e : b.layer) destroy_exe(e);
+    for (auto* e : b.layer_vjp) destroy_exe(e);
+  }
   for (auto& b : buckets_) {
     if (b.exe) {
       PJRT_LoadedExecutable_Destroy_Args d;
@@ -248,7 +286,12 @@ void Model::setup_cue(const std::string& kernels, const std::string& lib, const 
 }
 
 void Model::compile(Bucket& b) {
-  std::string code = read_file(dir_ + "/" + b.file);
+  b.exe = compile_file(b.file);
+  if (verbose_) std::fprintf(stderr, "racev2: compiled bucket n_pad %d e_pad %d\n", b.n_pad, b.e_pad);
+}
+
+PJRT_LoadedExecutable* Model::compile_file(const std::string& file) {
+  std::string code = read_file(dir_ + "/" + file);
   static const char kFormat[] = "mlir";
   PJRT_Program prog;
   std::memset(&prog, 0, sizeof(prog));
@@ -264,9 +307,8 @@ void Model::compile(Bucket& b) {
   ca.program = &prog;
   ca.compile_options = compile_options_.data();
   ca.compile_options_size = compile_options_.size();
-  check(api_, api_->PJRT_Client_Compile(&ca), "PJRT_Client_Compile");
-  b.exe = ca.executable;
-  if (verbose_) std::fprintf(stderr, "racev2: compiled bucket n_pad %d e_pad %d\n", b.n_pad, b.e_pad);
+  check(api_, api_->PJRT_Client_Compile(&ca), ("PJRT_Client_Compile " + file).c_str());
+  return ca.executable;
 }
 
 Bucket& Model::bucket_for(int n, int e) {
@@ -389,6 +431,224 @@ double Model::compute_padded(int n_pad, int e_pad, int n, int e, int n_local, co
     std::copy(g32.begin(), g32.end(), dEdr_pad.begin());
   }
   return et;
+}
+
+// ----------------------------------------------------------------------------------------------- staged mode
+using Clock = std::chrono::steady_clock;
+static double secs(Clock::time_point t0) { return std::chrono::duration<double>(Clock::now() - t0).count(); }
+
+PJRT_Buffer* Model::upload(const void* data, int type, const std::vector<int64_t>& dims) {
+  const auto t0 = Clock::now();
+  PJRT_Client_BufferFromHostBuffer_Args h;
+  std::memset(&h, 0, sizeof(h));
+  h.struct_size = PJRT_Client_BufferFromHostBuffer_Args_STRUCT_SIZE;
+  h.client = client_;
+  h.data = data;
+  h.type = static_cast<PJRT_Buffer_Type>(type);
+  h.dims = dims.data();
+  h.num_dims = dims.size();
+  h.host_buffer_semantics = PJRT_HostBufferSemantics_kImmutableUntilTransferCompletes;
+  h.device = device_;
+  check(api_, api_->PJRT_Client_BufferFromHostBuffer(&h), "BufferFromHostBuffer");
+  await_and_destroy(api_, h.done_with_host_buffer, "host->device transfer");
+  if (timing_) {    // wait until the data is on the device, so that t_up is the real transfer time
+    PJRT_Buffer_ReadyEvent_Args r;
+    std::memset(&r, 0, sizeof(r));
+    r.struct_size = PJRT_Buffer_ReadyEvent_Args_STRUCT_SIZE;
+    r.buffer = h.buffer;
+    check(api_, api_->PJRT_Buffer_ReadyEvent(&r), "Buffer_ReadyEvent");
+    await_and_destroy(api_, r.event, "buffer ready");
+  }
+  t_up += secs(t0);
+  return h.buffer;
+}
+
+PJRT_Buffer* Model::zeros(int64_t rows, int64_t cols) {
+  for (auto& z : zeros_)
+    if (z.first.first == rows && z.first.second == cols) return z.second;
+  std::vector<double> v(static_cast<size_t>(rows) * cols, 0.0);
+  PJRT_Buffer* b = upload_f(v.data(), {rows, cols});
+  zeros_.push_back({{rows, cols}, b});
+  return b;
+}
+
+PJRT_Buffer* Model::upload_f(const double* data, const std::vector<int64_t>& dims) {
+  if (!f32_) return upload(data, PJRT_Buffer_Type_F64, dims);
+  size_t n = 1;
+  for (auto d : dims) n *= static_cast<size_t>(d);
+  std::vector<float> v(data, data + n);
+  return upload(v.data(), PJRT_Buffer_Type_F32, dims);   // synchronous: v may go out of scope afterwards
+}
+
+void Model::download_f(PJRT_Buffer* b, double* dst, size_t count) {
+  const auto t0 = Clock::now();
+  std::vector<float> v32;
+  PJRT_Buffer_ToHostBuffer_Args t;
+  std::memset(&t, 0, sizeof(t));
+  t.struct_size = PJRT_Buffer_ToHostBuffer_Args_STRUCT_SIZE;
+  t.src = b;
+  if (f32_) {
+    v32.resize(count);
+    t.dst = v32.data();
+    t.dst_size = sizeof(float) * count;
+  } else {
+    t.dst = dst;
+    t.dst_size = sizeof(double) * count;
+  }
+  check(api_, api_->PJRT_Buffer_ToHostBuffer(&t), "ToHostBuffer");
+  await_and_destroy(api_, t.event, "device->host transfer");
+  if (f32_) std::copy(v32.begin(), v32.end(), dst);
+  t_down += secs(t0);
+}
+
+std::vector<PJRT_Buffer*> Model::run(PJRT_LoadedExecutable* exe, const std::vector<PJRT_Buffer*>& args, int n_out) {
+  const auto t0 = Clock::now();
+  std::vector<PJRT_Buffer*> outs(n_out, nullptr);
+  PJRT_Buffer* const* arg_list[1] = {args.data()};
+  PJRT_Buffer** out_list[1] = {outs.data()};
+  PJRT_Event* done[1] = {nullptr};
+  PJRT_ExecuteOptions opts;
+  std::memset(&opts, 0, sizeof(opts));
+  opts.struct_size = PJRT_ExecuteOptions_STRUCT_SIZE;
+  PJRT_LoadedExecutable_Execute_Args ex;
+  std::memset(&ex, 0, sizeof(ex));
+  ex.struct_size = PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE;
+  ex.executable = exe;
+  ex.options = &opts;
+  ex.argument_lists = arg_list;
+  ex.num_devices = 1;
+  ex.num_args = args.size();
+  ex.output_lists = out_list;
+  ex.device_complete_events = done;
+  check(api_, api_->PJRT_LoadedExecutable_Execute(&ex), "Execute (staged)");
+  await_and_destroy(api_, done[0], "execute (staged)");
+  t_exec += secs(t0);
+  ++n_exec;
+  return outs;
+}
+
+void Model::staged_release() {
+  for (auto* b : st_graph_) destroy_buffer(api_, b);
+  for (auto* b : st_hs_) destroy_buffer(api_, b);
+  destroy_buffer(api_, st_a_);
+  destroy_buffer(api_, st_cta_);
+  destroy_buffer(api_, st_ctrv_);
+  destroy_buffer(api_, st_ctadd_);
+  st_graph_.clear();
+  st_hs_.clear();
+  st_a_ = st_cta_ = st_ctrv_ = st_ctadd_ = nullptr;
+  sb_ = nullptr;
+}
+
+int Model::staged_n_pad() const { return sb_ ? sb_->n_pad : 0; }
+
+void Model::staged_begin(int n, int e, int n_local, const int* species, const int* receivers, const int* senders,
+                         const double* rvec) {
+  staged_release();
+  if (staged_.empty()) throw std::runtime_error("racev2: " + dir_ + " has no staged (halo exchange) functions; "
+                                                "re-export with --staged-buckets");
+  for (auto& b : staged_)
+    if (n < b.n_pad && e <= b.e_pad) { sb_ = &b; break; }
+  if (!sb_) {
+    std::ostringstream ss;
+    ss << "racev2: no staged bucket fits " << n << " atoms / " << e << " edges (largest " << staged_.back().n_pad
+       << " / " << staged_.back().e_pad << "); export a larger --staged-buckets entry";
+    throw std::runtime_error(ss.str());
+  }
+  const int np = sb_->n_pad, ep = sb_->e_pad;
+  std::vector<int> sp(np, 0), rc(ep, n), sd(ep, n);
+  std::vector<double> rv(3 * static_cast<size_t>(ep), 0.0);
+  std::copy(species, species + n, sp.begin());
+  std::copy(receivers, receivers + e, rc.begin());
+  std::copy(senders, senders + e, sd.begin());
+  std::copy(rvec, rvec + 3 * static_cast<size_t>(e), rv.begin());
+  const int32_t n32 = n, e32 = e, l32 = n_local;
+  st_graph_ = {upload(sp.data(), PJRT_Buffer_Type_S32, {np}), upload(rc.data(), PJRT_Buffer_Type_S32, {ep}),
+               upload(sd.data(), PJRT_Buffer_Type_S32, {ep}), upload_f(rv.data(), {ep, 3}),
+               upload(&n32, PJRT_Buffer_Type_S32, {}), upload(&e32, PJRT_Buffer_Type_S32, {}),
+               upload(&l32, PJRT_Buffer_Type_S32, {})};
+  st_dummy_ = zeros(np, 1);                 // cached, not released per evaluation
+  st_hs_.assign(n_layers_ + 1, nullptr);
+  st_e_ = e;
+  const std::string base = sb_->stem;
+  if (!sb_->prelude) {
+    sb_->prelude = compile_file(base + "_prelude.mlirbc");
+    sb_->prelude_vjp = compile_file(base + "_prelude_vjp.mlirbc");
+    for (int i = 0; i < n_layers_; ++i) {
+      sb_->layer[i] = compile_file(base + "_layer" + std::to_string(i) + ".mlirbc");
+      sb_->layer_vjp[i] = compile_file(base + "_layer" + std::to_string(i) + "_vjp.mlirbc");
+    }
+    if (verbose_) std::fprintf(stderr, "racev2: compiled staged bucket n_pad %d e_pad %d (%d functions) for %d nodes "
+                               "(%d owned) / %d edges\n", np, ep, 2 + 2 * n_layers_, n, n_local, e);
+  }
+}
+
+double Model::staged_prelude(std::vector<double>& h0) {
+  const size_t np = sb_->n_pad;
+  auto outs = run(sb_->prelude, st_graph_, 3);
+  h0.resize(np * st_dims_[0]);
+  download_f(outs[0], h0.data(), h0.size());
+  double e = 0.0;
+  download_f(outs[2], &e, 1);
+  destroy_buffer(api_, outs[0]);
+  destroy_buffer(api_, outs[2]);
+  st_a_ = outs[1];                                   // atomic basis stays on the device
+  return e;
+}
+
+double Model::staged_layer(int i, const double* h_prev, std::vector<double>& h_new) {
+  const int64_t np = sb_->n_pad;
+  destroy_buffer(api_, st_hs_[i]);
+  st_hs_[i] = upload_f(h_prev, {np, st_dims_[i]});
+  PJRT_Buffer* hpp = (st_cheb_ && i >= 2) ? st_hs_[i - 1] : st_dummy_;
+  std::vector<PJRT_Buffer*> args = {st_hs_[i], hpp, st_a_};
+  args.insert(args.end(), st_graph_.begin(), st_graph_.end());
+  auto outs = run(sb_->layer[i], args, 2);
+  h_new.resize(static_cast<size_t>(np) * st_dims_[i + 1]);
+  download_f(outs[0], h_new.data(), h_new.size());
+  double e = 0.0;
+  download_f(outs[1], &e, 1);
+  destroy_buffer(api_, outs[0]);
+  destroy_buffer(api_, outs[1]);
+  return e;
+}
+
+void Model::staged_layer_vjp(int i, const double* ct_h_new, std::vector<double>& ct_h_prev) {
+  const int64_t np = sb_->n_pad, ep = sb_->e_pad;
+  const bool use_pp = st_cheb_ && i >= 2;
+  PJRT_Buffer* hpp = use_pp ? st_hs_[i - 1] : st_dummy_;
+  PJRT_Buffer* ct = upload_f(ct_h_new, {np, st_dims_[i + 1]});
+  PJRT_Buffer* add = st_ctadd_ ? st_ctadd_ : zeros(np, st_dims_[i]);
+  PJRT_Buffer* cta = st_cta_ ? st_cta_ : zeros(np, st_dim_a_);
+  PJRT_Buffer* ctrv = st_ctrv_ ? st_ctrv_ : zeros(ep, 3);
+  std::vector<PJRT_Buffer*> args = {st_hs_[i], hpp, st_a_};
+  args.insert(args.end(), st_graph_.begin(), st_graph_.end());
+  args.insert(args.end(), {ct, add, cta, ctrv});
+  auto outs = run(sb_->layer_vjp[i], args, 4);
+  destroy_buffer(api_, ct);
+  destroy_buffer(api_, st_ctadd_);
+  destroy_buffer(api_, st_cta_);
+  destroy_buffer(api_, st_ctrv_);
+  ct_h_prev.resize(static_cast<size_t>(np) * st_dims_[i]);
+  download_f(outs[0], ct_h_prev.data(), ct_h_prev.size());
+  destroy_buffer(api_, outs[0]);
+  if (use_pp) st_ctadd_ = outs[1];          // cotangent of h_{i-1}: added in the vjp of layer i-1
+  else { destroy_buffer(api_, outs[1]); st_ctadd_ = nullptr; }
+  st_cta_ = outs[2];
+  st_ctrv_ = outs[3];
+}
+
+void Model::staged_finish(std::vector<double>& dEdr) {
+  const int64_t np = sb_->n_pad, ep = sb_->e_pad;
+  std::vector<PJRT_Buffer*> args = st_graph_;
+  args.push_back(st_cta_ ? st_cta_ : zeros(np, st_dim_a_));
+  args.push_back(st_ctrv_ ? st_ctrv_ : zeros(ep, 3));
+  auto outs = run(sb_->prelude_vjp, args, 1);
+  std::vector<double> g(3 * static_cast<size_t>(ep));
+  download_f(outs[0], g.data(), g.size());
+  destroy_buffer(api_, outs[0]);
+  dEdr.assign(g.begin(), g.begin() + 3 * static_cast<size_t>(st_e_));
+  staged_release();
 }
 
 }  // namespace racev2

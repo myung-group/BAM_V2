@@ -169,6 +169,11 @@ def cue_symmetric_contraction(
     return e3nn.IrrepsArray(irreps_out, _ir_mul_to_mul_ir(irreps_out, out))
 
 
+# When a list, every stratum readout appends the input of its final Linear (n_nodes, d) during the call: the energy
+# is linear in those weights, so these arrays are the exact design features of a last-layer Bayesian regression.
+READOUT_TAP = None
+
+
 def _jackson_gain(n: int, N: int) -> float:
     """Jackson kernel g_n for N moments (n = 0..N-1), KPM damping (Weisse et al. RMP 78, 275, eq. 71)."""
     q = math.pi / (N + 1)
@@ -908,6 +913,8 @@ class RACEConvolution(nnx.Module):
                 odd_act=jnp.tanh,
                 even_gate_act=jax.nn.silu,
             )
+        if READOUT_TAP is not None:          # last-layer Bayesian analysis (bam_omat24/bayes_lastlayer.py)
+            READOUT_TAP.append(node_energies.array)
         if self.readout_species:
             node_energies = self.readout(species, node_energies)
         else:
@@ -1645,6 +1652,22 @@ class RACE(nnx.Module):
         Returns:
             Per-node energies of shape (n_atoms, 1)
         """
+        ctx = self._prelude(positions, cell, cutoff, data, force_input)
+        features = ctx["features"]
+        feats_hist = []
+        for i in range(len(self.layers)):
+            feats_hist.append(features)
+            prev_features = (feats_hist[i - 1] if (self.residual == "chebyshev" and i >= 2) else
+                             feats_hist[1] if (self.residual == "neumann" and i >= 1) else None)
+            features, stratum = self._layer_step(ctx, i, features, prev_features)
+            ctx["outputs"].append(stratum)
+        return self._finalize(ctx, features)
+
+    def _prelude(self, positions, cell, cutoff, data, force_input=None, atomic_basis=None,
+                 with_pre_strata: bool = True) -> Dict:
+        """Edge features, embedding, pre-layer strata (repulsion / pair term) and the atomic basis of node_energies
+        (moved verbatim, 2026-11-06, so that the layers can also be run one at a time: LAMMPS per-layer halo
+        exchange).  atomic_basis: reuse a given A_i; with_pre_strata=False skips the repulsion / pair strata."""
         # Compute edge features using shared utility
         features, radial_basis, sh = compute_node_edge_features(
             positions=positions,
@@ -1761,7 +1784,7 @@ class RACE(nnx.Module):
 
         outputs = []
         layer_parts = {"node": [], "x": [], "f": []}   # per-stratum diagnostics
-        if self.pair_repulsion:
+        if self.pair_repulsion and with_pre_strata:
             # fixed-form repulsion as the lowest stratum (each pair twice in the edge list -> 1/2)
             sp_i = species[data.receivers]
             sp_j = species[data.senders]
@@ -1805,7 +1828,7 @@ class RACE(nnx.Module):
                 e_edge = amp * jnp.exp(-r_norm / (rho[sp_i] + rho[sp_j])) * f_cut
             e_rep = 0.5 * jax.ops.segment_sum(e_edge, data.receivers, num_segments=features.shape[0])
             outputs.append(e_rep)
-        if self.pair_term:
+        if self.pair_term and with_pre_strata:
             # explicit 2-body stratum (each pair appears twice in the edge list -> 1/2)
             species = data.nodes["species"]
             c = self.pair_coeff[...]
@@ -1813,11 +1836,9 @@ class RACE(nnx.Module):
             e_edge = jax.vmap(self.pair_mlp)(radial_basis)[:, 0] * c[species[data.receivers], species[data.senders]]
             e_pair = 0.5 * jax.ops.segment_sum(e_edge, data.receivers, num_segments=features.shape[0])
             outputs.append(e_pair)
-        feats_hist = []
         dens_force = (data.nodes.get('dens_force') if (self.dens and isinstance(data.nodes, dict)) else None)
         bo_q = []
-        atomic_basis = None
-        if self.x_mode == "basis":
+        if self.x_mode == "basis" and atomic_basis is None:
             # layer-0 atomic basis A_i = aggregated layer-0 message of the species embedding
             # (equivariant, ungated, linear in the density); computed once, used by every layer
             edge_scale0 = None
@@ -1832,103 +1853,120 @@ class RACE(nnx.Module):
                 mask = jnp.asarray(self.x_basis_mask, dtype=atomic_basis.array.dtype)
                 atomic_basis = e3nn.IrrepsArray(atomic_basis.irreps, atomic_basis.array * mask[None, :])
         x_species = x_feats
-        for i, layer in enumerate(self.layers):
-            x_readout = (self.x_readouts[i] if self.x_readout_mode in ("mlp", "linear")
-                         else (self.x_readouts[0] if (self.x_readout_mode == "layer0" and i == 0) else None))
-            f_readout = self.f_readouts[i] if self.use_f_readout else None
-            feats_hist.append(features)
-            if self.x_mode == "node_scalar":
-                # Receiving node's current scalar (0e) features -> 1x0e
-                x_feats = self.x_projs[i](
-                    separated_layer_norm(features).filter(keep="0e")
-                )
-            elif self.x_mode == "node_irreps":
-                # Receiving node's current features -> hidden irreps (equivariant x_i)
-                x_feats = self.x_projs[i](separated_layer_norm(features))
-            elif self.x_mode == "basis":
-                if self.x_basis_layers is None or i in self.x_basis_layers:
-                    x_feats = _dense(self.x_projs[i](atomic_basis))
-                    if self.x_norm == "rms":
-                        x_feats = _rms_normalize(x_feats)
-                    elif self.x_norm == "hill":
-                        x_feats = _hill_normalize(
-                            x_feats, self.x_hill[...][min(i, 1) if self.tie_operator else i], species)
-                    elif self.x_norm == "spectral":
-                        x_feats = _spectral_normalize(self.x_projs[i], x_feats)
-                else:
-                    x_feats = x_species          # per-species x (scalar-only), as in v7_ab
-            f_energy = (f_readout(data.nodes["species"], features) if f_readout is not None else None)
-            edge_scale = None
-            if self.layer_cutoff is not None and self.layer_cutoff[i] < self.cutoff - 1e-6:
-                edge_scale = polynomial_cutoff(
-                    r_norm, jnp.full_like(r_norm, self.layer_cutoff[i]), self.radial_polynomial_p)
-            drop_scale = None if keep is None else keep[:, i]
-            sh_i = sh
-            if self.shell_sk_gate:
-                # Slater–Koster gate: Y_l scaled per edge by 1 + g_l(r), g_l = sum over allowed
-                # shell pairs of c_{ab,l} env_ab(r) (equivalent to an l-selective radial modulation
-                # of every tensor-product path of degree l)
-                coeff = self.sk_coeff[...][i] * jnp.asarray(self.sk_mask, dtype=shell_env.dtype)   # (n_shells**2, lmax+1)
-                g = shell_env @ coeff                                                                # (n_edges, lmax+1)
-                factor = jnp.concatenate([jnp.repeat(1.0 + g[:, l:l + 1], 2 * l + 1, axis=1)
-                                          for l in range(self.lmax + 1)], axis=1)                   # (n_edges, sh.dim)
-                sh_i = e3nn.IrrepsArray(sh.irreps, sh.array * factor)
-            prev_features = (feats_hist[i - 1] if (self.residual == "chebyshev" and i >= 2) else
-                             feats_hist[1] if (self.residual == "neumann" and i >= 1) else None)
-            if _remat_layers():
-                # recompute the layer (per-edge radial weights, messages) in the backward pass instead of storing
-                # it: the per-edge activations of all layers dominate device memory (2026-11-06: ~140 kB per edge
-                # for L5 lmax3 128 channels float64); environment BAM_REMAT_LAYERS=1, read at trace time
-                # split / merge so the checkpointed function is pure (nnx.remat on the module raised
-                # "Cannot mutate Param from a different trace level")
-                l_def, l_state = nnx.split(layer)
+        return dict(features=features, radial_basis=radial_basis, sh=sh, species=species, data=data,
+                    r_norm=locals().get("r_norm"), r_c=locals().get("r_c"), shell_env=shell_env, keep=keep,
+                    x_feats=x_feats, x_species=x_species, atomic_basis=atomic_basis, outputs=outputs,
+                    layer_parts=layer_parts, dens_force=dens_force, bo_q=bo_q)
 
-                def _call(st, f, xf, sp, y, rb, snd, rcv, es, ds, pf):
-                    lyr = nnx.merge(l_def, st)
-                    return lyr(f, xf, sp, y, rb, snd, rcv, edge_scale=es, drop_scale=ds, prev_features=pf)
-                node_energies, features = jax.checkpoint(_call)(
-                    l_state, features, x_feats, data.nodes["species"], sh_i, radial_basis, data.senders,
-                    data.receivers, edge_scale, drop_scale, prev_features)
+    def _layer_step(self, ctx: Dict, i: int, features, prev_features):
+        """Interaction layer i of node_energies (moved verbatim, 2026-11-06): returns the new node features and the
+        energy stratum of the layer (gain applied, before scale / shift).  prev_features: features of layer i-2
+        (residual "chebyshev", i >= 2) or of layer 1 ("neumann"), else None."""
+        layer = self.layers[i]
+        data, species, sh, radial_basis = ctx["data"], ctx["species"], ctx["sh"], ctx["radial_basis"]
+        r_norm, r_c, shell_env, keep = ctx["r_norm"], ctx["r_c"], ctx["shell_env"], ctx["keep"]
+        x_feats, x_species, atomic_basis = ctx["x_feats"], ctx["x_species"], ctx["atomic_basis"]
+        layer_parts, dens_force, bo_q = ctx["layer_parts"], ctx["dens_force"], ctx["bo_q"]
+        x_readout = (self.x_readouts[i] if self.x_readout_mode in ("mlp", "linear")
+                     else (self.x_readouts[0] if (self.x_readout_mode == "layer0" and i == 0) else None))
+        f_readout = self.f_readouts[i] if self.use_f_readout else None
+        if self.x_mode == "node_scalar":
+            # Receiving node's current scalar (0e) features -> 1x0e
+            x_feats = self.x_projs[i](
+                separated_layer_norm(features).filter(keep="0e")
+            )
+        elif self.x_mode == "node_irreps":
+            # Receiving node's current features -> hidden irreps (equivariant x_i)
+            x_feats = self.x_projs[i](separated_layer_norm(features))
+        elif self.x_mode == "basis":
+            if self.x_basis_layers is None or i in self.x_basis_layers:
+                x_feats = _dense(self.x_projs[i](atomic_basis))
+                if self.x_norm == "rms":
+                    x_feats = _rms_normalize(x_feats)
+                elif self.x_norm == "hill":
+                    x_feats = _hill_normalize(
+                        x_feats, self.x_hill[...][min(i, 1) if self.tie_operator else i], species)
+                elif self.x_norm == "spectral":
+                    x_feats = _spectral_normalize(self.x_projs[i], x_feats)
             else:
-                node_energies, features = layer(
-                    features,
-                    x_feats,
-                    data.nodes["species"],
-                    sh_i,
-                    radial_basis,
-                    data.senders,
-                    data.receivers,
-                    edge_scale=edge_scale,
-                    drop_scale=drop_scale,
-                    prev_features=prev_features,
-                )
-            if self.feature_norm == "rms":
-                features = _rms_normalize(_dense(features))
-            if i == 0 and dens_force is not None:
-                features = _dense(features)
-                features = features + self._dens_encoding(dens_force, features)
-            if self.bond_order is not None and self.bond_order_shape:
-                q = _dense(features).filter(keep="0e").array
-                bo_q.append(q * jax.lax.rsqrt(jnp.mean(q * q, axis=-1, keepdims=True) + 1e-6))
-            x_energy = (x_readout(data.nodes["species"], x_feats) if x_readout is not None else None)
-            if self.stratum_gain == "uniform":
-                gain = 1.0
-            elif self.stratum_gain == "jackson":
-                gain = _jackson_gain(i, len(self.layers))
-            elif self.stratum_gain == "inverse":
-                gain = 1.0 / (i + 1)
-            else:
-                gain = 1.0 / (i + 1) ** 2
-            e_node = node_energies.array[:, 0]
-            e_x = x_energy.array.squeeze() if x_energy is not None else jnp.zeros_like(e_node)
-            e_f = f_energy.array.squeeze() if f_energy is not None else jnp.zeros_like(e_node)
-            if drop_scale is not None:
-                gain = gain * drop_scale
-            layer_parts["node"].append(gain * e_node)
-            layer_parts["x"].append(gain * e_x)
-            layer_parts["f"].append(gain * e_f)
-            outputs += [gain * (e_node + e_x + e_f)]
+                x_feats = x_species          # per-species x (scalar-only), as in v7_ab
+        f_energy = (f_readout(data.nodes["species"], features) if f_readout is not None else None)
+        edge_scale = None
+        if self.layer_cutoff is not None and self.layer_cutoff[i] < self.cutoff - 1e-6:
+            edge_scale = polynomial_cutoff(
+                r_norm, jnp.full_like(r_norm, self.layer_cutoff[i]), self.radial_polynomial_p)
+        drop_scale = None if keep is None else keep[:, i]
+        sh_i = sh
+        if self.shell_sk_gate:
+            # Slater–Koster gate: Y_l scaled per edge by 1 + g_l(r), g_l = sum over allowed
+            # shell pairs of c_{ab,l} env_ab(r) (equivalent to an l-selective radial modulation
+            # of every tensor-product path of degree l)
+            coeff = self.sk_coeff[...][i] * jnp.asarray(self.sk_mask, dtype=shell_env.dtype)   # (n_shells**2, lmax+1)
+            g = shell_env @ coeff                                                                # (n_edges, lmax+1)
+            factor = jnp.concatenate([jnp.repeat(1.0 + g[:, l:l + 1], 2 * l + 1, axis=1)
+                                      for l in range(self.lmax + 1)], axis=1)                   # (n_edges, sh.dim)
+            sh_i = e3nn.IrrepsArray(sh.irreps, sh.array * factor)
+        if _remat_layers():
+            # recompute the layer (per-edge radial weights, messages) in the backward pass instead of storing
+            # it: the per-edge activations of all layers dominate device memory (2026-11-06: ~140 kB per edge
+            # for L5 lmax3 128 channels float64); environment BAM_REMAT_LAYERS=1, read at trace time
+            # split / merge so the checkpointed function is pure (nnx.remat on the module raised
+            # "Cannot mutate Param from a different trace level")
+            l_def, l_state = nnx.split(layer)
 
+            def _call(st, f, xf, sp, y, rb, snd, rcv, es, ds, pf):
+                lyr = nnx.merge(l_def, st)
+                return lyr(f, xf, sp, y, rb, snd, rcv, edge_scale=es, drop_scale=ds, prev_features=pf)
+            node_energies, features = jax.checkpoint(_call)(
+                l_state, features, x_feats, data.nodes["species"], sh_i, radial_basis, data.senders,
+                data.receivers, edge_scale, drop_scale, prev_features)
+        else:
+            node_energies, features = layer(
+                features,
+                x_feats,
+                data.nodes["species"],
+                sh_i,
+                radial_basis,
+                data.senders,
+                data.receivers,
+                edge_scale=edge_scale,
+                drop_scale=drop_scale,
+                prev_features=prev_features,
+            )
+        if self.feature_norm == "rms":
+            features = _rms_normalize(_dense(features))
+        if i == 0 and dens_force is not None:
+            features = _dense(features)
+            features = features + self._dens_encoding(dens_force, features)
+        if self.bond_order is not None and self.bond_order_shape:
+            q = _dense(features).filter(keep="0e").array
+            bo_q.append(q * jax.lax.rsqrt(jnp.mean(q * q, axis=-1, keepdims=True) + 1e-6))
+        x_energy = (x_readout(data.nodes["species"], x_feats) if x_readout is not None else None)
+        if self.stratum_gain == "uniform":
+            gain = 1.0
+        elif self.stratum_gain == "jackson":
+            gain = _jackson_gain(i, len(self.layers))
+        elif self.stratum_gain == "inverse":
+            gain = 1.0 / (i + 1)
+        else:
+            gain = 1.0 / (i + 1) ** 2
+        e_node = node_energies.array[:, 0]
+        e_x = x_energy.array.squeeze() if x_energy is not None else jnp.zeros_like(e_node)
+        e_f = f_energy.array.squeeze() if f_energy is not None else jnp.zeros_like(e_node)
+        if drop_scale is not None:
+            gain = gain * drop_scale
+        layer_parts["node"].append(gain * e_node)
+        layer_parts["x"].append(gain * e_x)
+        layer_parts["f"].append(gain * e_f)
+        ctx["x_feats"] = x_feats
+        return features, gain * (e_node + e_x + e_f)
+
+
+    def _finalize(self, ctx: Dict, features) -> Dict:
+        """Sum of the strata, scale / shift and the auxiliary heads of node_energies (moved verbatim)."""
+        data, species = ctx["data"], ctx["species"]
+        r_norm, r_c = ctx["r_norm"], ctx["r_c"]
+        outputs, layer_parts, bo_q = ctx["outputs"], ctx["layer_parts"], ctx["bo_q"]
         if self.strata_resum == "aitken":
             # geometric-tail (Aitken / Shanks e1) estimate of the body-order series from the last two
             # layer strata: rho = e_L / e_{L-1} (saturated to |rho| < 0.5), tail = e_L rho / (1 - rho);

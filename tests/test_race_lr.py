@@ -103,3 +103,17 @@ def test_race_lr_forces_rotation_and_charge(x64, graph):
     # the energy depends on the total charge (charge-dependent model) and the charges sum to it
     r1 = run(g, 1.0)
     assert abs(float(r1['energy'][0]) - float(r0['energy'][0])) > 1e-3
+    n = int(g.n_node[0])
+    q1 = np.asarray(r1['charges'])
+    assert abs(q1[:n].sum() - 1.0) < 1e-10 and np.all(q1[n:] == 0.0)
+    assert abs(np.asarray(r0['charges'])[:n].sum()) < 1e-10
+
+
+def test_race_output_keys_unchanged(graph):
+    """energy_forces_stress adds 'charges' only for models that return them: plain RACE has no such key."""
+    import jax
+    import jax.numpy as jnp
+    from conftest import make_model
+    out = make_model()(jax.tree.map(jnp.asarray, pad_single(graph)))
+    assert 'charges' not in out
+    assert {'energy', 'forces', 'stress', 'node_features'} <= set(out)

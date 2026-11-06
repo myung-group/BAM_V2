@@ -325,6 +325,7 @@ def energy_forces_stress(
                 'stress_variation': results.get('stress_variation'),
                 'strata': results.get('strata'),
                 'node_features': results.get('node_features'),
+                'charges': results.get('charges'),     # RACE_LR Qeq charges; None for every other model
             }
             return jnp.sum(ne), aux
 
@@ -352,6 +353,7 @@ def energy_forces_stress(
                 'stress_variation': results.get('stress_variation'),
                 'strata': results.get('strata'),
                 'node_features': results.get('node_features'),
+                'charges': results.get('charges'),     # RACE_LR Qeq charges; None for every other model
             }
             return jnp.sum(ne), aux
 
@@ -430,7 +432,7 @@ def energy_forces_stress(
     if strata is not None:
         strata = strata * node_mask[None, :]       # (n_strata, n_atoms), padded nodes -> 0
 
-    return {
+    out = {
         'energy': graph_energies,
         'forces': -jnp.array(grad),
         'stress': stress,
@@ -440,3 +442,6 @@ def energy_forces_stress(
         'strata': strata,
         'node_features': aux.get('node_features'),     # final node features (DeNS noise head)
     }
+    if aux.get('charges') is not None:     # only models that return charges (RACE_LR) get the key; others unchanged
+        out['charges'] = aux['charges']
+    return out

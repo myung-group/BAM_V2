@@ -1492,3 +1492,18 @@ a4fcd2c32eb623e9b6aa8096639fbb6e  aumgo/test.xyz
 5ac5c63b65992204f1b2296d3e360bf1  aumgo/split.json
 875b924c3df0de2ae7a07d6e0e18f7f4  aumgo/e0.json
 ```
+
+**Training subsets for local tests (`data_prep/subset_4ghdnnp.py`, 2026-11-06).**
+- Each system gets 500 structures of each subset label from `train.xyz`, drawn with RandomState(0) and written to
+  `train_sub1000.xyz` and `subset_sub1000.json`.
+- Au2/MgO also gets 50 of each, drawn from that file, in `train_sub100.xyz`.
+- The test split is not subsampled.
+- Command: `python -I data_prep/subset_4ghdnnp.py data_local/4ghdnnp`. md5 of the outputs:
+
+```
+20314c6a67f43dbe504a2610df3a5c18  ag_cluster/train_sub1000.xyz
+e69e09e655dab7c5f08d20752877e39a  carbon_chain/train_sub1000.xyz
+fabdbc4ecf8ac648b2f51f9dab8a0a96  nacl/train_sub1000.xyz
+b8b492c8386c09fc13e495ed8f2442bb  aumgo/train_sub1000.xyz
+87b08a8475b107695a0b1c8beef76ae9  aumgo/train_sub100.xyz
+```

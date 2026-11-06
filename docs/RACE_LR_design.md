@@ -51,6 +51,12 @@ claim it cleanly.
   the loss. The reference charges are labels of the same dataset; 4G-HDNNP fits them in a first step. With this
   option the charges are no longer purely latent, so report it as a separate variant.
 
+- `long_range.charge_spin_embedding: true` adds a zero-initialised MLP(Q, 2S+1 − 1) to the layer-0 scalars. This
+  is the cheap global charge and spin input, also for pretraining on OMol25. The spin comes from cfg
+  `total_spin_key`.
+- `long_range.qeq: false` switches the Qeq stratum off, giving an embedding-only variant.
+- `chi_init_missing: "mean"` starts elements without a Pauling value at the mean.
+
 ## 2. Limits of the first version
 
 - **Dense matrices.** The Qeq matrix is N_pad × N_pad per batch, and the Ewald real-space part is N² × images. This
@@ -60,6 +66,9 @@ claim it cleanly.
     Check convergence per dataset with the α-independence test.
   - Au2/MgO (9.05 × 9.05 × 26.46 Å, 110 atoms), checked 2026-11-06 with the Hirshfeld charges: the defaults are within
     0.008 meV of α 0.3 / n_real 4 / n_recip 24, and α 0.2–0.4 agree to < 1e-4 meV.
+  - With random charges (std 0.5 e) the defaults err by up to 1.9 meV there, so use α 0.3 / n_real 1 / n_recip 8
+    (0.06 meV). Small bulk cells of about 5 Å are fine with the defaults (0.006 meV).
+  - Check every periodic dataset with `runs/diag/check_ewald.py <xyz>`. It prints the cheapest converged setting.
 - **Slab dipole.** The Ewald sum is plain 3D periodic, with no slab dipole correction. This matches the DFT
   reference as far as the record shows: the paper names no dipole correction and FHI-aims applies none by default.
   - The Al-doped Au2/MgO slab has M_z = 1.2–3.7 eÅ. A Yeh–Berkowitz correction would be 65–584 meV, with a

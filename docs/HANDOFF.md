@@ -198,6 +198,15 @@ sbatch). Every one of those jobs was written but not submitted.
      NaCl. README has a preliminary RACE_LR section. **The methods PDF is not updated yet**, because the NanumGothic
      fonts are not on the local PC: add the RACE_LR section to `docs/methods_pdf_data.json` and the PDF on HANGANG;
    - step 3: SPICE / OMol25 and LAMMPS long-range coupling.
+   - **OMol25 pretraining pilot** (user, 2026-11-06): pretrain RACEv2 on OMol25 with the total charge and spin from
+     the start, and fine-tune for long range later.
+     - Tooling: `data_prep/convert_omol25.py`, `runs/diag/make_omol_configs.py` (arms race / race_cs / racelr /
+       racelr_q × soap_f64 / amsgrad_f32), and `runs/diag/check_ewald.py` for periodic data.
+     - Blocked on Hugging Face access to the gated dataset. Run `inspect` first on the real files.
+     - Then run a 10–100k pilot before any full run.
+     - Full OMol scale needs the stream loader integrated (2c'), and a block-diagonal Qeq solve. The current solve is
+       dense over the whole batch.
+     - Ewald fixes for jit, float32 and the periodic guard: `docs/local_test_report.md` §9.
    See `docs/RACE_LR_design.md` §3.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.

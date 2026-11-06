@@ -234,7 +234,7 @@ Time per epoch on one GH200: 834 s (L4×128), 1010 s (L5×128), 1196 s (L6×128)
 | Ag3+ / Ag3− (1101) | total charge, same geometry | **28.8** / 1169 | **13.9** / 4152 |
 | C10H2 / C10H3+ (1002) | protonation at the far end of the chain | **2.7** / 3.7 | **15.1** / 20.2 |
 | Na9Cl8+ / Na8Cl8+ (500) | charge redistribution after removing one Na | 26.8 / 27.1 | 42.4 / 43.3 |
-| Au2 on MgO(001), doped / undoped (500) | dopant 10 Å below the Au2 | pipeline check only (100 training structures, 20 epochs) | |
+| Au2 on MgO(001), doped / undoped (500) | dopant 10 Å below the Au2 | first run invalid (trained as non-periodic); rerun pending | |
 
 - **Ag3.** RACE cannot separate the two charge states where their geometries overlap: single Ag3− frames reach an
   energy error of 7 eV, and its training was unstable after epoch 45.

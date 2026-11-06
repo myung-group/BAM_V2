@@ -166,6 +166,11 @@ Epoch 1 includes the JIT compilation.
    structure.
    - The defaults (α 0.3, n_real 2, n_recip 6) differ from α 0.3 / n_real 4 / n_recip 24 by 0.008 meV or less.
    - With α from 0.2 to 0.4, the energies agree to below 1e-4 meV. **Keep the defaults.**
+   - **Correction (2026-11-06, later):** this holds for the smooth Hirshfeld charges only.
+     - With random charges (std 0.5 e, `runs/diag/check_ewald.py`), the defaults err by up to 1.9 meV on this cell.
+       The reciprocal sum along the 26.5 Å axis is too short.
+     - α 0.3 / n_real 1 / n_recip 8 errs by at most 0.06 meV and costs less. The Au2/MgO configs use it from now on.
+     - Fitted charges need not be smooth, so check with `check_ewald.py`.
    - The slab dipole along z is large for the Al-doped slab, and the vacuum gap is about 10 Å:
 
      | subset | M_z (eÅ) | Yeh–Berkowitz term 2πK M_z²/V (meV) |
@@ -259,8 +264,13 @@ Test split, energy RMSE in meV (raw → after the per-composition refit), force 
    - The paper shows the NaCl effect along the path of one Na atom. The random test split may not resolve it, and
      both models are far from converged.
    - On the HPC, also evaluate the path or scan if it can be built from the data. The archive marks no path.
-4. **Au2/MgO: pipeline check only.** The periodic Ewald stratum trains on the GPU without problems. 100 structures
-   and 20 epochs say nothing about doping.
+4. **Au2/MgO: invalid run (corrected 2026-11-06, later).**
+   - The configs lacked `"periodic": true`, so the trainer built a molecular model for both RACE_LR and RACE. The
+     image shifts and the cell were ignored, and RACE_LR used the direct Coulomb sum instead of Ewald.
+   - The trainer now refuses periodic data with `periodic` false.
+   - The Ewald path also failed under jit and gave NaN in float32. Both are fixed (§9).
+   - The runs are repeated with `periodic: true` and the checked Ewald settings. The old outputs are kept as
+     `runs/local_4g/aumgo_*_nonperiodic_round1`.
 
 **Consequences for the HPC step 2.**
 - Report the energy errors with a per-composition gauge refit (train only), or train long enough that the
@@ -285,7 +295,7 @@ test splits (`runs/diag/local_4g/charges.py`). The Hirshfeld charges are never u
 | carbon chain | C10H2 | +0.85 | 0.004 / 0.035 |
 | carbon chain | C10H3+ | −0.63 | 0.077 / 0.077 |
 | NaCl | Na8Cl8+ / Na9Cl8+ | +0.99 / +0.96 | 0.06 / 0.36–0.41 |
-| Au2/MgO | both (20 epochs) | undefined: q = 0 everywhere | 0.000 / 0.35 |
+| Au2/MgO | both (20 epochs, non-periodic run, invalid, see §7) | undefined: q = 0 everywhere | 0.000 / 0.35 |
 
 Carbon chain: these are mean charges of C1…C10 along the chain, with C10 the protonated end in C10H3+. The change
 from C10H2 to C10H3+ is shown:
@@ -303,7 +313,7 @@ DFT   dq  +0.132 +0.053 +0.097 +0.051 +0.096 +0.049 +0.101 +0.038 +0.141 +0.061
   alternation of the DFT charges. For C10H3+ this gives the negative correlation.
 - **Not captured: the magnitude in ionic systems.** On NaCl the signs are right, but the charges are about six times
   too small, so the short-range strata still carry most of the ionic energy.
-- **Au2/MgO.** With 20 epochs, χ and its head are still at their zero initialisation, so this run says nothing.
+- **Au2/MgO.** This was the invalid non-periodic run (§7). χ and its head were still at zero, so it says nothing.
 - **Likely causes.** Latent charges are not unique: the short-range strata can absorb electrostatic energy. In
   addition, χ0 and the χ head start at zero, and the hardness starts large (J0 = 5 eV/e², plus a Gaussian self term
   K/(√π σ) of 5–11 eV/e² for σ = covalent radius), which favours small, uniform charges.
@@ -320,3 +330,52 @@ DFT   dq  +0.132 +0.053 +0.097 +0.051 +0.096 +0.049 +0.101 +0.038 +0.141 +0.061
    - initialise χ0 with element electronegativities and use a smaller J0;
    - optionally add a Hirshfeld charge loss, as 4G-HDNNP does in its first training step. The labels are part of
      the same dataset, but this changes the "latent charges" claim.
+
+## 9. Periodic support and OMol25 pilot tooling (2026-11-06, late)
+
+**Bugs found and fixed in the periodic path.** Earlier tests ran eagerly and on large cells only, so none of these
+was caught.
+1. **jit.** `long_range.ewald_matrix_rows` built the k-vector list by boolean indexing of a jnp array, which fails
+   under jit (`NonConcreteBooleanIndexError`), and every training step is jitted. The list is now a numpy constant.
+2. **float32 NaN.** Periodic RACE_LR gave NaN energies in float32. Two changes fix it:
+   - The reciprocal weight was sqrt(… exp(−k²/4α²)/k²). In float32 the exponential underflows to 0 at large k,
+     and the derivative of sqrt at 0 is infinite. It is now exp(−k²/8α²)·sqrt(4πK/V)/|k|.
+   - Padding graphs have a zero cell, whose inverse is infinite. Their rows are masked, but 0·∞ still reaches the
+     gradients, so padding graphs now get a large finite cell.
+   - Which of the two was decisive was not isolated.
+3. **Silent molecular training.** Periodic data with `periodic` false trained a molecular model (see §7). The
+   trainer now raises in that case. No existing config of the repo is affected (checked).
+
+New tests (`tests/test_race_lr.py`, 15 passed):
+- periodic stress against the strain derivative, forces, and invariance under a lattice translation;
+- eager equal to jit;
+- finite float32 gradients with several padding graphs and large k.
+
+The periodic, OAM stress, round 10/14/15, equivariance, stream and graph-loading tests pass (66 + 2 xfailed, 9).
+Float64 results are unchanged: the Madelung tests still pass at 1e-7.
+
+**New model options (off by default).**
+- `long_range.charge_spin_embedding`: MLP(Q, 2S+1 − 1), zero-initialised, added to the layer-0 scalars. The spin
+  comes from the cfg `total_spin_key`, read from the extxyz info and defaulting to 1.
+- `long_range.qeq: false` switches the Qeq stratum off, giving an embedding-only variant.
+- `chi_init_missing: "mean"` covers elements without a Pauling value.
+
+**Tools.**
+- `runs/diag/check_ewald.py <periodic.xyz>`: the Ewald error of given settings, and the cheapest converged setting.
+- `data_prep/convert_omol25.py`: aselmdb to extxyz subsets.
+  - Modes: `inspect` shows the row layout, and `subset` samples the official train and val splits.
+  - The total charge and spin are required. `--neutral-if-missing` is explicit and counted.
+  - Partial charges, if present, go to `ref_charges`.
+  - `--allow-periodic` keeps the cell, pbc and stress.
+  - Tested on synthetic aselmdb files, molecular and periodic. The real OMol25 row layout is not seen yet.
+- `runs/diag/make_omol_configs.py`: the pilot arms.
+  - Models: race, race_cs, racelr, and racelr_q.
+  - Optimizers: soap_f64 and amsgrad_f32.
+  - Periodic subsets get the stress loss and `--ewald`.
+- `runs/diag/make_oam_configs.py --model racelr --ewald ...`: RACE_LR on the OAM subsets.
+- All arms trained one epoch on synthetic data (CPU), molecular and periodic, without NaN after the fixes above.
+
+**Blocked on the user.**
+- OMol25 is gated on Hugging Face: accept the terms with your account and create a read token. There is no token
+  on this PC.
+- This PC has 52 GB free (95 % used). Check the archive sizes before downloading.

@@ -75,6 +75,12 @@ scripts are force-added). Copy with a data-transfer node (HANGANG: dm01–dm04) 
 `/scratch` on HANGANG deletes files not accessed for 15 days, so copy checkpoints you need elsewhere.
 3BPA xyz files are in git (`dataset_3BPA/`).
 
+**Transfer package** (2026-11-06): `/scratch/t589a02/transfer_racev2_2026-11-06/` holds the git bundle, the results
+text of all runs, the exact processed data splits (325 MB compressed), fonts, the environment versions and patch,
+the Claude memory files and checkpoint manifests (core 10.7 GB, all 302.6 GB). Read its `RESTORE.md`.
+**Rebuilding the datasets from the raw public sources**: `docs/DATASETS.md`, which has the download URLs, md5s, the
+exact conversion commands and splits, and the md5s of the outputs. The converters are in `data_prep/`.
+
 ## 5. Key files
 
 | File | Role |

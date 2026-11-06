@@ -113,6 +113,11 @@ Config keys (in addition to the model hyper-parameters, see README):
     radial_gaussians : {"n": K, "r_min": A, "r_max": A, "width": A} Gaussian radial channels near the bond lengths
     hidden_irreps    : explicit irreps string (e.g. full parity); default hidden_size*s2_irreps(lmax)
     beta_nll         : beta for beta-NLL (gauss_nll only)     (default 0.0)
+    graph_cache      : pickle cache of the graphs next to each xyz (default true); false recomputes the neighbour
+                       lists at start and writes nothing (disk = the xyz files only)
+    graph_workers    : processes for the neighbour searches (default 1; 0 = CPUs of the Slurm task, <= 64)
+    pad_mode         : "bucket" (default) | "fixed" (one padded shape; pad_nodes, pad_edges, pack_max_graphs);
+                       fixed also writes sizes_<split>.tsv (index, n_atoms, n_edges) next to log_file
     use_dataset_stats: init shift/scale/avg_n_neighbors from the training set
                                                               (default false)
     e0_mode          : "isolated" | "regression"              (default "isolated")
@@ -299,6 +304,15 @@ def loss_weights_for_epoch(cfg: Dict, epoch: int) -> Dict[str, float]:
 # Data
 # =============================================================================
 
+def _graph_workers(cfg: Dict) -> int:
+    """graph_workers: processes for the neighbour searches (0 = the CPUs of this Slurm task, at most 64)."""
+    import os
+    w = int(_get(cfg, 'graph_workers', 1))
+    if w == 0:
+        w = min(64, int(os.environ.get('SLURM_CPUS_PER_TASK', 0)) or len(os.sched_getaffinity(0)))
+    return max(1, w)
+
+
 def build_datasets(cfg: Dict, fout):
     atomic_numbers = list(_get(cfg, 'atomic_numbers', DEFAULT_ATOMIC_NUMBERS))
     atom_indices = atomic_numbers_to_indices(atomic_numbers)
@@ -329,13 +343,15 @@ def build_datasets(cfg: Dict, fout):
         raise ValueError(f"unknown e0_mode {e0_mode!r}")
     atom_energies = [float(x) for x in atom_energies]
 
+    # graph_cache false: no pickle cache (neighbour lists recomputed at start, graph_workers processes)
+    gl = dict(use_cache=bool(_get(cfg, 'graph_cache', True)), n_workers=_graph_workers(cfg))
     all_graphs = load_3bpa_graphs(train_path, atomic_numbers, atom_energies, cutoff,
-                                  frames=train_frames)
+                                  frames=train_frames, **gl)
     valid_path = _get(cfg, 'valid_path', None)
     if valid_path:
         # fixed validation file (benchmark split); every frame of train_path is used for training
         train_graphs = all_graphs
-        valid_graphs = load_3bpa_graphs(valid_path, atomic_numbers, atom_energies, cutoff)
+        valid_graphs = load_3bpa_graphs(valid_path, atomic_numbers, atom_energies, cutoff, **gl)
     else:
         train_graphs, valid_graphs = split_train_valid(
             all_graphs, float(_get(cfg, 'valid_frac', 0.1)), seed=int(_get(cfg, 'split_seed', 42))
@@ -346,7 +362,7 @@ def build_datasets(cfg: Dict, fout):
         tp = _get(cfg, 'test_path', None)
         test_paths = [tp] if tp else []
     test_sets = {
-        Path(p).stem: GraphListDataset(load_3bpa_graphs(p, atomic_numbers, atom_energies, cutoff))
+        Path(p).stem: GraphListDataset(load_3bpa_graphs(p, atomic_numbers, atom_energies, cutoff, **gl))
         for p in test_paths
     }
 
@@ -917,6 +933,12 @@ def train(cfg: Dict):
         ne_ = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in all_g])
         ntr = np.array([int(np.asarray(g.n_node).reshape(-1)[0]) for g in train_dataset.graphs])
         etr = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in train_dataset.graphs])
+        # readable size tables of every split next to the log (index, n_atoms, n_edges), see data_3bpa.write_sizes_tsv
+        from bam_omat24.data_3bpa import write_sizes_tsv, graph_sizes
+        log_dir = Path(_get(cfg, 'log_file', 'runs/x/log.out')).parent
+        log_dir.mkdir(parents=True, exist_ok=True)
+        for nm, ds in [('train', train_dataset), ('valid', valid_dataset)] + list(test_sets.items()):
+            write_sizes_tsv(log_dir / f'sizes_{nm}.tsv', *graph_sizes(ds.graphs), cutoff=float(_get(cfg, 'cutoff', 5.0)))
         pad_nodes = int(_get(cfg, 'pad_nodes', 0)) or int(math.ceil(max(batch_size * ntr.mean(), nn_.max() + 1) / 64) * 64)
         pad_edges = int(_get(cfg, 'pad_edges', 0)) or int(math.ceil(max(batch_size * etr.mean(), ne_.max()) / 1024) * 1024)
         pack_graphs = int(_get(cfg, 'pack_max_graphs', 4 * batch_size))

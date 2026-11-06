@@ -24,6 +24,8 @@ import matscipy.neighbours
 import numpy as np
 from tqdm import tqdm
 
+from bam_omat24.neighbors import neighbor_pairs
+
 
 # =============================================================================
 # Graph construction
@@ -47,21 +49,9 @@ def preprocess_graph(
     total energy.
     """
     periodic = bool(np.any(atoms.pbc))
-    if periodic:
-        # periodic: i (receiver), j (sender), S (image of j).  D_ij = x_j - x_i + S.cell (ASE / matscipy
-        # convention); the model computes r = x_sender - (x_receiver + Sij.cell), so Sij = -S gives
-        # r = D_ij.  ASE's neighbour list is used here (matscipy's periodic path fails under NumPy 2).
-        import ase.neighborlist
-        src, dst, S = ase.neighborlist.neighbor_list("ijS", atoms, cutoff)
-    else:
-        if atoms.cell.rank < 3:
-            # molecule without a cell (e.g. converted rMD17): any box works for the open-boundary search
-            boxed = atoms.copy()          # copy for the neighbour search only (keeps the calculator on atoms)
-            span = np.ptp(boxed.positions, axis=0) if len(boxed) else np.zeros(3)
-            boxed.set_cell(np.diag(span + 2.0 * cutoff + 10.0)); boxed.pbc = False
-            src, dst = matscipy.neighbours.neighbour_list("ij", boxed, cutoff)
-        else:
-            src, dst = matscipy.neighbours.neighbour_list("ij", atoms, cutoff)
+    # periodic: i (receiver), j (sender), S (image of j).  D_ij = x_j - x_i + S.cell (ASE / matscipy convention); the
+    # model computes r = x_sender - (x_receiver + Sij.cell), so Sij = -S gives r = D_ij (neighbors.neighbor_pairs).
+    src, dst, S = neighbor_pairs(atoms, cutoff)
     species = np.array(
         [atom_indices[int(n)] for n in atoms.get_atomic_numbers()], dtype=np.int32
     )
@@ -255,6 +245,51 @@ def load_frames(xyz_path: str | Path) -> List[ase.Atoms]:
     return ase.io.read(str(xyz_path), index=":", format="extxyz")
 
 
+def _graphs_chunk(args):
+    """Worker of build_graphs: one chunk of frames -> graphs (module level: picklable for process pools)."""
+    frames, atomic_numbers, atom_energies, cutoff = args
+    atom_indices = atomic_numbers_to_indices(atomic_numbers)
+    return [preprocess_graph(a, atom_indices, atom_energies, cutoff, targets=True) for a in frames]
+
+
+def build_graphs(frames, atomic_numbers, atom_energies, cutoff, n_workers: int = 1, chunk: int = 256,
+                 desc: str = "graphs") -> List[jraph.GraphsTuple]:
+    """Graphs of a list of frames; n_workers > 1 runs the neighbour searches in a process pool (forkserver: no fork
+    of a process that already initialised JAX / CUDA).  Order is preserved."""
+    if n_workers <= 1 or len(frames) <= chunk:
+        return _graphs_chunk((frames, atomic_numbers, atom_energies, cutoff))
+    import concurrent.futures as cf
+    import multiprocessing as mp
+    jobs = [(frames[k:k + chunk], list(atomic_numbers), list(atom_energies), cutoff)
+            for k in range(0, len(frames), chunk)]
+    out: List[jraph.GraphsTuple] = []
+    with cf.ProcessPoolExecutor(max_workers=n_workers, mp_context=mp.get_context("forkserver")) as ex:
+        for part in tqdm(ex.map(_graphs_chunk, jobs), total=len(jobs), desc=f"{desc} ({n_workers} workers)",
+                         leave=False):
+            out.extend(part)
+    return out
+
+
+def graph_sizes(graphs) -> Tuple[np.ndarray, np.ndarray]:
+    """(n_atoms, n_edges) per graph."""
+    n = np.array([int(np.asarray(g.n_node).reshape(-1)[0]) for g in graphs], dtype=np.int64)
+    e = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in graphs], dtype=np.int64)
+    return n, e
+
+
+def write_sizes_tsv(path, n_atoms, n_edges, cutoff: float, source: str = "") -> None:
+    """Human-readable size table (one line per structure): index, n_atoms, n_edges."""
+    with open(path, "w") as fh:
+        fh.write(f"# source {source}\n# cutoff {cutoff}\nindex\tn_atoms\tn_edges\n")
+        for k, (a, b) in enumerate(zip(n_atoms, n_edges)):
+            fh.write(f"{k}\t{int(a)}\t{int(b)}\n")
+
+
+def read_sizes_tsv(path) -> Tuple[np.ndarray, np.ndarray]:
+    d = np.loadtxt(path, comments="#", skiprows=3, dtype=np.int64, ndmin=2)
+    return d[:, 1], d[:, 2]
+
+
 def load_3bpa_graphs(
     xyz_path: str | Path,
     atomic_numbers: Sequence[int],
@@ -263,8 +298,10 @@ def load_3bpa_graphs(
     cache_dir: Optional[str | Path] = None,
     use_cache: bool = True,
     frames: Optional[List[ase.Atoms]] = None,
+    n_workers: int = 1,
 ) -> List[jraph.GraphsTuple]:
-    """Read an extxyz file into graphs (with pickle cache)."""
+    """Read an extxyz file into graphs.  use_cache: pickle cache next to the file (read if present, else written);
+    use_cache=False recomputes the neighbour lists (n_workers processes) and writes nothing."""
     xyz_path = Path(xyz_path)
     assert xyz_path.exists(), f"{xyz_path} does not exist"
     cache = _cache_path(xyz_path, cutoff, atom_energies, cache_dir)
@@ -272,13 +309,10 @@ def load_3bpa_graphs(
         with open(cache, "rb") as f:
             return pickle.load(f)
 
-    atom_indices = atomic_numbers_to_indices(atomic_numbers)
     if frames is None:
         frames = load_frames(xyz_path)
-    graphs = [
-        preprocess_graph(atoms, atom_indices, atom_energies, cutoff, targets=True)
-        for atoms in tqdm(frames, desc=f"graphs {xyz_path.name}", leave=False)
-    ]
+    graphs = build_graphs(frames, atomic_numbers, atom_energies, cutoff, n_workers=n_workers,
+                          desc=f"graphs {xyz_path.name}")
     if use_cache:
         with open(cache, "wb") as f:
             pickle.dump(graphs, f)

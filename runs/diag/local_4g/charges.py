@@ -1,4 +1,5 @@
-"""Latent Qeq charges of trained RACE_LR checkpoints vs the DFT Hirshfeld charges (never used in training).
+"""Qeq charges of trained RACE_LR checkpoints vs reference charges (Hirshfeld, or Löwdin in ref_charges; the config's
+charge_label_key if set). Unless the run used the charge loss, the reference charges were never used in training.
 
 usage: python -m runs.diag.local_4g.charges   is not needed; run as a file from the repo root:
        python runs/diag/local_4g/charges.py <config.json> <ckpt.pkl> <test.xyz> <out.npz>
@@ -42,7 +43,8 @@ for b in loader:
     for g in np.flatnonzero(gmask):
         q[fid[g]] = qb[off[g]:off[g + 1]]
 lab = np.array([a.info['subset'] for a in frames])
-h = [a.arrays['hirshfeld_charges'] for a in frames]
+qkey = cfg.get('charge_label_key') or next(k for k in ('hirshfeld_charges', 'ref_charges') if k in frames[0].arrays)
+h = [a.arrays[qkey] for a in frames]
 for k in sorted(set(lab)):
     qq = np.concatenate([q[i] for i in np.flatnonzero(lab == k)]); hh = np.concatenate([h[i] for i in np.flatnonzero(lab == k)])
     tot = np.array([q[i].sum() for i in np.flatnonzero(lab == k)])

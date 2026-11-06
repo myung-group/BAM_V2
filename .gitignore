@@ -25,3 +25,7 @@ core.*
 docs/fonts/
 lammps/*.o
 lammps/test_pjrt
+
+# local PC (docs/LOCAL_TEST_PROMPT.md)
+.venv/
+data_local/

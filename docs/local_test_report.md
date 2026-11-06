@@ -305,8 +305,8 @@ DFT   dq  +0.132 +0.053 +0.097 +0.051 +0.096 +0.049 +0.101 +0.038 +0.141 +0.061
   too small, so the short-range strata still carry most of the ionic energy.
 - **Au2/MgO.** With 20 epochs, χ and its head are still at their zero initialisation, so this run says nothing.
 - **Likely causes.** Latent charges are not unique: the short-range strata can absorb electrostatic energy. In
-  addition, χ0 and the χ head start at zero, and the hardness starts large (J0 = 5 eV/e², plus a self term of
-  about 10 eV/e²), which favours small, uniform charges.
+  addition, χ0 and the χ head start at zero, and the hardness starts large (J0 = 5 eV/e², plus a Gaussian self term
+  K/(√π σ) of 5–11 eV/e² for σ = covalent radius), which favours small, uniform charges.
 
 **How to test it further, in order of cost:**
 1. Run the charge diagnostics above on every RACE_LR run.

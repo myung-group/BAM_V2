@@ -193,7 +193,10 @@ sbatch). Every one of those jobs was written but not submitted.
      carbon chain about 25 %, and NaCl none at that budget. Raw energy errors of the multi-composition systems are
      dominated by a per-composition offset, so report them with a train-only per-composition gauge refit (or add a
      per-species `gauge_refit`: decision for the user). Evaluate with `dump_frame_errors` / `eval_sets` from
-     2026-11-06 on, since they now pass `total_charge_key`;
+     2026-11-06 on, since they now pass `total_charge_key`. The charge diagnostics (`runs/diag/local_4g/charges.py`,
+     report §8) show non-local charge transfer captured on the carbon chain, but charges about six times too small on
+     NaCl. README has a preliminary RACE_LR section. **The methods PDF is not updated yet**, because the NanumGothic
+     fonts are not on the local PC: add the RACE_LR section to `docs/methods_pdf_data.json` and the PDF on HANGANG;
    - step 3: SPICE / OMol25 and LAMMPS long-range coupling.
    See `docs/RACE_LR_design.md` §3.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at

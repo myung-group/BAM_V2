@@ -271,3 +271,52 @@ Test split, energy RMSE in meV (raw → after the per-composition refit), force 
 - Use `dump_frame_errors` / `eval_sets` from this commit on, so that RACE_LR gets the total charge.
 - Watch for RACE instability on Ag3. Its validation loss jumps after epoch 45, so the best-checkpoint selection
   matters.
+
+## 8. Does RACE_LR capture the long-range physics? (charge diagnostics)
+
+Energy and force errors alone do not show it, because knowing the total charge already fixes most of Ag3. The
+latent Qeq charges of the trained RACE_LR checkpoints were therefore compared with the DFT Hirshfeld charges on the
+test splits (`runs/diag/local_4g/charges.py`). The Hirshfeld charges are never used in training.
+
+| system | state | corr(q, Hirshfeld) | mean abs(q), model / DFT |
+|---|---|---|---|
+| Ag3 | Ag3+ | −0.05 (both nearly uniform at 1/3) | 0.333 / 0.333 |
+| Ag3 | Ag3− | +0.91 | 0.333 / 0.333 |
+| carbon chain | C10H2 | +0.85 | 0.004 / 0.035 |
+| carbon chain | C10H3+ | −0.63 | 0.077 / 0.077 |
+| NaCl | Na8Cl8+ / Na9Cl8+ | +0.99 / +0.96 | 0.06 / 0.36–0.41 |
+| Au2/MgO | both (20 epochs) | undefined: q = 0 everywhere | 0.000 / 0.35 |
+
+Carbon chain: these are mean charges of C1…C10 along the chain, with C10 the protonated end in C10H3+. The change
+from C10H2 to C10H3+ is shown:
+
+```
+model dq  +0.115 +0.103 +0.096 +0.085 +0.090 +0.080 +0.093 +0.103 +0.091 +0.089
+DFT   dq  +0.132 +0.053 +0.097 +0.051 +0.096 +0.049 +0.101 +0.038 +0.141 +0.061
+```
+
+**Reading.**
+- **Captured: non-local charge transfer.** The far-end carbon is 11.4 Å from the protonated carbon, and the cutoff
+  is 5 Å. Its charge changes by +0.115 e in the model and +0.132 e in DFT. A purely local model cannot see the
+  protonation from there.
+- **Not captured: the atomic pattern.** The model distributes the extra charge almost uniformly and misses the
+  alternation of the DFT charges. For C10H3+ this gives the negative correlation.
+- **Not captured: the magnitude in ionic systems.** On NaCl the signs are right, but the charges are about six times
+  too small, so the short-range strata still carry most of the ionic energy.
+- **Au2/MgO.** With 20 epochs, χ and its head are still at their zero initialisation, so this run says nothing.
+- **Likely causes.** Latent charges are not unique: the short-range strata can absorb electrostatic energy. In
+  addition, χ0 and the χ head start at zero, and the hardness starts large (J0 = 5 eV/e², plus a self term of
+  about 10 eV/e²), which favours small, uniform charges.
+
+**How to test it further, in order of cost:**
+1. Run the charge diagnostics above on every RACE_LR run.
+2. Pull apart charged fragments beyond the cutoff, such as the NaCl cluster or the Ag3 ions. E(r) should follow
+   K q1 q2 / r, while RACE is flat beyond 5 Å. Also watch for fractional charges at dissociation, a known Qeq
+   artefact.
+3. Compare RACE and RACE_LR at reduced cutoff (3–4 Å). A model that captures long range should lose less.
+4. Check the Au2/MgO doping effect from the paper's Table II: the wetting / non-wetting energy order flips with the
+   dopant. This needs the full HPC training.
+5. Model options for the user to decide:
+   - initialise χ0 with element electronegativities and use a smaller J0;
+   - optionally add a Hirshfeld charge loss, as 4G-HDNNP does in its first training step. The labels are part of
+     the same dataset, but this changes the "latent charges" claim.

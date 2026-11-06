@@ -205,6 +205,69 @@ rule was fixed before the runs (`docs/size_screening_protocol_2026-11-03.md`, va
 +10 % of the best validation energy RMSE, then the lowest validation force RMSE, ties (< 2 %) to the smaller model.
 Time per epoch on one GH200: 834 s (L4×128), 1010 s (L5×128), 1196 s (L6×128), 1419 s (L5×192).
 
+### RACE_LR: charge equilibration and long-range electrostatics (preliminary, 2026-11-06)
+
+`"model": "RACE_LR"` adds one non-local stratum to RACEv2 and leaves RACE unchanged.
+- **Inputs to the stratum.** Environment-dependent electronegativities χ_i and hardnesses J_i come from the
+  scalar features of the last RACE layer.
+- **Charges.** A charge equilibration step gives the charges q, with the total charge Q of each structure as a
+  constraint: Q is read from the extxyz info key `total_charge_key`.
+- **Electrostatics.** Gaussian-charge Coulomb uses a direct sum for molecules and an Ewald sum for periodic cells.
+- **Training.** It uses energies, forces and stress only. The charges are latent and get no charge labels.
+- Design and limits: `docs/RACE_LR_design.md`.
+
+**Benchmark.** The four systems of the 4G-HDNNP paper (Ko et al., Nat. Commun. 12, 398 (2021); Materials Cloud
+2020.137, CC BY 4.0), converted with `data_prep/convert_4ghdnnp.py` (`docs/DATASETS.md` §16).
+
+**Local small-budget test** (not the final result).
+- Model: the 3BPA recipe at reduced size (hidden 64, 3 layers, lmax 2, float64). Both models use the same settings.
+- Training set: 1000 structures, balanced by charge state. For Au2/MgO it is 100 structures.
+- Schedule: 200 epochs, and 20 for Au2/MgO. One seed, one RTX 4060 Ti.
+- Test set: the full test split (10 % of each system).
+- Energy correction: the energies are given after a per-composition energy-constant refit on the training split.
+  The trainer's single per-atom refit cannot remove the offset between two compositions, which otherwise dominates
+  the carbon-chain and NaCl numbers.
+- Details: `docs/local_test_report.md` §7–8.
+
+| System (test frames) | What a local model cannot see | E RMSE (meV), RACE_LR / RACE | F RMSE (meV/Å), RACE_LR / RACE |
+|---|---|---|---|
+| Ag3+ / Ag3− (1101) | total charge, same geometry | **28.8** / 1169 | **13.9** / 4152 |
+| C10H2 / C10H3+ (1002) | protonation at the far end of the chain | **2.7** / 3.7 | **15.1** / 20.2 |
+| Na9Cl8+ / Na8Cl8+ (500) | charge redistribution after removing one Na | 26.8 / 27.1 | 42.4 / 43.3 |
+| Au2 on MgO(001), doped / undoped (500) | dopant 10 Å below the Au2 | pipeline check only (100 training structures, 20 epochs) | |
+
+- **Ag3.** RACE cannot separate the two charge states where their geometries overlap: single Ag3− frames reach an
+  energy error of 7 eV, and its training was unstable after epoch 45.
+- **Carbon chain.** The gain is about 25 % in energy and force.
+- **NaCl.** There is no difference at this budget.
+
+**Does it capture the long-range physics?**
+
+Lower errors alone do not show it: knowing the total charge would already fix most of Ag3. Two checks use the
+DFT Hirshfeld charges, which are never used in training:
+
+| System | Correlation of q with Hirshfeld | Mean abs(q), model / DFT |
+|---|---|---|
+| Ag3− | 0.91 | 0.333 / 0.333 |
+| C10H2 | 0.85 | 0.004 / 0.035 |
+| C10H3+ | −0.63 | 0.077 / 0.077 |
+| NaCl (both states) | 0.96–0.99 | 0.06 / 0.36–0.41 |
+
+1. **Non-local charge transfer.** Protonation of one end of the carbon chain changes the charge of the carbon at
+   the other end, 11.4 Å away and well outside the 5 Å cutoff, by +0.115 e. DFT gives +0.132 e. A purely local
+   model cannot see the protonation from that atom. RACE_LR captures this transfer.
+2. **Charge pattern.** The model spreads the extra charge almost uniformly over the chain and misses the
+   alternation of the DFT charges (+0.13, +0.05, +0.10, +0.05, ...).
+3. **Magnitude.** On NaCl the signs are right, but the charges are about six times too small, so most of the ionic
+   energy is still carried by the short-range strata.
+
+So, at this budget, RACE_LR captures the global charge state and the long-range redistribution, but not
+quantitative atomic charges. Next checks:
+- the Au2/MgO doping effect, trained on the HPC;
+- the 1/r tail when charged fragments are pulled apart beyond the cutoff;
+- the error at reduced cutoff, compared with RACE;
+- the hardness and electronegativity initialisation, or an optional Hirshfeld charge loss as in 4G-HDNNP.
+
 Work in progress: 100k size comparison, ablations without shell channels / UFF / SOAP (AMSGrad), last-layer Bayesian
 uncertainty, water rerun with repulsion, MD22.
 
@@ -291,6 +354,7 @@ Example Slurm scripts for KISTI HANGANG are in `runs/diag/*.sh`.
 |---|---|
 | `bam_omat24/race_nnx.py` | RACEv2 model (layers, hill, Chebyshev residual, UFF repulsion, cue tensor product) |
 | `bam_omat24/train_3bpa.py` | training, evaluation, energy-constant refit |
+| `bam_omat24/long_range.py`, `race_lr_nnx.py` | RACE_LR: Gaussian-charge Coulomb / Ewald, charge equilibration, RACE subclass |
 | `bam_omat24/soap_optax.py`, `soap_grouped.py` | SOAP optimizer |
 | `bam_omat24/md_run.py`, `md_lips_analysis.py` | restartable Nosé–Hoover MD, LiPS observables |
 | `bam_omat24/export_lammps.py`, `lammps/` | StableHLO export, PJRT C++ runtime, `pair_style race` |

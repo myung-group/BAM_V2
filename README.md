@@ -234,7 +234,22 @@ Time per epoch on one GH200: 834 s (L4×128), 1010 s (L5×128), 1196 s (L6×128)
 | Ag3+ / Ag3− (1101) | total charge, same geometry | **28.8** / 1169 | **13.9** / 4152 |
 | C10H2 / C10H3+ (1002) | protonation at the far end of the chain | **2.7** / 3.7 | **15.1** / 20.2 |
 | Na9Cl8+ / Na8Cl8+ (500) | charge redistribution after removing one Na | 26.8 / 27.1 | 42.4 / 43.3 |
-| Au2 on MgO(001), doped / undoped (500) | dopant 10 Å below the Au2 | first run invalid (trained as non-periodic); rerun pending | |
+| Au2 on MgO(001), doped / undoped (500) | dopant 10 Å below the Au2 | 279 / 287 (periodic, 100 training structures, 20 epochs: inconclusive) | 94.8 / 94.6 |
+
+**Charge handling variants (round 2).**
+- Initialising χ0 from Pauling electronegativities and adding a Hirshfeld charge loss (weight 0.1, `charge_label_key`
+  / `charge_weight`) makes the charges physical: correlation 0.98–1.00 with DFT and the right magnitude.
+- It also gives the best errors:
+
+  | System | E RMSE (meV), RACE → pauling_q | F RMSE (meV/Å), RACE → pauling_q |
+  |---|---|---|
+  | Carbon chain | 3.7 → 2.2 | 20.2 → 9.2 |
+  | NaCl | 27.1 → 23.2 | 43.3 → 35.8 |
+  | Ag3 | 1169 → 28.8 | 4152 → 13.8 |
+
+- With the default zero χ initialisation, a neutral-only dataset never develops charges: the gradient is exactly zero
+  at χ = 0. Use Pauling initialisation there.
+- Details: `docs/local_test_report.md` §10.
 
 - **Ag3.** RACE cannot separate the two charge states where their geometries overlap: single Ag3− frames reach an
   energy error of 7 eV, and its training was unstable after epoch 45.
@@ -262,7 +277,9 @@ DFT Hirshfeld charges, which are never used in training:
    energy is still carried by the short-range strata.
 
 So, at this budget, RACE_LR captures the global charge state and the long-range redistribution, but not
-quantitative atomic charges. Next checks:
+quantitative atomic charges. This holds for latent charges trained on energies and forces only. With Pauling initialisation and the
+Hirshfeld charge loss, the atomic charges match DFT (r ≥ 0.98, right magnitude), and energies and forces improve.
+See "Charge handling variants" above. Next checks:
 - the Au2/MgO doping effect, trained on the HPC;
 - the 1/r tail when charged fragments are pulled apart beyond the cutoff;
 - the error at reduced cutoff, compared with RACE;

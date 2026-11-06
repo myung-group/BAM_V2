@@ -379,3 +379,58 @@ Float64 results are unchanged: the Madelung tests still pass at 1e-7.
 - OMol25 is gated on Hugging Face: accept the terms with your account and create a read token. There is no token
   on this PC.
 - This PC has 52 GB free (95 % used). Check the archive sizes before downloading.
+
+## 10. Charge handling variants on the 4G-HDNNP systems (round 2, 2026-11-07)
+
+**Setup.** Same as §7: reduced model, 1000 training structures (100 for Au2/MgO), 200 epochs (20 for Au2/MgO), one
+seed. The Au2/MgO runs are now periodic, with Ewald α 0.3 / n_real 1 / n_recip 8.
+- `racelr`: the original latent RACE_LR.
+- `pauling`: χ0 from Pauling electronegativities.
+- `pauling_q`: Pauling init plus the Hirshfeld charge loss, weight 0.1.
+
+The numbers below are test RMSE after the train-only per-composition refit (`runs/local_4g/summary_round2.txt`). The
+charge column gives the correlation of q with Hirshfeld per state, and in brackets the mean |q|, model / DFT.
+
+| system | model | E (meV) | F (meV/Å) | charges |
+|---|---|---|---|---|
+| Ag3 | RACE | 1169 | 4152 | – |
+| Ag3 | racelr | 28.8 | 13.9 | −0.05 ; +0.91 |
+| Ag3 | pauling | 28.5 | 13.9 | −0.10 ; +0.92 |
+| Ag3 | **pauling_q** | 28.8 | 13.8 | **+0.99 ; +1.00** |
+| carbon chain | RACE | 3.7 | 20.2 | – |
+| carbon chain | racelr | 2.7 | 15.1 | +0.85 (0.004/0.035) ; −0.63 |
+| carbon chain | pauling | 4.6 | 16.8 | +0.99 ; +0.78 |
+| carbon chain | **pauling_q** | **2.2** | **9.2** | **+0.99 ; +0.98** |
+| NaCl | RACE | 27.1 | 43.3 | – |
+| NaCl | racelr | 26.8 | 42.4 | +0.99 (0.062/0.361) ; +0.96 (0.059/0.407) |
+| NaCl | pauling | 25.9 | 41.5 | +0.99 (0.062/0.361) ; +0.98 (0.059/0.407) |
+| NaCl | **pauling_q** | **23.2** | **35.8** | **+1.00 (0.355/0.361) ; +1.00 (0.375/0.407)** |
+| Au2/MgO (periodic) | RACE | 287 | 94.6 | – |
+| Au2/MgO (periodic) | racelr | 279 | 94.8 | q = 0 everywhere |
+| Au2/MgO (periodic) | pauling | 266 | 97.3 | +0.99 (0.58/0.35) |
+| Au2/MgO (periodic) | pauling_q | 263 | 99.6 | +0.99 (0.37/0.35) |
+
+**Reading.**
+1. **The Hirshfeld charge loss is what makes the charges physical.**
+   - With it, the correlation is at least 0.98 and the magnitudes match DFT in every system.
+   - Without it, the latent charges stay too small on NaCl, at 0.06 e, whatever the χ0 initialisation. Both latent
+     runs end at the same |q| although their χ0 differ (−3.1 / +3.3 vs −1.4 / +2.8 eV).
+2. **Physical charges also improve energies and forces.**
+   - Carbon chain: RACE 3.7 meV / 20.2 meV/Å, and pauling_q 2.2 / 9.2, which halves the force error.
+   - NaCl: 14 % better in energy and 17 % in force than RACE. The latent RACE_LR showed no gain there.
+   - Ag3: unchanged in energy, but the charges are now right.
+3. **Au2/MgO, 100 structures and 20 epochs, is too small to conclude.**
+   - The energies are within the noise of each other. Pauling-initialised RACE_LR is slightly better in energy on the
+     Al-doped slab (294 and 278 vs 362 meV), but its force is slightly worse.
+   - Training is about 1.5× slower per epoch with Ewald.
+4. **Design flaw found: with the default zero χ initialisation, a neutral-only dataset can never develop charges.**
+   - For Q = 0, the minimised Qeq energy is −½ χᵀBχ, a quadratic form in χ. Its gradient is exactly zero at
+     χ = 0, so the χ head and χ0 receive no gradient.
+   - This is the q = 0 of the periodic Au2/MgO racelr run, and of the round-1 run.
+   - The carbon chain escaped only because the charged C10H3+ shares the parameters.
+   - Any neutral dataset (OMat24, the OpenFF OMol part) therefore needs `chi_init: "pauling"`, or the charge loss.
+     The OMol pilot and `make_oam_configs.py --model racelr` already use Pauling.
+   - The default is left unchanged so that old configs reproduce. It is a decision for the user whether Pauling
+     should become the default.
+
+These are one-seed, reduced-budget numbers. The HPC runs at full size decide.

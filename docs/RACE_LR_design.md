@@ -56,6 +56,11 @@ claim it cleanly.
   `total_spin_key`.
 - `long_range.qeq: false` switches the Qeq stratum off, giving an embedding-only variant.
 - `chi_init_missing: "mean"` starts elements without a Pauling value at the mean.
+- **Zero χ is a stationary point for neutral data** (found 2026-11-07). For Q = 0 the Qeq energy is −½ χᵀBχ,
+  so every χ parameter has zero gradient at χ = 0. A neutral-only dataset with `chi_init: "zero"` never develops
+  charges. Use `"pauling"` there. The default is unchanged for reproducibility.
+- In the local 4G test (report §10), the Hirshfeld charge loss is what makes the charges physical (r ≥ 0.98, right
+  magnitude). It also gives the best energies and forces on the carbon chain and NaCl.
 
 ## 2. Limits of the first version
 

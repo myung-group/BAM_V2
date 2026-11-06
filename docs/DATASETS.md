@@ -1455,7 +1455,10 @@ compositions, as the readme states. The charge-state contrast there is the posit
   are within a few eV.
 - The fit residual std is 0.135 eV for carbon_chain, 3.85 eV for ag_cluster, 0.071 eV for nacl and 0.447 eV for
   aumgo. For Ag3 it is the Ag3+ / Ag3− energy gap.
-- Isolated-atom DFT energies at the same level would be the physical alternative. They are not computed yet.
+- Isolated-atom DFT energies at the same level would be the physical alternative. They are not computed.
+- Decision (2026-11-06): use the `e0.json` offsets as `atom_energies` for RACE_LR and the RACEv2 baseline alike.
+  They are a constant per composition, so they do not change any energy difference within a composition, including
+  the charge-state gaps.
 
 **Check (2026-11-06).**
 - Read back with `ase.io.read`: five structures per system (indices 0, 1, n/2, n−1 and 1234) were compared with an

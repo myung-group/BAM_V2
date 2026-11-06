@@ -5,8 +5,8 @@ existing model**, so that it can be tried on other problems. RACE (`bam_omat24/r
 extension is a subclass selected with `"model": "RACE_LR"`.
 
 Status:
-- Step 1 (code and unit tests): written, **not run**, because the allocation is exhausted.
-- Steps 2–3 (data and validation): planned.
+- Step 1 (code and unit tests): the CPU tests pass on the user's local PC (2026-11-06, `docs/local_test_report.md`).
+- Step 2 data: converted (`docs/DATASETS.md` §16). Step 2 training and step 3: planned.
 
 ## 1. Model
 
@@ -37,7 +37,7 @@ $$q = \arg\min_q E^{\mathrm{Qeq}}\quad\text{s.t.}\quad \textstyle\sum_{i\in g} q
   through the linear solve, which is the implicit derivative of the Qeq minimum. Stress follows from the existing
   formula `cellgrad^T cell + Σ grad ⊗ pos`, because the Ewald matrix depends on both positions and cell.
 - **Per-atom energy.** $e_i = \chi_i q_i + \tfrac12 q_i (Aq)_i$, added to the RACE node energies. The model also
-  returns `charges`.
+  returns `charges` (passed through `utils.energy_forces_stress` only when the model provides them).
 
 Why this fits RACE: the locally resolved strata stay as they are, and all non-local physics enters through one
 explicit, physically constrained stratum. This keeps the local/long-range separation interpretable and lets a paper
@@ -50,6 +50,13 @@ claim it cleanly.
   - For larger systems, use conjugate gradient with Ewald matrix-vector products, or PME.
   - The species tables use `n_real` / `n_recip` from the config (defaults α = 0.3 Å⁻¹, n_real = 2, n_recip = 6).
     Check convergence per dataset with the α-independence test.
+  - Au2/MgO (9.05 × 9.05 × 26.46 Å, 110 atoms), checked 2026-11-06 with the Hirshfeld charges: the defaults are within
+    0.008 meV of α 0.3 / n_real 4 / n_recip 24, and α 0.2–0.4 agree to < 1e-4 meV.
+- **Slab dipole.** The Ewald sum is plain 3D periodic, with no slab dipole correction. This matches the DFT
+  reference as far as the record shows: the paper names no dipole correction and FHI-aims applies none by default.
+  - The Al-doped Au2/MgO slab has M_z = 1.2–3.7 eÅ. A Yeh–Berkowitz correction would be 65–584 meV, with a
+    standard deviation of 92 meV, so adding one would change the target physics. Keep it off unless the DFT
+    settings show otherwise.
 - **No charges in the short-range features yet.** 4G-HDNNP feeds the charges back into the short-range descriptors.
   This is possible as a later option: a second pass, or q as an extra scalar input of the layers.
 - **Not supported yet:** the streaming loader (`stream_io.graph_arrays`) and the LAMMPS export.

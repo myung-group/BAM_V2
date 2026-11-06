@@ -11,8 +11,8 @@ Slurm, on branch `racev2` starting from 692aa83.
   the two runs are close, with RACE_LR slightly ahead.
 - **Data.** The four 4G-HDNNP systems were downloaded from Materials Cloud (CC BY 4.0, 40 MB) and converted to extxyz
   with total charges. The details are in `docs/DATASETS.md` §16.
-- **Open points.** These are listed in the last section: model charges are not returned, the E0 offsets are a
-  choice, and the Ewald settings for the Au2/MgO slab are not checked.
+- **Follow-up.** RACE_LR now returns its charges. The E0 offsets, the split and the Ewald settings for Au2/MgO
+  are decided and checked (section 5).
 
 ## 1. Environment
 
@@ -142,30 +142,43 @@ Epoch 1 includes the JIT compilation.
   It gave finite energies, forces and stress and conserved charge exactly, including the periodic Au2/MgO cell.
 - Energy and force ranges per charge state are in `DATASETS.md` §16.
 
-## 5. What did not work or needs a decision
+## 5. Follow-up: decisions taken (user: "proceed as you recommend", 2026-11-06)
 
-1. **Model charges are not returned.**
-   - The design doc says "The model also returns `charges`". `RACE_LR.node_energies` does put them in its output.
-   - The shared `bam_omat24/utils.energy_forces_stress` copies only fixed keys into its aux, so `model(graph)` has no
-     `charges` key.
-   - A fix would pass `results.get('charges')` through when it is not None. That touches the shared default code
-     path, and no test failed, so it was **not** changed here.
-   - It is needed to analyse the charges by charge state in step 2.
-2. **E0 offsets.**
-   - The archive has no isolated-atom energies, and the trainer stores energy targets in float32 after subtracting
-     `atom_energies`. Raw totals reach −1.48e6 eV, where float32 resolves only about 0.1 eV.
-   - `e0.json` therefore holds per-element least-squares offsets fitted on the training split only. For Ag3 and
-     Au2/MgO these are minimum-norm values, because the compositions do not determine each element.
-   - The decision is whether to use these offsets as `atom_energies`, or to compute isolated-atom energies with
-     FHI-aims PBE light.
-3. **Ewald settings for Au2/MgO.**
-   - Au2/MgO is a slab in a 3D periodic cell with vacuum along c, and it may carry a net dipole, especially the Al-doped
-     slab with Au.
-   - The default α = 0.3 Å⁻¹, n_real = 2 and n_recip = 6 were not checked for convergence on this cell.
-   - A dipole correction is not implemented. Run the α-independence check on this cell before training.
-4. **Split stratification.** The split is not stratified by charge state. The per-state counts are within about ±1 %
-   of 90/10, as listed in §16.
-5. **Environment notes.** These do not block the run.
-   - Python 3.12 came from conda, because the system has 3.10.
-   - pip's NVIDIA extra index fails DNS on this PC.
-   - `tqdm` and `natsort` must be added to the install line of the prompt.
+1. **Model charges are now returned.**
+   - The design doc said the model returns `charges`, but the shared `bam_omat24/utils.energy_forces_stress` copied
+     only fixed keys into its aux, so `model(graph)` had no `charges` key.
+   - It now passes `charges` through only when the node-energy function provides them. Every other model returns
+     exactly the keys it returned before.
+   - New checks in `tests/test_race_lr.py`: the returned charges sum to the total charge (0 and +1) with padding at 0,
+     and plain RACE has no `charges` key.
+   - Results: `test_race_lr.py` 7 passed. `test_periodic.py`, `test_oam_stress.py` and `test_equivariance.py` gave
+     28 passed and 2 xfailed, the known issue #5. A RACE_LR smoke run with the patch gives the same losses as before
+     (see below).
+2. **E0 offsets.** Use the train-only least-squares offsets of `e0.json` as `atom_energies`, for RACE_LR and the
+   RACEv2 baseline alike.
+   - They are a constant per composition, so energy differences within a composition, including the charge-state
+     gaps, are untouched.
+   - No extra data is needed, which keeps the fair protocol. Isolated-atom DFT would need FHI-aims runs and would
+     not change what the models learn.
+3. **Split.** Keep the seeded RandomState(42) 90/10 split of `split.json`. The paper's indices are not published, and
+   the per-state counts are within about ±1 % of 90/10.
+4. **Ewald on Au2/MgO.** This was measured on the CPU with the Hirshfeld charges, on one undoped and one Al-doped
+   structure.
+   - The defaults (α 0.3, n_real 2, n_recip 6) differ from α 0.3 / n_real 4 / n_recip 24 by 0.008 meV or less.
+   - With α from 0.2 to 0.4, the energies agree to below 1e-4 meV. **Keep the defaults.**
+   - The slab dipole along z is large for the Al-doped slab, and the vacuum gap is about 10 Å:
+
+     | subset | M_z (eÅ) | Yeh–Berkowitz term 2πK M_z²/V (meV) |
+     |---|---|---|
+     | Al-doped | +1.25 … +3.74 | 65 … 584 (std 92) |
+     | undoped | −1.09 … +1.72 | 0 … 124 (std 14) |
+
+   - The paper names no dipole correction and FHI-aims applies none by default, so the DFT reference is plain 3D
+     periodic. **Keep plain 3D Ewald without a dipole correction**, which matches the reference. This should be
+     revisited only if the FHI-aims control files show `use_dipole_correction`.
+
+## 6. Environment notes (not blocking)
+
+- Python 3.12 came from conda, because the system Python is 3.10.
+- pip's NVIDIA extra index fails DNS on this PC, so uv was used.
+- `tqdm` and `natsort` must be added to the install line of `docs/LOCAL_TEST_PROMPT.md`.

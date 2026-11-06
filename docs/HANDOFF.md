@@ -243,6 +243,12 @@ sbatch). Every one of those jobs was written but not submitted.
 
 ## 9. Pitfalls already paid for
 
+- `avg_n_neighbors` of the OAM subset configs came from the per-structure mean of the first 500 structures:
+  OMat24 10k used 26.965, while the full split gives 27.909 (−3.4 %); the 100k value matches (26.966). The
+  comparisons are fair (same value for V1 and V2), but `runs/diag/make_oam_configs.py` now uses the atom-weighted
+  mean of the full training split (cached as `<stem>.avg_n_c<cutoff>.json`). Full OAM pretraining must take it from
+  the size table of the full data.
+
 - SOAP diverges in float32 on OAM data (30–80 steps) and on 3BPA (epochs 107–337); use float64 or `soap_state_dtype`.
 - The repulsion prior is multiplied by the learned global scale (trained s ≈ 0.25). Never call it parameter-free.
 - Padding edges must be masked: r = 0 edges carry no message, and padding-node energies are masked with `where`.

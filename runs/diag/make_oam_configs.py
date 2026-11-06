@@ -3,12 +3,58 @@ one per dataset (omat24, mptrj, salex), from the 3BPA ablation baseline and the 
 
     python -I runs/diag/make_oam_configs.py <subset_dir> [--epochs N] [--tag oam] [--seeds 42]
 -> input/input_3bpa_omat24_<tag>_<dataset>_<variant>_s<seed>_cue.json  (name pattern of runs/run_cue.sh)
+
+avg_n_neighbors (2026-11-06): the atom-weighted mean neighbour count of the FULL training split at the model cutoff
+(sum of edges / sum of atoms, the same statistic the trainer prints as "avg_n_neighbors" in the training-set
+statistics).  It is computed once with the JAX-free neighbour search (bam_omat24/neighbors.py, --workers processes)
+and cached next to the xyz as <stem>.avg_n_c<cutoff>.json.  Earlier configs used the per-structure mean of the first
+500 structures from the subset meta file (OMat24 10k: 26.965 vs the full-split value 27.909; 100k: 26.965 vs
+26.966).  Run inside a job for large splits (no heavy work on login nodes).
 """
 import argparse
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _count(args):
+    import sys
+    sys.path.insert(0, str(ROOT / 'bam_omat24'))
+    from neighbors import neighbor_pairs                     # JAX-free (bam_omat24/__init__ would import JAX)
+    frames, cutoff = args
+    return [(len(a), len(neighbor_pairs(a, cutoff)[0])) for a in frames]
+
+
+def full_avg_neighbors(train_path, cutoff, workers=0):
+    """Atom-weighted mean neighbour count (sum edges / sum atoms) of the whole training split; cached."""
+    import os
+    p = Path(train_path)
+    cache = p.with_name(f'{p.stem}.avg_n_c{cutoff:g}.json')
+    if cache.exists():
+        d = json.load(open(cache))
+        if d.get('source_size') == p.stat().st_size:
+            return d['avg_n_neighbors']
+    import ase.io
+    import concurrent.futures as cf
+    import multiprocessing as mp
+    frames = ase.io.read(str(p), index=':')
+    workers = workers or min(64, int(os.environ.get('SLURM_CPUS_PER_TASK', 0)) or len(os.sched_getaffinity(0)))
+    chunks = [(frames[k:k + 512], cutoff) for k in range(0, len(frames), 512)]
+    res = []
+    if workers <= 1:
+        for c in chunks:
+            res += _count(c)
+    else:
+        with cf.ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context('forkserver')) as ex:
+            for part in ex.map(_count, chunks):
+                res += part
+    na = sum(r[0] for r in res); ne = sum(r[1] for r in res)
+    val = ne / na
+    json.dump({'avg_n_neighbors': val, 'n_structures': len(res), 'sum_atoms': na, 'sum_edges': ne, 'cutoff': cutoff,
+               'source': str(p), 'source_size': p.stat().st_size}, open(cache, 'w'), indent=1)
+    print(f'{p.name}: avg_n_neighbors {val:.3f} over {len(res)} structures (cutoff {cutoff:g}), cached in {cache.name}')
+    return val
 BASE = ROOT / 'input' / 'input_3bpa_omat24_abl3_full_s42_cue.json'
 
 # everything RACEv2 added on top of RACE V1 (the ablation flags of docs/ablation_protocol_2026-11-05.md, all at once)
@@ -32,6 +78,7 @@ def main():
     ap.add_argument('--hidden', type=int, default=None, help='hidden_size override (size screening)')
     ap.add_argument('--species-adam', action='store_true', help='soap_species_adam (species tables by Adam)')
     ap.add_argument('--batch', type=int, default=16)
+    ap.add_argument('--workers', type=int, default=0, help='processes for the avg_n_neighbors pass (0 = task CPUs)')
     ap.add_argument('--warmup', type=int, default=None, help='lr_warmup_epochs (default of train_3bpa: 10)')
     ap.add_argument('--optimizer', default=None, help='optimizer override (e.g. amsgrad; default: the recipe SOAP)')
     ap.add_argument('--model', default='race', choices=['race', 'racelr'],
@@ -47,12 +94,7 @@ def main():
     base = json.load(open(BASE))
     for ds in args.datasets:
         meta = json.load(open(args.subset_dir / f'{ds}_meta.json'))
-        avg_n = meta['avg_n_neighbors']
-        if args.cutoff != 5.0:
-            import ase.io
-            from ase.neighborlist import neighbor_list
-            frames = ase.io.read(meta['train']['path'], index=':500')
-            avg_n = sum(len(neighbor_list('i', a, args.cutoff)) / len(a) for a in frames) / len(frames)
+        avg_n = full_avg_neighbors(meta['train']['path'], args.cutoff, args.workers)
         for var in args.variants:
             for seed in args.seeds:
                 name = f'{args.tag}_{ds}_{var}{"_lr" if args.model == "racelr" else ""}_s{seed}'

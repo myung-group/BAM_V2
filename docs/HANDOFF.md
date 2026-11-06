@@ -138,6 +138,7 @@ sbatch). Every one of those jobs was written but not submitted.
 | 2c' | Not started: `train_3bpa` integration (`data_format: "stream"`), multi-host stacking, data cursor in checkpoints, evaluation sets | see design §4.8–4.12 | — | — |
 | 2d | SOAP-curvature Laplace: theory (EKFAC structure of the SOAP state) and skeleton | `docs/SOAP_Laplace.md`, `bam_omat24/soap_laplace.py` | **untested** | `runs/diag/soap_laplace.sh` after `runs/diag/bayes_lastlayer.sh` (`MAX_TEST=200` first) |
 | 2e | PyTorch port scope (no torch RACEv2 exists; V1 port is approximate; ~10–15 person-days; recommended LAMMPS path ML-IAP unified + Kokkos) | `docs/torch_port_scope.md` | read-only survey | decision for the user: torch port vs keep the PJRT halo path |
+| 4 | RACE_LR: charge-dependent long-range extension (user request; RACE unchanged): Qeq with total charge per graph, Gaussian-charge Coulomb (direct / batched Ewald), `"model": "RACE_LR"`, `total_charge_key` | `bam_omat24/long_range.py`, `bam_omat24/race_lr_nnx.py`, edits in `data_3bpa.py` / `train_3bpa.py` (off by default), `tests/test_race_lr.py`, design `docs/RACE_LR_design.md` | **not run** | `runs/diag/race_lr_check.sh` (Madelung, α independence, Qeq optimality, forces / rotation / charge dependence, plus the existing periodic and stress tests) |
 | 3 | Analysis of finished results | — | — | the 100k size screening was still running (see §6); apply `select_size.py` when it ends |
 
 ## 8. Next steps (in the order the user agreed)
@@ -182,11 +183,16 @@ sbatch). Every one of those jobs was written but not submitted.
      (V1 was 2× faster per epoch at 10k, so it should take about 4 h). Compare it with sz100k L5x128 (SOAP) and
      L5x128amsgrad: the AMSGrad control separates the architecture effect from the optimizer effect, which the 10k
      comparison mixed.
-5. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
+5. **RACE_LR** (user request 2026-11-06, "순서대로 진행"):
+   - step 1: the unit-test job above;
+   - step 2: the 4G-HDNNP benchmark systems vs RACEv2;
+   - step 3: SPICE / OMol25 and LAMMPS long-range coupling.
+   See `docs/RACE_LR_design.md` §3.
+6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.
-6. **Paper draft**: fill the TODO/CHECK markers of `docs/paper/RACEv2_draft.md`; mechanism tests of draft §5.4
+7. **Paper draft**: fill the TODO/CHECK markers of `docs/paper/RACEv2_draft.md`; mechanism tests of draft §5.4
    (radial curvature, stratum magnitudes vs T, layer CKA) when compute is available.
-7. Later: water and MD22 (locality), MD observables for 3BPA and water, an inference-speed table, and the 99k
+8. Later: water and MD22 (locality), MD observables for 3BPA and water, an inference-speed table, and the 99k
    evaluation of the final rMD17 models (audit C3).
 
 ## 9. Pitfalls already paid for

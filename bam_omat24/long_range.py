@@ -1,0 +1,96 @@
+"""Long-range electrostatics for RACE_LR (2026-11-06; docs/RACE_LR_design.md): Gaussian-charge Coulomb matrices
+(direct sum for molecules / clusters, Ewald sum for periodic cells) and charge equilibration (Qeq) with a total-charge
+constraint per graph.  Pure jax.numpy, differentiable with respect to positions, cell and the Qeq parameters.
+
+Units: Å, e, eV;  K_COULOMB = e^2 / (4 pi eps0) = 14.399645 eV Å.
+
+Gaussian charges of width sigma_i interact as  K erf(r / (sqrt(2) s_ij)) / r,  s_ij = sqrt(sigma_i^2 + sigma_j^2);  the
+self energy of one Gaussian is  K q^2 / (2 sqrt(pi) sigma).  Qeq energy of one graph
+    E(q) = chi . q + 1/2 q^T A q,   A_ii = J_i + K / (sqrt(pi) sigma_i),   A_ij = gamma_ij (Coulomb, periodic or not)
+minimised subject to sum_i q_i = Q (Lagrange multiplier per graph).
+"""
+from __future__ import annotations
+
+import math
+
+import jax
+import jax.numpy as jnp
+
+K_COULOMB = 14.399645
+SQRT_PI = math.sqrt(math.pi)
+
+
+def _pair_sigma(sigma):
+    return jnp.sqrt(sigma[:, None] ** 2 + sigma[None, :] ** 2)
+
+
+def coulomb_direct(pos, sigma, same):
+    """Open-boundary Gaussian-charge Coulomb matrix (zero diagonal).  pos (N,3), sigma (N,), same (N,N) bool = pairs
+    of the same graph (and real nodes)."""
+    d = pos[None, :, :] - pos[:, None, :]
+    r2 = jnp.sum(d * d, axis=-1)
+    off = same & ~jnp.eye(pos.shape[0], dtype=bool)
+    r = jnp.sqrt(jnp.where(off, r2, 1.0))                         # safe sqrt (no NaN gradient on the diagonal)
+    g = K_COULOMB * jax.scipy.special.erf(r / (math.sqrt(2.0) * _pair_sigma(sigma))) / r
+    return jnp.where(off, g, 0.0)
+
+
+def ewald_matrix(pos, cell, sigma, alpha, n_real: int = 2, n_recip: int = 6):
+    """Periodic Gaussian-charge Coulomb matrix of ONE cell (N atoms); see ewald_matrix_rows."""
+    return ewald_matrix_rows(pos, jnp.broadcast_to(cell, (pos.shape[0], 3, 3)), sigma, alpha, n_real, n_recip)
+
+
+def ewald_matrix_rows(pos, cell_rows, sigma, alpha, n_real: int = 2, n_recip: int = 6):
+    """Periodic Gaussian-charge Coulomb matrix, Ewald split with parameter alpha (1/Å).  cell_rows (N, 3, 3): the
+    cell of each atom's graph (a batch of periodic graphs); entries between atoms of different graphs are
+    meaningless and must be masked by the caller.
+        gamma_ij = sum_n K [erf(r/(√2 s_ij)) - erf(alpha r)] / r        (real space, images |n_k| <= n_real)
+                 + (4 pi K / V) sum_{m != 0} exp(-k^2 / (4 alpha^2)) / k^2 cos(k . r_ij)     (|m_k| <= n_recip)
+                 - pi K / (V alpha^2)                                   (neutralising background)
+                 - delta_ij 2 K alpha / sqrt(pi)                       (self term of the erf(alpha r) part)
+    The i = j image n = 0 is excluded (the Gaussian self energy is in the diagonal of the Qeq matrix).  The
+    reciprocal part is evaluated as C C^T + S S^T with C_im = sqrt(w_m) cos(k_m . r_i) (memory N x M, not N^2 M).
+    Independent of alpha when n_real / n_recip are large enough (tests/test_race_lr.py)."""
+    N = pos.shape[0]
+    rng_r = jnp.arange(-n_real, n_real + 1)
+    shifts = jnp.stack(jnp.meshgrid(rng_r, rng_r, rng_r, indexing='ij'), -1).reshape(-1, 3).astype(pos.dtype)
+    T = jnp.einsum('sc,icd->isd', shifts, cell_rows)                 # (N, S, 3) translations of row i's cell
+    d = pos[None, :, None, :] - pos[:, None, None, :] + T[:, None, :, :]          # (N, N, S, 3)
+    r2 = jnp.sum(d * d, axis=-1)
+    zero = (r2 < 1e-12)
+    r = jnp.sqrt(jnp.where(zero, 1.0, r2))
+    s = _pair_sigma(sigma)[:, :, None]
+    real = jnp.where(zero, 0.0, (jax.scipy.special.erf(r / (math.sqrt(2.0) * s)) - jax.scipy.special.erf(alpha * r)) / r)
+    gamma = K_COULOMB * jnp.sum(real, axis=-1)
+    rng_m = jnp.arange(-n_recip, n_recip + 1)
+    m = jnp.stack(jnp.meshgrid(rng_m, rng_m, rng_m, indexing='ij'), -1).reshape(-1, 3).astype(pos.dtype)
+    m = m[jnp.any(m != 0, axis=-1)]                                 # (M, 3), static
+    vol = jnp.abs(jnp.linalg.det(cell_rows))                        # (N,)
+    recip = 2.0 * math.pi * jnp.swapaxes(jnp.linalg.inv(cell_rows), -1, -2)       # (N, 3, 3) rows b_k
+    k = jnp.einsum('mc,icd->imd', m, recip)                         # (N, M, 3)
+    k2 = jnp.sum(k * k, axis=-1)
+    w = jnp.sqrt((4.0 * math.pi * K_COULOMB / vol)[:, None] * jnp.exp(-k2 / (4.0 * alpha ** 2)) / k2)   # (N, M)
+    ph = jnp.einsum('imd,id->im', k, pos)
+    C, S = w * jnp.cos(ph), w * jnp.sin(ph)
+    gamma = gamma + C @ C.T + S @ S.T
+    gamma = gamma - math.pi * K_COULOMB / (vol[:, None] * alpha ** 2)
+    gamma = gamma - jnp.eye(N, dtype=pos.dtype) * (2.0 * K_COULOMB * alpha / SQRT_PI)
+    return gamma
+
+
+def qeq_solve(chi, hard, sigma, gamma, node_graph, node_mask, total_charge, n_graphs):
+    """Charge equilibration for a batch of graphs.  chi, hard, sigma (N,); gamma (N, N) Coulomb matrix (pairs of
+    different graphs / padding must be 0); node_graph (N,) graph index; node_mask (N,) real nodes;
+    total_charge (G,).  Returns (q (N,), per-atom energy e_i = chi_i q_i + 1/2 q_i (A q)_i)."""
+    N = chi.shape[0]
+    diag = jnp.where(node_mask, hard + K_COULOMB / (SQRT_PI * sigma), 1.0)
+    A = jnp.where(node_mask[:, None] & node_mask[None, :], gamma, 0.0) + jnp.diag(diag)
+    C = ((node_graph[None, :] == jnp.arange(n_graphs)[:, None]) & node_mask[None, :]).astype(chi.dtype)   # (G, N)
+    empty = (jnp.sum(C, axis=1) == 0).astype(chi.dtype)            # graphs without real nodes: lambda = 0
+    M = jnp.block([[A, C.T], [C, jnp.diag(empty)]])
+    rhs = jnp.concatenate([jnp.where(node_mask, -chi, 0.0), jnp.where(empty > 0, 0.0, total_charge)])
+    sol = jnp.linalg.solve(M, rhs)
+    q = jnp.where(node_mask, sol[:N], 0.0)
+    Aq = (A - jnp.diag(jnp.where(node_mask, 0.0, 1.0))) @ q
+    e = jnp.where(node_mask, chi * q + 0.5 * q * Aq, 0.0)
+    return q, e

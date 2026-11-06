@@ -113,6 +113,10 @@ Config keys (in addition to the model hyper-parameters, see README):
     radial_gaussians : {"n": K, "r_min": A, "r_max": A, "width": A} Gaussian radial channels near the bond lengths
     hidden_irreps    : explicit irreps string (e.g. full parity); default hidden_size*s2_irreps(lmax)
     beta_nll         : beta for beta-NLL (gauss_nll only)     (default 0.0)
+    model            : "RACE" (default) | "RACE_LR" (+ charge equilibration and long-range electrostatics,
+                       race_lr_nnx.py; options in "long_range": ewald_alpha, ewald_n_real, ewald_n_recip, head_hidden,
+                       chi_scale, hard_init) | "Nequip"
+    total_charge_key : extxyz info key of the total charge per structure (RACE_LR; default none = neutral)
     graph_cache      : pickle cache of the graphs next to each xyz (default true); false recomputes the neighbour
                        lists at start and writes nothing (disk = the xyz files only)
     graph_workers    : processes for the neighbour searches (default 1; 0 = CPUs of the Slurm task, <= 64)
@@ -344,7 +348,8 @@ def build_datasets(cfg: Dict, fout):
     atom_energies = [float(x) for x in atom_energies]
 
     # graph_cache false: no pickle cache (neighbour lists recomputed at start, graph_workers processes)
-    gl = dict(use_cache=bool(_get(cfg, 'graph_cache', True)), n_workers=_graph_workers(cfg))
+    gl = dict(use_cache=bool(_get(cfg, 'graph_cache', True)), n_workers=_graph_workers(cfg),
+              charge_key=_get(cfg, 'total_charge_key', None))
     all_graphs = load_3bpa_graphs(train_path, atomic_numbers, atom_energies, cutoff,
                                   frames=train_frames, **gl)
     valid_path = _get(cfg, 'valid_path', None)
@@ -428,7 +433,11 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
     if model_type == 'Nequip':
         model = Nequip(**common)
     else:
-        model = RACE(**common,
+        race_cls, lr_kw = RACE, {}
+        if model_type == 'RACE_LR':      # RACEv2 + charge equilibration + long-range electrostatics (race_lr_nnx.py)
+            from bam_omat24.race_lr_nnx import RACE_LR
+            race_cls, lr_kw = RACE_LR, dict(long_range=_get(cfg, 'long_range', None))
+        model = race_cls(**common, **lr_kw,
                      x_mode=_get(cfg, 'x_mode', 'species'),
                      x_basis_lmax=_get(cfg, 'x_basis_lmax', None),
                      x_basis_layers=_get(cfg, 'x_basis_layers', None),

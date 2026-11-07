@@ -467,3 +467,60 @@ These are one-seed, reduced-budget numbers. The HPC runs at full size decide.
   - Prefer AMSGrad float32, pending the OAM seed check of the HANDOFF.
   - The value of a charge loss for pretraining is not shown on neutral data. Decide it on the official OMol25 with
     charged states.
+
+## 12. Physics checks with the local checkpoints (2026-11-07)
+
+Scripts and figures: `runs/diag/local_4g/{dissociation,md_nve,plot_*}.py`, `runs/diag/plot_omol_ko.py`. Figures are
+in `runs/local_4g/plots/` (not in git; Korean single-message versions `ko_*.png`). One seed, reduced models.
+
+**Dissociation tail.** One atom was pulled out of Na9Cl8+ to 30 Å with the 4G NaCl checkpoint (Pauling + Hirshfeld
+loss).
+
+| | Cl⁻ pulled, rest +2 | Na⁺ pulled, rest 0 |
+|---|---|---|
+| RACE | flat beyond the 5 Å cutoff | flat beyond the 5 Å cutoff |
+| RACE_LR, total-charge constraint | weak tail, −0.13 e left on Cl | spurious repulsive 1/r tail, +0.53 e on Na |
+| RACE_LR, fragment constraints | charge −1.000, tail → monopole −2K/R (ratio 1.11 at 40 Å) | charge +1.000, energy → 0 (polarisation well only) |
+
+Fractional charges on separated fragments are the known Qeq artefact. The fragment constraints remove it, which the
+protein–ligand use case needs.
+
+**NVE MD, 2 ps from a 300 K start.**
+- **C10H3+:** RACE and RACE_LR conserve the total energy within about 3 meV, and the RACE_LR charge sum is exact.
+- **Na9Cl8+:** both models fall into a hole once the minimum distance drops below the training minimum (2.21 Å).
+  RACE_LR fails at 0.64 ps and RACE at 1.52 ps.
+  - The total energy is conserved up to that point.
+  - This is extrapolation of models trained on 1000 structures of a narrow geometry set, not a Qeq-specific
+    failure.
+  - MD stability must still be checked for the pretrained model.
+
+**OMol25 public part, 100 epochs, AMSGrad f32.** Test set, energy refit on the validation split, force = median
+per-frame RMSE.
+
+| model | 30 epochs E / F | 100 epochs E / F | q vs Löwdin r |
+|---|---|---|---|
+| RACE | 85.6 / 173 | **70.5** / 146 | – |
+| RACE_LR (latent) | 78.6 / 176 | 80.0 / 149 | −0.16 |
+| RACE_LR + Löwdin loss | 88.2 / 175 | 78.6 / **144** | +0.94 |
+
+E is in meV/atom and F in meV/Å.
+- More training helps RACE by 15–18 %.
+- On these neutral molecules the long-range stratum does not improve the energy. The 30-epoch edge of the latent
+  RACE_LR was not robust.
+- With the charge loss the charges are right, and the force is about 2 % lower (within the one-seed noise).
+
+**Cutoff 3 Å vs 5 Å** (4G systems, the same recipe otherwise; test RMSE after the per-composition refit).
+
+| system | model | F 5 Å → 3 Å (meV/Å) | E 5 Å → 3 Å (meV) |
+|---|---|---|---|
+| carbon chain | RACE | 20.2 → 42.4 (+110 %) | 3.7 → 9.9 |
+| carbon chain | RACE_LR | 9.2 → 27.2 (+196 %) | 2.2 → 7.6 |
+| NaCl | RACE | 43.3 → 47.3 (+9 %) | 27.1 → 27.7 |
+| NaCl | RACE_LR | 35.8 → 36.7 (+2.5 %) | 23.2 → 20.1 |
+
+- **Ionic NaCl.** RACE_LR barely loses accuracy at 3 Å, and at 3 Å it beats RACE at 5 Å. The long-range
+  electrostatics compensates the short cutoff.
+- **Covalent carbon chain.** RACE_LR is still 36 % better than RACE at 3 Å, but it loses more in relative terms, and
+  at 3 Å it is worse than RACE at 5 Å. The Qeq stratum does not replace the 3–5 Å many-body information there.
+- **Consequence.** Do not shorten the cutoff for RACE_LR on organic or biomolecular data. The long-range stratum
+  adds to the local model; it does not replace its range.

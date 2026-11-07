@@ -14,7 +14,8 @@ solve.  Config: "model": "RACE_LR", "long_range": {"ewald_alpha": 0.3, "ewald_n_
 "head_hidden": 32, "chi_init": "pauling" (default since 2026-11-07) | "zero", "chi_init_scale": 3.0, "hard_init": 5.0,
 "sr_switch": [r_on, r_off] (switch the Coulomb energy off below r_on, smoothly on by r_off; charges unswitched)}.
 Fragments: nodes['fragment'] + globals['fragment_charges'] (cfg "fragment_key" / "fragment_charges_key") constrain
-the total charge of every fragment of a structure separately.  Optional charge
+the total charge of every fragment of a structure separately.  "qeq_block": B (largest structure, atoms) solves the
+Qeq system per structure instead of densely over the whole batch (same result, G B^2 memory instead of N^2).  Optional charge
 loss on reference charges (e.g. Hirshfeld): cfg "charge_label_key" + "charge_weight" (train_3bpa; default off).
 Charge / spin embedding: "charge_spin_embedding": true adds MLP(Q, 2S+1 - 1) (zero-initialised output) to the
 layer-0 scalars; the spin comes from data.globals['spin'] (cfg "total_spin_key", default 1).  "qeq": false switches
@@ -29,12 +30,12 @@ import jax.numpy as jnp
 import jraph
 from flax import nnx
 
-from bam_omat24.long_range import coulomb_direct, ewald_matrix_rows, qeq_solve, short_range_part
+from bam_omat24.long_range import coulomb_direct, ewald_matrix, ewald_matrix_rows, qeq_solve, short_range_part
 from bam_omat24.race_nnx import RACE, _dense
 
 LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_hidden": 32, "chi_scale": 1.0,
                "hard_init": 5.0, "chi_init": "pauling", "chi_init_scale": 3.0, "chi_init_missing": "mean", "qeq": True,
-               "charge_spin_embedding": False, "cs_hidden": 32, "sr_switch": None}
+               "charge_spin_embedding": False, "cs_hidden": 32, "sr_switch": None, "qeq_block": None}
 # chi_init default "pauling" since 2026-11-07 (user decision): with chi = 0 a neutral structure has an exactly zero
 # gradient of the Qeq energy with respect to chi, so a neutral-only dataset never develops charges.  Configs written
 # before that date pin "chi_init": "zero".
@@ -138,37 +139,98 @@ class RACE_LR(RACE):
         hard = jax.nn.softplus(self.hard0[...][species] + z[:, 1]).astype(dt)
         sigma = jnp.exp(self.log_sigma[...][species]).astype(dt)
         Q, _ = self._graph_globals(data, dt)
-        same = (node_graph[:, None] == node_graph[None, :]) & node_mask[:, None] & node_mask[None, :]
-        if self.periodic and cell is not None:
-            gamma = self._ewald_batch(positions, cell, sigma, node_graph, same, n_graphs)
+        if self.lr['qeq_block']:
+            q, e = self._qeq_blocked(positions, cell, chi, hard, sigma, Q, data, node_graph, node_mask, n_graphs, dt)
         else:
-            gamma = coulomb_direct(positions, sigma, same)
-        # constraint groups: one per graph, or one per (graph, fragment) when the data carry fragments
-        # (nodes['fragment'] in 0..F-1, globals['fragment_charges'] (G, F)): each fragment keeps its own integer charge,
-        # so no fractional charge flows between distant fragments (e.g. protein and ligand); Coulomb still couples them
+            same = (node_graph[:, None] == node_graph[None, :]) & node_mask[:, None] & node_mask[None, :]
+            if self.periodic and cell is not None:
+                gamma = self._ewald_batch(positions, cell, sigma, node_graph, same, n_graphs)
+            else:
+                gamma = coulomb_direct(positions, sigma, same)
+            # constraint groups: one per graph, or one per (graph, fragment) when the data carry fragments
+            # (nodes['fragment'] in 0..F-1, globals['fragment_charges'] (G, F)): each fragment keeps its own integer charge,
+            # so no fractional charge flows between distant fragments (e.g. protein and ligand); Coulomb still couples them
+            nodes = data.nodes if isinstance(data.nodes, dict) else {}
+            glb = data.globals if isinstance(data.globals, dict) else {}
+            if 'fragment' in nodes and 'fragment_charges' in glb:
+                fq = jnp.asarray(glb['fragment_charges'], dt).reshape(n_graphs, -1)
+                n_frag = fq.shape[1]
+                group = node_graph * n_frag + jnp.clip(jnp.asarray(nodes['fragment'], jnp.int32), 0, n_frag - 1)
+                Qg, n_groups = fq.reshape(-1), n_graphs * n_frag
+            else:
+                group, Qg, n_groups = node_graph, Q, n_graphs
+            gamma_e = None
+            if self.lr['sr_switch'] is not None:
+                r_on, r_off = (float(x) for x in self.lr['sr_switch'])
+                if self.periodic and cell is not None:
+                    cells = self._safe_cells(cell, n_graphs)
+                    sr = short_range_part(positions, sigma, same, r_on, r_off, cells[node_graph], n_img=1)
+                else:
+                    sr = short_range_part(positions, sigma, same, r_on, r_off)
+                gamma_e = gamma - sr
+            q, e = qeq_solve(chi, hard, sigma, gamma, group, node_mask, Qg, n_groups, gamma_energy=gamma_e)
+        out = dict(out)
+        out['node_energies'] = out['node_energies'] + e.reshape(out['node_energies'].shape).astype(out['node_energies'].dtype)
+        out['charges'] = q
+        return out
+
+    def _qeq_blocked(self, positions, cell, chi, hard, sigma, Q, data, node_graph, node_mask, n_graphs, dt):
+        """Qeq solved per graph (long_range.qeq_block = B, the largest number of atoms of one structure): the atoms are
+        gathered into (G, B) blocks, the Coulomb / Ewald matrix, the optional short-range switch and the constrained
+        solve are done per block (vmap), then scattered back.  Memory G B^2 and time G B^3 instead of N^2 / N^3 for
+        the whole batch.  Same result as the dense path; a structure with more than B atoms makes the energy NaN."""
+        B = int(self.lr['qeq_block'])
+        N = chi.shape[0]
+        n_node = jnp.asarray(data.n_node)
+        local = jnp.arange(N) - (jnp.cumsum(n_node) - n_node)[node_graph]
+        valid = node_mask & (local < B)
+        overflow = jnp.any(node_mask & (local >= B))
+        slot = jnp.where(valid, local, B)                       # padding / overflow -> dummy slot B (dropped)
+
+        def blocks(x, fill):
+            out = jnp.full((n_graphs, B + 1) + x.shape[1:], fill, x.dtype).at[node_graph, slot].set(x)
+            return out[:, :B]
+        P, Ch = blocks(positions, 0.0), blocks(chi, 0.0)
+        Hd, Sg = blocks(hard, 1.0), blocks(sigma, 1.0)
+        M = blocks(valid, False)
         nodes = data.nodes if isinstance(data.nodes, dict) else {}
         glb = data.globals if isinstance(data.globals, dict) else {}
         if 'fragment' in nodes and 'fragment_charges' in glb:
             fq = jnp.asarray(glb['fragment_charges'], dt).reshape(n_graphs, -1)
             n_frag = fq.shape[1]
-            group = node_graph * n_frag + jnp.clip(jnp.asarray(nodes['fragment'], jnp.int32), 0, n_frag - 1)
-            Qg, n_groups = fq.reshape(-1), n_graphs * n_frag
+            Fb = blocks(jnp.clip(jnp.asarray(nodes['fragment'], jnp.int32), 0, n_frag - 1), 0)
         else:
-            group, Qg, n_groups = node_graph, Q, n_graphs
-        gamma_e = None
-        if self.lr['sr_switch'] is not None:
-            r_on, r_off = (float(x) for x in self.lr['sr_switch'])
-            if self.periodic and cell is not None:
-                cells = self._safe_cells(cell, n_graphs)
-                sr = short_range_part(positions, sigma, same, r_on, r_off, cells[node_graph], n_img=1)
+            fq, n_frag = Q.reshape(n_graphs, 1), 1
+            Fb = jnp.zeros((n_graphs, B), jnp.int32)
+        same_b = M[:, :, None] & M[:, None, :]
+        lr = self.lr
+        periodic = self.periodic and cell is not None
+        if periodic:
+            cells = self._safe_cells(cell, n_graphs)
+            gamma = jax.vmap(lambda p, c, sg: ewald_matrix(p, c, sg, float(lr['ewald_alpha']), int(lr['ewald_n_real']),
+                                                           int(lr['ewald_n_recip'])))(P, cells, Sg)
+            gamma = jnp.where(same_b, gamma, 0.0)
+        else:
+            gamma = jax.vmap(coulomb_direct)(P, Sg, same_b)
+        if lr['sr_switch'] is not None:
+            r_on, r_off = (float(x) for x in lr['sr_switch'])
+            if periodic:
+                rows = jnp.broadcast_to(cells[:, None], (n_graphs, B, 3, 3))
+                sr = jax.vmap(lambda p, sg, sm, cr: short_range_part(p, sg, sm, r_on, r_off, cr, n_img=1))(P, Sg, same_b,
+                                                                                                         rows)
             else:
-                sr = short_range_part(positions, sigma, same, r_on, r_off)
-            gamma_e = gamma - sr
-        q, e = qeq_solve(chi, hard, sigma, gamma, group, node_mask, Qg, n_groups, gamma_energy=gamma_e)
-        out = dict(out)
-        out['node_energies'] = out['node_energies'] + e.reshape(out['node_energies'].shape).astype(out['node_energies'].dtype)
-        out['charges'] = q
-        return out
+                sr = jax.vmap(lambda p, sg, sm: short_range_part(p, sg, sm, r_on, r_off))(P, Sg, same_b)
+            qb, eb = jax.vmap(lambda ch, hd, sg, gm, fb, m, qf, ge: qeq_solve(ch, hd, sg, gm, fb, m, qf, n_frag,
+                                                                              gamma_energy=ge))(
+                Ch, Hd, Sg, gamma, Fb, M, fq, gamma - sr)
+        else:
+            qb, eb = jax.vmap(lambda ch, hd, sg, gm, fb, m, qf: qeq_solve(ch, hd, sg, gm, fb, m, qf, n_frag))(
+                Ch, Hd, Sg, gamma, Fb, M, fq)
+        li = jnp.clip(local, 0, B - 1)
+        q = jnp.where(valid, qb[node_graph, li], 0.0)
+        e = jnp.where(valid, eb[node_graph, li], 0.0)
+        e = jnp.where(overflow, jnp.nan, e)
+        return q, e
 
     @staticmethod
     def _safe_cells(cell, n_graphs):

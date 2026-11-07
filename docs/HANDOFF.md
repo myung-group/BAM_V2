@@ -217,6 +217,8 @@ sbatch). Every one of those jobs was written but not submitted.
        - `chi_init` defaulting to Pauling, with old configs pinned to zero;
        - the inference API `bam_omat24/predict.py`: `load` / `predict` / `charges`, and the per-element `refit`.
        - Still open: the HOMO > 0 filter and the PDB leakage check, both after `inspect` of the official OMol25.
+     - Block-diagonal Qeq: `long_range.qeq_block` (2026-11-07). It equals the dense path and is needed for large
+       float64 batches (8 × 1000 atoms: dense OOM, block 5.3 GB). Set it to the largest structure, e.g. 352 for OMol.
    See `docs/RACE_LR_design.md` §3.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.

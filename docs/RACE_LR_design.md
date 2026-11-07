@@ -93,6 +93,21 @@ from scratch on OMol25):
     - RTX 4060 Ti, reduced float64 model: about 120 ms per 1000-atom frame.
     - Peak GPU memory is 2.3 GB at a 1100-atom cap and 4.3 GB at 2200.
 
+- **`long_range.qeq_block: B`** (2026-11-07) solves Qeq per structure instead of densely over the whole batch.
+  - B is the largest structure, in atoms.
+  - The atoms are gathered into (G, B) blocks, and the Coulomb / Ewald matrix, the short-range switch and the
+    constrained solve are vmapped per block.
+  - Memory is G·B² instead of N², and time G·B³ instead of N³.
+  - The results equal the dense path to 1e-9 (tests: molecular with and without fragments and switch; periodic
+    with different cells and padding).
+  - A structure with more than B atoms makes the energy NaN, so the failure is loud.
+  - RTX 4060 Ti measurements:
+    - Float32, 64 small molecules or 4 × 1000 atoms: the two paths are the same speed; the Qeq matrix is small next
+      to the model.
+    - Float64, 8 × 1000 atoms in one batch (8081 atoms): the dense path runs out of memory (a 6.5 GB allocation
+      above the 7.2 GB cap), while the block path runs at 166 ms per structure and 5.3 GB peak.
+  - Use it for OMol-scale training (B = 352, the OMol maximum is 350 atoms) and for evaluating large complexes.
+
 ## 2. Limits of the first version
 
 - **Dense matrices.** The Qeq matrix is N_pad × N_pad per batch, and the Ewald real-space part is N² × images. This

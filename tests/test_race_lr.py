@@ -517,3 +517,65 @@ def test_predict_atom_budget_batches(tmp_path):
     assert np.allclose(e1, e2, atol=1e-3) and all(np.allclose(a, b, atol=1e-4) for a, b in zip(f1, f2))
     q = p_small.charges(frames[:2])
     assert abs(q[0].sum()) < 1e-3 and abs(q[1].sum() - 1.0) < 1e-3 and len(q[0]) == 999
+
+
+def _batch_of(graphs, extra_nodes, extra_edges, n_pad_graphs):
+    import jraph
+    b = jraph.batch(graphs)
+    return jraph.pad_with_graphs(b, int(b.n_node.sum()) + extra_nodes, int(b.n_edge.sum()) + extra_edges,
+                                 len(graphs) + n_pad_graphs)
+
+
+def test_qeq_block_equals_dense_molecular(x64, graph):
+    """long_range.qeq_block: per-structure blocks give the dense batch result (energies, forces, charges), with and
+    without fragments and the short-range switch; a structure larger than the block makes the energy NaN."""
+    import copy
+    import jax
+    import jax.numpy as jnp
+    from flax import nnx
+    g1 = graph
+    g2 = graph._replace(nodes={**graph.nodes, 'positions': np.asarray(graph.nodes['positions']) + 0.05})
+    b = _batch_of([g1, g2], 5, 40, 2)
+    G = b.n_node.shape[0]
+    n = int(graph.n_node[0])
+    frag = np.zeros(b.nodes['positions'].shape[0], np.int32); frag[10:n] = 1; frag[n + 5:2 * n] = 1
+    variants = {
+        'plain': dict(charge=np.array([1.0, -1.0] + [0.0] * (G - 2))),
+        'fragments': dict(charge=np.array([0.0, 1.0] + [0.0] * (G - 2)),
+                          fragment_charges=np.array([[1.0, -1.0], [2.0, -1.0]] + [[0.0, 0.0]] * (G - 2))),
+    }
+    for lr in ({}, {"sr_switch": [2.0, 4.0]}):
+        dense, _ = as_float64(_lr_model(lr=lr), b)
+        block = copy.deepcopy(dense); block.lr = {**dense.lr, 'qeq_block': 30}
+        for name, glb in variants.items():
+            nodes = {**b.nodes, **({'fragment': frag} if 'fragment_charges' in glb else {})}
+            bb = jax.tree.map(jnp.asarray, b._replace(nodes={**nodes, 'positions': np.asarray(b.nodes['positions'], np.float64)},
+                                                      globals={**b.globals, **glb}))
+            rd, rb = dense(bb), block(bb)
+            for k in ('energy', 'forces', 'charges'):
+                assert np.allclose(np.asarray(rd[k]), np.asarray(rb[k]), atol=1e-9), (lr, name, k)
+    small = copy.deepcopy(dense); small.lr = {**dense.lr, 'qeq_block': 20}           # 27-atom structures > 20
+    bb = jax.tree.map(jnp.asarray, b._replace(nodes={**b.nodes, 'positions': np.asarray(b.nodes['positions'], np.float64)},
+                                              globals={**b.globals, **variants['plain']}))
+    assert np.isnan(float(small(bb)['energy'][0]))
+
+
+def test_qeq_block_equals_dense_periodic(x64):
+    """Periodic batch of two different cells plus padding graphs: blocks (per-graph Ewald) equal the dense rows."""
+    import copy
+    import jax
+    import jax.numpy as jnp
+    gs = [_f64(_graph(_cell(s))) for s in (0, 1)]
+    b = _batch_of(gs, 3, 30, 2)
+    G = b.n_node.shape[0]
+    b = b._replace(globals={**b.globals, 'charge': np.array([1.0, 0.0] + [0.0] * (G - 2)),
+                            'spin': np.ones(G)})
+    for lr in ({"ewald_alpha": 0.4, "ewald_n_real": 2, "ewald_n_recip": 8},
+               {"ewald_alpha": 0.4, "ewald_n_real": 2, "ewald_n_recip": 8, "sr_switch": [1.5, 3.5]}):
+        dense, _ = as_float64(_periodic_lr_model(lr), gs[0])
+        block = copy.deepcopy(dense); block.lr = {**dense.lr, 'qeq_block': 12}
+        bb = jax.tree.map(jnp.asarray, b)
+        rd, rb = dense(bb), block(bb)
+        for k in ('energy', 'forces', 'stress', 'charges'):
+            assert np.allclose(np.asarray(rd[k])[:2] if k in ('energy', 'stress') else np.asarray(rd[k]),
+                               np.asarray(rb[k])[:2] if k in ('energy', 'stress') else np.asarray(rb[k]), atol=1e-8), (lr, k)

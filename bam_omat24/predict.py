@@ -214,5 +214,32 @@ def main():
               f'{"on" if np.any(p.delta) else "off"})')
 
 
+
+def ase_calculator(ckpt_path, **kw):
+    """ASE calculator on a Predictor (energy, forces, and charges for RACE_LR): for MD and geometry scans.
+    The Atoms object carries info['charge'] / ['spin'] / fragment data under the config's key names."""
+    from ase.calculators.calculator import Calculator, all_changes
+
+    pred = ckpt_path if isinstance(ckpt_path, Predictor) else Predictor(ckpt_path, **kw)
+
+    class RACECalculator(Calculator):
+        implemented_properties = ['energy', 'free_energy', 'forces', 'charges']
+
+        def __init__(self):
+            super().__init__()
+            self.predictor = pred
+
+        def calculate(self, atoms=None, properties=('energy',), system_changes=all_changes):
+            super().calculate(atoms, properties, system_changes)
+            a = self.atoms.copy()
+            a.info.update(atoms.info)
+            e, f = pred.predict([a])
+            self.results = {'energy': float(e[0]), 'free_energy': float(e[0]), 'forces': f[0]}
+            if 'charges' in properties:
+                self.results['charges'] = pred.charges([a])[0]
+
+    return RACECalculator()
+
+
 if __name__ == '__main__':
     main()

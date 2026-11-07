@@ -4,6 +4,7 @@
 # RACE_LR runs, the Qeq charges vs Hirshfeld (charges.py).
 # usage: runs/diag/local_4g/queue.sh [name ...]   (default: <system>_racelr and <system>_race for the 4 systems)
 # Configs: input/local_4g/<name>.json; outputs: runs/local_4g/<name>/.
+# XYZ_SUFFIX (e.g. _spin): post-evaluation on data_local/4ghdnnp/<system>/{test,train_sub*}<suffix>.xyz.
 # Run detached:  setsid nohup runs/diag/local_4g/queue.sh ... > runs/local_4g/queue.log 2>&1 < /dev/null &
 cd "$(dirname "$0")/../../.."
 mkdir -p runs/local_4g
@@ -23,9 +24,10 @@ for n in "${names[@]}"; do
     export XLA_PYTHON_CLIENT_MEM_FRACTION=${GPU_MEM_FRAC:-0.4} XLA_FLAGS=--xla_gpu_enable_triton_gemm=false
     PY="nice -n 10 $HOME/anaconda3/envs/bam_cue/bin/python"
     $PY -m bam_omat24.dump_frame_errors input/local_4g/$n.json --ckpt runs/local_4g/$n/ckpt.pkl \
-        --xyz data_local/4ghdnnp/$s/test.xyz --xyz data_local/4ghdnnp/$s/train_sub$sub.xyz --out runs/local_4g/$n/frames
+        --xyz data_local/4ghdnnp/$s/test${XYZ_SUFFIX}.xyz --xyz data_local/4ghdnnp/$s/train_sub$sub${XYZ_SUFFIX}.xyz \
+        --out runs/local_4g/$n/frames
     case $n in *racelr*) $PY runs/diag/local_4g/charges.py input/local_4g/$n.json runs/local_4g/$n/ckpt.pkl \
-        data_local/4ghdnnp/$s/test.xyz runs/local_4g/$n/charges_test.npz ;; esac
+        data_local/4ghdnnp/$s/test${XYZ_SUFFIX}.xyz runs/local_4g/$n/charges_test.npz ;; esac
   ) > runs/local_4g/$n/post.txt 2>&1
   echo "$(date '+%F %T') post $n done"
 done

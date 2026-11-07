@@ -219,6 +219,10 @@ sbatch). Every one of those jobs was written but not submitted.
        - Still open: the HOMO > 0 filter and the PDB leakage check, both after `inspect` of the official OMol25.
      - Block-diagonal Qeq: `long_range.qeq_block` (2026-11-07). It equals the dense path and is needed for large
        float64 batches (8 × 1000 atoms: dense OOM, block 5.3 GB). Set it to the largest structure, e.g. 352 for OMol.
+     - Overnight local queue (report §13):
+       - RACE_LR gains hold over 3 seeds (carbon chain −49 % force, NaCl −11 %).
+       - The short-range switch [3, 5] Å removes the NaCl gain, so do not use the [4, 6] Å example.
+       - The charge-loss weight is best at 0.1 for the molecule and 1.0 for NaCl; 0.01 is too weak.
    See `docs/RACE_LR_design.md` §3.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.

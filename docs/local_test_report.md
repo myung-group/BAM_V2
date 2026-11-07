@@ -524,3 +524,40 @@ E is in meV/atom and F in meV/Å.
   at 3 Å it is worse than RACE at 5 Å. The Qeq stratum does not replace the 3–5 Å many-body information there.
 - **Consequence.** Do not shorten the cutoff for RACE_LR on organic or biomolecular data. The long-range stratum
   adds to the local model; it does not replace its range.
+
+## 13. Overnight local queue: seeds, short-range switch, charge-loss weight (2026-11-07/08)
+
+Same 4G recipe as §10: reduced model, 1000 training structures, 200 epochs. Test RMSE after the train-only
+per-composition refit (`runs/local_4g/summary_night.json`). Figures: `runs/local_4g/plots/ko_night_*.png`.
+
+**Seeds 42 / 43 / 44** (mean ± sample std over 3 seeds):
+
+| system | model | E (meV) | F (meV/Å) | F per seed |
+|---|---|---|---|---|
+| carbon chain | RACE | 3.4 ± 0.3 | 19.2 ± 1.7 | 20.2, 17.3, 20.2 |
+| carbon chain | RACE_LR (Pauling + Hirshfeld loss 0.1) | 2.3 ± 0.2 | 9.8 ± 0.6 | 9.2, 10.0, 10.2 |
+| NaCl | RACE | 26.8 ± 0.2 | 42.8 ± 0.5 | 43.3, 42.4, 42.9 |
+| NaCl | RACE_LR | 23.9 ± 1.4 | 38.1 ± 2.0 | 35.8, 38.7, 39.8 |
+
+The gains are robust to the seed: −49 % force on the carbon chain and −11 % on NaCl. Every RACE_LR seed beats every
+RACE seed.
+
+**Short-range switch `[3, 5]` Å** (RACE_LR, seed 42; force RMSE):
+- carbon chain: 9.2 → 8.7 meV/Å, within the seed noise;
+- NaCl: 35.8 → 42.7 meV/Å (+19 %), back to the RACE level (43.3).
+
+Switching off the Coulomb energy below 5 Å removes the Na–Cl electrostatics at 2.4–5 Å, which is where the gain on
+the ionic system comes from. For a model trained jointly from scratch, use no switch or a short one (r_off well
+below the ion-pair distances). The `[4, 6]` Å example given to ctx-RACE is withdrawn.
+
+**Charge-loss weight** (seed 42; force RMSE in meV/Å, and in brackets the mean |q| vs DFT):
+
+| system | 0.01 | 0.1 | 1.0 |
+|---|---|---|---|
+| carbon chain | 10.9 | **9.2** | 11.1 |
+| NaCl | 39.7 (0.23 / 0.39) | 35.8 | **31.7** (0.39 / 0.39) |
+
+- 0.01 is too weak for both systems.
+- The best weight is 0.1 for the covalent molecule and 1.0 for the ionic cluster.
+- For pretraining, start at 0.1. For data rich in charged or ionic structures, also try 0.3–1.0.
+- This comparison has one seed.

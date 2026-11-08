@@ -561,3 +561,66 @@ below the ion-pair distances). The `[4, 6]` Å example given to ctx-RACE is with
 - The best weight is 0.1 for the covalent molecule and 1.0 for the ionic cluster.
 - For pretraining, start at 0.1. For data rich in charged or ionic structures, also try 0.3–1.0.
 - This comparison has one seed.
+
+## 14. More data, MD stability, spin input, Au2/MgO doping (2026-11-08)
+
+Reduced model as before; one seed unless stated. Figures: `runs/local_4g/plots/ko_nacl_*.png`, `ko_aumgo_*.png`.
+
+**NaCl on the full training split (4500 structures, 100 epochs).** Test force RMSE per charge state, in meV/Å:
+
+| model | data | all | Na9Cl8+ | Na8Cl8+ |
+|---|---|---|---|---|
+| RACE | 1000 | 43.3 | 41.7 | 44.8 |
+| RACE_LR (Pauling + Hirshfeld 0.1) | 1000 | 35.8 | 34.1 | 37.4 |
+| RACE | 4500 | 77.0 | 3.8 | 108.0 |
+| RACE_LR | 4500 | 50.5 | 2.8 | 70.8 |
+| RACE + charge/spin embedding | 4500 | **3.5** | 1.1 | **4.8** |
+| RACE_LR + charge/spin embedding | 4500 | 4.0 | 1.1 | 5.5 |
+
+- **With more data the local model fits Na9Cl8+ almost exactly but gives up Na8Cl8+.** The latter is bad on the
+  training structures too, so the model cannot fit it at all; this is not a generalisation failure.
+  - Both states have total charge +1, so the total-charge input cannot separate them.
+  - Na8Cl8+ has an odd electron count (223, doublet) and Na9Cl8+ an even one (234, singlet).
+  - RACE_LR does 34 % better than RACE, but it still fails.
+- **The spin input resolves it.** The multiplicity is taken from the electron-count parity (`data_prep/add_spin_parity.py`;
+  this assumes the lowest multiplicity in the DFT) and fed through the charge/spin embedding.
+  - The Na8Cl8+ force error drops about 20× (108 → 4.8 meV/Å), and the energy RMSE drops to 2.4 meV.
+  - RACE with the embedding alone is as good as RACE_LR with it. The missing information was the electronic state,
+    not the electrostatics.
+- **Consequence for pretraining.** The spin (and total charge) input is essential. OMol25 provides both.
+  - Caveat: in this dataset the spin label is perfectly correlated with the composition (Na8 vs Na9), so it also
+    acts as a global composition flag.
+  - The Al-doped Au2/MgO slabs are doublets too. The spin was therefore not used there, because it would reveal the
+    doping directly.
+
+**NVE MD, 2 ps, 3 velocity seeds** (start: a Na9Cl8+ test frame):
+
+| model | 1000 structures | 4500 structures |
+|---|---|---|
+| RACE | 2 / 3 stable | **3 / 3** |
+| RACE_LR | 2 / 3 stable | **3 / 3** |
+
+- The 1000-structure models fail on the same seed, both after leaving the training range.
+- With 4500 structures every run conserves the energy to about 0.01 meV RMS. The holes of §12 were a data-size
+  effect.
+
+**Au2 on MgO(001), periodic, 1000 structures, 60 epochs** (test energy RMSE per 110-atom structure in meV; force in
+meV/Å):
+
+| model | undoped E | Al-doped E | F |
+|---|---|---|---|
+| RACE | 55.2 | 153.1 | 4.6 |
+| RACE_LR | 46.2 | **76.1** | 4.9 |
+
+- RACE cannot see the dopant 10 Å below the Au2, so its doped-slab error is three times its undoped error. RACE_LR
+  halves it.
+- **Au2 charge** (sum over the two Au atoms):
+
+  | | undoped | doped | shift |
+  |---|---|---|---|
+  | DFT (Hirshfeld) | +0.088 | −0.197 | −0.285 e |
+  | RACE_LR | −0.032 | −0.070 | −0.038 e |
+
+  The direction is right and the per-structure correlation is 0.83, but the size is about 13 % of DFT. Long-range
+  charge transfer is under-represented at this budget; a larger charge-loss weight is the next thing to try (NaCl
+  preferred 1.0).

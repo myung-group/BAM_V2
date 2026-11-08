@@ -56,6 +56,11 @@ claim it cleanly.
   `total_spin_key`.
 - `long_range.qeq: false` switches the Qeq stratum off, giving an embedding-only variant.
 - `chi_init_missing: "mean"` starts elements without a Pauling value at the mean.
+- **Spin input matters** (local test, report §14).
+  - Na8Cl8+ (doublet) and Na9Cl8+ (singlet) have the same total charge.
+  - Without spin, both RACE and RACE_LR fail on Na8Cl8+ once trained on the full split. With
+    `charge_spin_embedding` and the multiplicity the force error drops from 108 to 4.8 meV/Å.
+  - Use `total_spin_key` whenever the data provide it (OMol25 does).
 - **Zero χ is a stationary point for neutral data** (found 2026-11-07). For Q = 0 the Qeq energy is −½ χᵀBχ,
   so every χ parameter has zero gradient at χ = 0. A neutral-only dataset with `chi_init: "zero"` never develops
   charges. Use `"pauling"` there. The default is unchanged for reproducibility.

@@ -223,6 +223,12 @@ sbatch). Every one of those jobs was written but not submitted.
        - RACE_LR gains hold over 3 seeds (carbon chain −49 % force, NaCl −11 %).
        - The short-range switch [3, 5] Å removes the NaCl gain, so do not use the [4, 6] Å example.
        - The charge-loss weight is best at 0.1 for the molecule and 1.0 for NaCl; 0.01 is too weak.
+     - Local 2026-11-08 (report §14):
+       - With 4500 NaCl structures RACE and RACE_LR fail on the doublet Na8Cl8+ (108 / 71 meV/A).
+       - The spin input via the charge/spin embedding fixes it (4.8 meV/A), so pretrain with spin.
+       - More data makes the NaCl MD stable (6/6).
+       - Au2/MgO: RACE_LR halves the doped-slab energy error. The Au2 charge shift has the right sign but is 13 % of
+         DFT.
    See `docs/RACE_LR_design.md` §3.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.

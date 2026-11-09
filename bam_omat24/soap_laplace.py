@@ -451,13 +451,21 @@ def main():
             Es.append(E); Fs.append(np.concatenate(F))
         return np.stack(Es), np.stack(Fs)
 
-    def evaluate(gs, kappa, lam, seed, netE, netF):
-        """Calibration with two centres: the sample mean ('mean') and the network itself ('map', sigma = sample std)."""
+    def evaluate(gs, kappa, lam, seed, netE, netF, dump=None):
+        """Calibration with two centres: the sample mean ('mean') and the network itself ('map', sigma = sample std).
+        dump: path of an npz with the per-structure arrays (OOD analyses, runs/diag/ood_summary.py)."""
         Es, Fs = mc(gs, kappa, lam, seed) if a.predictive == 'mc' else mc_lin(gs, kappa, lam, seed, netE, netF)
         if not (np.isfinite(Es).all() and np.isfinite(Fs).all()):
             return None
         yE, yF = targets(gs)
         sE, sF = 1e3 * Es.std(0, ddof=1) + 1e-6, 1e3 * Fs.std(0, ddof=1) + 1e-6
+        if dump is not None:
+            ns = [3 * int(np.asarray(g.n_node)[0]) for g in gs]; cut = np.cumsum([0] + ns)
+            err = netF - yF
+            np.savez(dump, yE=yE, netE=netE, meanE=Es.mean(0), sigE=sE / 1e3,
+                     F_err_rms=np.array([np.sqrt(np.mean(err[p:q] ** 2)) for p, q in zip(cut[:-1], cut[1:])]),
+                     F_sig_mean=np.array([np.mean(sF[p:q]) for p, q in zip(cut[:-1], cut[1:])]) / 1e3,
+                     F_err=err, F_sig=sF / 1e3)
         from scipy.stats import spearmanr
         # confound check: does sigma just track the force magnitude, and does |err| itself track |F|?
         absF = np.abs(yF); err = np.abs(netF - yF)
@@ -502,7 +510,7 @@ def main():
     for name, ds in te.items():
         gs = [ds[i] for i in range(len(ds))][:a.max_test]
         nE, nF = predict(ema_leaves, gs)
-        r = evaluate(gs, kappa, lam, a.seed + 1, nE, np.concatenate(nF))
+        r = evaluate(gs, kappa, lam, a.seed + 1, nE, np.concatenate(nF), dump=out / f'per_structure_{name}.npz')
         report['sets'][name] = r
         print(f"{name} n={len(gs)}: net F {r['net_F_rmse_meVA']:.2f} | F(map) sigma {r['F_map']['mean_sigma']:.2f} "
               f"z {r['F_map']['rms_z']:.2f} cov68 {r['F_map']['cov68']:.2f} cov95 {r['F_map']['cov95']:.2f} "

@@ -452,6 +452,18 @@ def main():
                        np.concatenate([x for x in D[ke]], axis=1))          # (n_models, components)
                 rep[f'{nm}_ensemble'] = calib(c * (ens.mean(0) - y), c * ens.std(0, ddof=1))
         report['sets'][name] = rep
+        # per-structure arrays for OOD analyses (runs/diag/ood_summary.py): energies and structure-mean force sigma
+        dump = {'yE': yE, 'mE': mE, 'netE': np.asarray(D['eFull']), 'sigE_epi': np.sqrt(vE_epi),
+                'sigE_tot': np.sqrt(vE_epi + 1 / beta['E'])}
+        if 'J' in D and 'F' in beta:
+            ns = [A.shape[0] for A in D['J']]; cut = np.cumsum([0] + ns)
+            yF = np.concatenate(D['yF']); muF = np.concatenate(D['fRest']) + np.concatenate([A @ blr.m for A in D['J']])
+            vF = np.concatenate([np.einsum('ij,jk,ik->i', A, blr.Sigma, A) for A in D['J']])
+            dump.update({'F_err_rms': np.array([np.sqrt(np.mean((muF[a:b] - yF[a:b]) ** 2)) for a, b in zip(cut[:-1], cut[1:])]),
+                         'F_sig_epi_mean': np.array([np.mean(np.sqrt(vF[a:b])) for a, b in zip(cut[:-1], cut[1:])]),
+                         'F_sig_tot_mean': np.array([np.mean(np.sqrt(vF[a:b] + 1 / beta['F'])) for a, b in zip(cut[:-1], cut[1:])]),
+                         'F_err': muF - yF, 'F_sig_epi': np.sqrt(vF), 'F_sig_tot': np.sqrt(vF + 1 / beta['F'])})
+        np.savez(out / f'per_structure_{name}.npz', **dump)
         line = (f"{name:>10} n={rep['n']:5d} | net E {rep['net_E_rmse_meV']:.2f} | BLR E rmse {rep['E_blr_total']['rmse']:.2f} "
                 f"z {rep['E_blr_total']['rms_z']:.2f} cov95 {rep['E_blr_total']['cov95']:.2f} rho {rep['E_blr_total']['spearman']:.2f}")
         if 'E_ensemble' in rep:

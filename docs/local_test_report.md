@@ -859,3 +859,69 @@ extrapolation (3BPA 600 K / 1200 K, dihedral scan; OMat24 out-of-distribution), 
 whole-weight posterior should separate from ②. Recommended next run on HANGANG: `--ggn 500 --ggn-probes 2
 --predictive glm --kappa 1 --kappa-times-ntrain --lam-evidence --lam 1 10` on the 3BPA checkpoint, against the
 ensemble and ② on the 600 K / 1200 K sets.
+
+## 20. Out-of-distribution check in the BAM V1 paper's 3BPA setting (2026-11-10)
+
+The V1 paper (arXiv:2510.03046, Table 4 / S6) trains on 3BPA 300 K (450 + 50 structures) and tests on 300 K
+(in-distribution) and 600 K / 1200 K (extrapolation); it reports RMSEs only (RACE 12.1 / 31.8 / 115.3 meV/Å forces,
+3.4 / 11.7 / 37.5 meV energies; RACE-LA 18.2 / 51.0 / 171.8 and 4.8 / 15.3 / 60.8). Its uncertainty metrics
+(calibration error, OOD-detection AUROC) are given only for oBN25, which is not available locally. Here the same
+3BPA split is run with the reduced local model (hidden 64, 3 layers, lmax 2, 300 epochs, 58 min on the limited
+GPU; `input/local_3bpa/race_s42.json`), then ② and ③ on 400 structures per test set
+(`runs/local_3bpa/uq_s42/`, chain in the scratchpad; HANGANG version `runs/diag/ood/ood_3bpa_hangang.sh`;
+summary script `runs/diag/ood/ood_summary.py`).
+
+**Network (final EMA, gauge refit):** forces 10.6 / 25.7 / 75.6 meV/Å, energies 6.7 / 12.6 / 40.7 meV at
+300 / 600 / 1200 K. Better than the paper's full RACE on forces at every temperature, worse on the 300 K energy.
+
+**Uncertainty per temperature** (forces meV/Å, 400 structures each; ③ GLM: κ = n_train, λ = 10 chosen on 300 K
+validation; ③ MC: κ = 10 n_train, λ = 30; ② hyperparameters by evidence on the training set):
+
+| method | set | F RMSE | σ_F | rms z | cov95 | ρ(\|err\|, σ) | ρ per structure | E RMSE | σ_E | E rms z |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ② last-layer BLR | 300 K | 11.3 | 3.5 | 3.19 | 0.64 | 0.54 | 0.64 | 3.9 | 2.1 | 1.83 |
+| | 600 K | 27.0 | 3.5 | 7.59 | 0.42 | 0.58 | 0.75 | 13.8 | 2.2 | 6.42 |
+| | 1200 K | 80.4 | 3.6 | 22.3 | 0.21 | 0.62 | 0.76 | 37.1 | 2.2 | 17.1 |
+| ③ GGN Laplace, linearised | 300 K | 11.3 | 10.7 | 0.90 | 0.96 | 0.50 | 0.47 | 3.9 | 15.2 | 0.26 |
+| | 600 K | 27.0 | 12.5 | 1.71 | 0.82 | 0.54 | 0.67 | 13.8 | 15.8 | 0.90 |
+| | 1200 K | 80.7 | 16.3 | 3.64 | 0.58 | 0.56 | 0.68 | 37.1 | 16.8 | 2.24 |
+| ③ GGN Laplace, MC | 300 K | 11.3 | 10.5 | 1.06 | 0.93 | 0.37 | 0.43 | 3.9 | 177 | 0.02 |
+| | 600 K | 27.0 | 11.6 | 2.10 | 0.78 | 0.42 | 0.50 | 13.8 | 177 | 0.08 |
+| | 1200 K | 80.7 | 13.6 | 4.58 | 0.51 | 0.49 | 0.64 | 37.1 | 178 | 0.21 |
+
+**OOD detection** (AUROC of the structure-level σ, 300 K vs 600 K / 1200 K, the paper's oBN25 metric):
+
+| method | σ_F, 600 K | σ_F, 1200 K | σ_E, 600 K | σ_E, 1200 K |
+|---|---|---|---|---|
+| ② BLR (total or epistemic part alone) | 0.99 | 1.00 | 0.86 | 1.00 |
+| ③ GGN Laplace, linearised | 0.98 | 1.00 | 0.64 | 0.72 |
+| ③ GGN Laplace, MC | 0.98 | 1.00 | 0.60 | 0.67 |
+
+(The paper's oBN25 values: DE 1.00, IVON 1.00, SWAG 0.58, MVE 0.54.)
+
+Figure `docs/figures/ood_3bpa_local_sigma_vs_error.png` (numbers: `docs/figures/ood_3bpa_local_summary.json`): structure-mean σ_F against structure force RMSE
+per temperature.
+
+**Reading.**
+1. **② is a perfect OOD detector with the wrong scale.** Its σ is 3.5 meV/Å at every temperature because the
+   evidence-fitted noise (training residuals, 3.5 meV/Å) dominates and the epistemic part is 0.17 → 0.21 → 0.32
+   meV/Å. That epistemic part ranks structures correctly (AUROC 0.99 / 1.00, per-structure ρ 0.64–0.76, the best of
+   the three), but the total σ does not grow with the error (z 3.2 → 7.6 → 22). Two causes: the training residuals
+   underestimate the test error of an over-fitted 450-structure model (train F ≈ 3.5 vs test 11.3 meV/Å), and the
+   last-layer posterior only sees the readout, so the feature extrapolation error is invisible to it.
+2. **③ (linearised) is the only method whose σ moves with the extrapolation**: 10.7 → 12.5 → 16.3 meV/Å while the
+   error goes 11.3 → 27 → 81. Calibrated at 300 K (z 0.90, cov95 0.96), 1.7× over-confident at 600 K, 3.6× at
+   1200 K; its energy σ is honest at 300 / 600 K (z 0.26 / 0.90). The slope of σ against error is about 1/3 in log
+   space: a Laplace posterior around one mode under-reacts to the feature shift, as expected, but it reacts.
+3. **③ MC** adds nothing over the linearised predictive here (lower ρ, worse z, energy σ useless), confirming
+   section 19.
+4. The force-σ AUROC is ≈ 1 for every method because the 1200 K structures are far from 300 K; the energy σ
+   separates the sets only for ②.
+
+**Conclusion.** In the paper's own OOD setting, ③ with the GGN and the linearised predictive is the usable
+posterior: calibrated in distribution and under-confident by a factor that grows with the extrapolation (1.7 at
+600 K, 3.6 at 1200 K), while ② is a good ranker whose σ scale is fixed by the training noise. A natural
+combination is ②'s ranking with ③'s scale, or ③ with the noise term of ② added (both omit the aleatoric floor
+differently). The same chain on the full-recipe HANGANG checkpoint (`runs/diag/ood/ood_3bpa_hangang.sh`, with the
+3-seed ensemble as the reference) is the next run; the paper's RACE-LA numbers (RMSE only) can be compared with the
+"F(mean)" rows of `soap_laplace.json` there.

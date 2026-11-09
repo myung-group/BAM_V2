@@ -624,3 +624,71 @@ meV/Å):
   The direction is right and the per-structure correlation is 0.83, but the size is about 13 % of DFT. Long-range
   charge transfer is under-represented at this budget; a larger charge-loss weight is the next thing to try (NaCl
   preferred 1.0).
+
+## 15. Pickle vs streaming data path: speed (2026-11-09)
+
+Question: before OMol25 / OAM pretraining with the streaming loader (`bam_omat24/stream_data.py`, not yet wired into
+`train_3bpa`), is it slower than the pickle path (graphs built once, cached, held in memory)?
+
+Setup: `runs/diag/bench_stream/bench_stream_vs_pkl.py` (GPU limited: MPS 50 % SMs, RTX 4060 Ti; RACE float32,
+AMSGrad).
+- Both paths share the model, the step and the fixed batch shape (`stream_plan.derive_buckets`, one bucket).
+- Each path is timed for one full epoch, twice; the table shows the mean.
+- Ideal = the same batches already collated in memory, GPU only.
+- The JAX equivalence tests of the stream loader (`tests/test_stream_io.py`, previously skipped outside Slurm) pass
+  locally on CPU: 6/6.
+
+Training speed (structures/s; % of ideal):
+
+| set | ideal | pickle | stream W=1 | W=2 | W=4 | W=8 |
+|---|---|---|---|---|---|---|
+| OMol25 public subset, 10k molecules (16 atoms) | 959–995 | 989 (103 %) | 1016 (102 %) | 1022 | 1004 | 1012 |
+| 4G Au2/MgO, 4,500 periodic cells (110 atoms), ASE neighbour list | 100 | 102 (101 %) | **61 (61 %)** | 114 | 112 | 109 |
+| same, vesin neighbour list | 100 | 102 | 104 (103 %) | 104 | 103 | 103 |
+
+The stream runs at 109–114 % of ideal on the ASE periodic set (both repeats). This is unexplained; treat it as the
+±10 % noise of a desktop.
+
+Loader alone (structures/s, no model):
+
+| set | pickle | stream W=1 | W=2 | W=4 | W=8 |
+|---|---|---|---|---|---|
+| molecules | 3,900 | 5,200 | 10,000 | 16,300 | 15,200 |
+| periodic, ASE | 3,550 | 62 | 119 | 215 | 300 |
+| periodic, vesin | 3,840 | 860 | 1,630 | 2,680 | 3,330 |
+
+One-time preprocessing:
+
+| set | pickle build, 1 core | size pass, 8 workers | pickle size |
+|---|---|---|---|
+| molecules | 1.5 s | 0.8 s | 26 MB |
+| periodic, ASE | 81 s | 16 s | 490 MB |
+| periodic, vesin | 4 s | 1.5 s | 490 MB |
+
+Findings:
+- **Molecules (OMol-like):** streaming costs nothing. One worker already outruns the GPU 5×.
+  - The stream packs fill 16.3 graphs per step against 15.7 for the bucketed pickle loader.
+- **Periodic (OAM-like):** the ASE periodic neighbour list (`neighbors.neighbor_pairs`, ~18 ms per 110-atom cell) is
+  the whole cost.
+  - The pickle path pays it once, the stream every epoch.
+  - With 8 workers the loader has only 3× headroom over this GPU at 50 % SMs. A GH200 running a float32 model would
+    outrun it.
+- **Fix:** `BAM_NEIGHBORS=vesin` (opt-in, needs `pip install vesin`).
+  - It gives the same (i, j, S) pair set as ASE (200 Au2/MgO cells; `tests/test_neighbors_vesin.py` with small
+    skewed cells and a molecule).
+  - It is 57× faster on periodic cells and 2× on molecules.
+  - With it, one worker matches the pickle path, and 8 workers give 33× headroom.
+  - Pairs are sorted by (i, j, S). The edge order therefore differs from the ASE backend: the graph is the same and
+    only the order of the sums changes. Use one backend for the size pass and training of a run.
+- **Main-thread cost:** in every path, "get next batch" is about 70 % of the wall time on the periodic set. This is
+  the host waiting for the GPU queue, not host work:
+  - `stack_batches_for_devices` alone is 2.6 ms of a 79 ms step;
+  - collating 8 cells takes 0.24 ms.
+  - The data path is not the limit here.
+- **Not measured locally:**
+  - aselmdb sources (OMat24 / OMol25 lmdb; `lmdb` is not installed here);
+  - Lustre reads;
+  - the Grace CPU per-core speed;
+  - multi-GPU.
+  - These belong to the T6 throughput smoke on HANGANG (`docs/stream_loader_design.md` §4.10). Install `vesin` in
+    `bam_cue` first, after asking.

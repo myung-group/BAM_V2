@@ -436,6 +436,7 @@ training (every host process)
 | GPU, float32 | assumed 3-5x float64 ⇒ ~550-900 structures/s/GPU | assumption; measure |
 | ASE neighbour list per process | ~300 structures/s (user-measured); slower on aimd-3000 (68 atoms/str): 47-177 rows/s at 6 Å | user; `convert_aselmdb_to_shards.py:96-98` |
 | lmdb get + decode | 0.29 + 0.03 ms per row | probe [measured] |
+| local 2026-11-09 (RTX 4060 Ti, 50 % SMs) | extxyz stream = pickle speed for molecules (1 worker); periodic 110-atom cells need `BAM_NEIGHBORS=vesin` (ASE list ~62 structures/s per worker, vesin ~860) | `docs/local_test_report.md` §15 |
 | workers needed per GPU | float64 ≈ 0.6; float32 ≈ 2-3 | ratio of the above |
 | **provision** | 8 workers per GPU (32 of 288 cores per node) | headroom for aimd-3000 stretches |
 | host-to-device per step | about 2 MB per device (49k edges × (Sij 24 B + 8 B)) | estimate |

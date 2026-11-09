@@ -787,3 +787,75 @@ Fisher. A Laplace posterior over all weights needs the GGN (output Jacobians, no
 store; that is what BAM V1's torch Laplace (curvlinops GGN, diagonal) computes. Options: (a) GGN diagonal in the SOAP
 eigenbasis from per-structure output Jacobians (cost ≈ ② times the number of outputs; not cheap), (b) keep ② for the
 calibrated σ and the ③ κ = 1e6 perturbation as a cheap ranking heuristic, (c) stop here. ③ is on hold again.
+
+## 19. SOAP-basis Laplace with the GGN curvature (option (a) of section 18, 2026-11-09)
+
+`soap_laplace.py --ggn N [--ggn-probes K]` replaces ν by the diagonal of the generalised Gauss-Newton
+Σ_k J_kᵀJ_k/σ_k² (energy and force Jacobians wrt the weights, Gaussian likelihood with the network's validation
+RMSEs as σ_E, σ_F) in the SOAP eigenbasis, averaged over N training structures. Two estimators: exact (one VJP per
+output, 1 + 3 n_atoms per structure) and Hutchinson (K Gaussian probes, one VJP each). The untempered posterior
+precision is n_train·ν + λ (`--kappa-times-ntrain`, κ = 1). Two predictives: MC (re-evaluate the network at each
+weight sample) and GLM (linearised, f(θ*) + J(θ−θ*), one JVP per sample, Immer et al. 2021; `--predictive glm`).
+Prior precision: a scalar λ from a validation grid, the closed-form evidence optimum at κ = n_train
+(`--lam-evidence`), or one λ per leaf from the MacKay fixed point λ_g = γ_g/|θ_g|² (`--lam-per-leaf`).
+
+**Checks.** Exact GGN equals the dense-Jacobian result on a toy model (`tests/test_soap_laplace.py`); Hutchinson
+with 2 probes × 20 carbon structures agrees with the exact diagonal over 5.7e5 entries (Spearman 0.999, ratio
+within ±0.1 dex for 68 % of the entries). Cost: exact 2 s per 10-atom structure, Hutchinson 0.2 s per probe;
+GLM predictive 16 samples ≈ MC 8 samples per structure.
+
+**The curvature is now real, but it determines few directions.** n_train·ν exceeds 1 in 3e4 of 5.7e5 directions
+(carbon chain) and the evidence counts γ = 6.6e4 well-determined directions (AuMgO: 1.9e5 of 6.8e5). Everything else
+is the prior. The evidence-optimal isotropic λ is 0.10 (carbon) and 0.29 (AuMgO), far below the validation-chosen
+10–100: an isotropic Gaussian is a poor model of the trained weights (rms ≈ 1.1, unused leaves such as the
+logvar heads and the vector channels of the last layer have γ = 0). Per-leaf λ_g range from 6e-8 (unused leaves)
+to 84 (`scale`), median 0.17 (carbon) / 0.56 (AuMgO).
+
+**Carbon chain test set (n = 100, network F RMSE 19.5 meV/Å, E RMSE 207 meV):**
+
+| predictive | κ·n_train, λ | σ_F | rms z | cov95 | ρ(\|err\|, σ) | E σ (meV) | E rms z | ρ(σ_F, \|F\|) |
+|---|---|---|---|---|---|---|---|---|
+| MC, 8 samples | 1, 100 (valid) | 16.0 | 1.55 | 0.91 | 0.51 | 405 | 0.51 | – |
+| MC, 16 samples | 10, 30 (valid) | 19.7 | 1.11 | 0.99 | **0.58** | 423 | 0.49 | 0.58 |
+| GLM, 16 samples | 0.1, 10 (valid) | 21.9 | 1.07 | 0.97 | 0.43 | 177 | 1.22 | 0.56 |
+| GLM | 1, λ_ev = 0.10 (no tuning) | 25.0 | 0.85 | 0.96 | 0.34 | 81 | 2.56 | – |
+| GLM, per-leaf | 1, 10·λ_g (valid) | 17.1 | 1.32 | 0.93 | 0.37 | 63 | 3.32 | – |
+| ② BLR (section 17) | – | 12.4 | 1.06 | 0.93 | 0.37 | – | – | – |
+| ③ old, κ = 1e6 (scale frozen, section 18) | – | 18.5 | 1.54 | 0.94 | 0.53 | 480 | 0.43 | – |
+
+ρ(|err_F|, |F|) = 0.29 on this set, so σ ∝ |F| alone would give about 0.3; both predictives have σ tracking |F|
+at 0.56–0.58.
+
+**AuMgO test set (n = 50, network F RMSE 4.6 meV/Å, E RMSE 122 meV; all GGN from 60 structures):**
+
+| predictive | κ·n_train, λ | σ_F | rms z | cov95 | ρ_F | E σ (meV) | E rms z | ρ_E |
+|---|---|---|---|---|---|---|---|---|
+| MC, 8 samples | 0.1, 100 (valid) | 4.6 | 1.20 | 0.92 | 0.34 | 1635 | 0.08 | −0.58 |
+| GLM, 16 samples | 0.1, 10 (valid) | 4.6 | 1.01 | 0.95 | 0.35 | 305 | 0.40 | 0.26 |
+| GLM | 1, λ_ev = 0.29 (no tuning; valid) | 3.2 | 1.40 | – | 0.34 | – | 0.75 | 0.66 |
+| GLM, per-leaf | 1, 0.3·λ_g (valid) | 3.6 | 1.25 | 0.91 | 0.34 | 146 | 0.82 | 0.36 |
+| ③ old, κ = 1e10 (section 18) | – | 6.6 | 1.09 | 0.94 | 0.33 | 2783 | 0.04 | 0.33 |
+
+On the AuMgO validation set the GLM energy ranking is 0.65–0.84 at every (κ, λ) with κ ≥ 1; the MC energy σ is
+1.6–5 eV because isotropic weight noise adds coherently over 110 atoms.
+
+**Reading.**
+1. The GGN fixes the pathology of section 18: κ now matters (σ_F falls monotonically with κ·n_train), and the
+   untempered posterior with the evidence prior is calibrated to within a factor 1.2–1.4 on both systems without
+   validation tuning (GLM). That is the behaviour a Laplace approximation should have.
+2. The force ranking does not improve: 0.34–0.43 for the GLM on both systems, the same as ② (0.37) and the
+   ensemble (0.36). AuMgO is pinned at 0.34–0.35 in every variant (its force error, 4.6 meV/Å, is at the label noise
+   floor). The MC predictive reaches 0.58 on the carbon chain, but its σ tracks |F| at 0.58 and the error itself
+   tracks |F| at 0.29, so part of that is the force magnitude, and its energy σ is unusable on cells.
+3. The GLM predictive is the first method here with a usable energy σ on AuMgO (z 0.4–0.8, ρ_E 0.3–0.8), where ②
+   failed on per-composition offsets and MC blew up.
+4. Per-leaf evidence priors change little; most of the weight space is unconstrained by the data and only the ≈ 1e5
+   well-determined directions matter, which the GLM already handles correctly.
+
+**Conclusion.** With the GGN the SOAP-basis Laplace is a correct, cheap (one pass of VJPs over a training subset,
+then one JVP per sample per structure) and self-calibrating posterior over all weights; it is not a better error
+ranker than the last-layer BLR on these in-distribution sets. The question it was built for, calibration under
+extrapolation (3BPA 600 K / 1200 K, dihedral scan; OMat24 out-of-distribution), is open and is where the
+whole-weight posterior should separate from ②. Recommended next run on HANGANG: `--ggn 500 --ggn-probes 2
+--predictive glm --kappa 1 --kappa-times-ntrain --lam-evidence --lam 1 10` on the 3BPA checkpoint, against the
+ensemble and ② on the 600 K / 1200 K sets.

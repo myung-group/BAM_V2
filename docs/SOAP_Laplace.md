@@ -94,3 +94,21 @@ $\delta W = Q_L\,\big(\varepsilon \oslash \sqrt{\kappa'\nu+\lambda}\big)\,Q_R^\t
    - grid-fit κ′ and λ on validation;
    - calibration on the test sets against the ensemble and the BLR.
 3. Refinement 1 (ν recollected at θ*), then the marginal-likelihood fit (5b).
+
+## 6. Status (2026-11-09)
+
+Run on the local 4G checkpoints (docs/local_test_report.md sections 18-19), not yet on 3BPA/OMat24.
+
+- Steps 2 and 3 done: the sampler is exact in its limits; caveat 3 turned out to be decisive. Both the optimizer ν
+  and the recollected ν (refinement 1) are empirical Fishers with median 1e-15: the posterior is either the
+  isotropic prior (with the global `scale` frozen) or over-confident. Negative result.
+- **Refinement 2 (`--ggn`): the GGN diagonal in the SOAP basis.** $
+u_i = rac1N\sum_s\sum_k w_k
+  ig[(Q_L\otimes Q_R)^	op J_{s,k}ig]_i^2$ with $J_{s,k}$ the Jacobian of output $k$ (energy, forces) of
+  structure $s$ wrt the weights and $w_k = 1/\sigma_k^2$ the Gaussian likelihood precisions (defaults: the
+  network's validation RMSEs). Estimated either exactly (one VJP per output, 1 + 3 n_atoms per structure) or by
+  Hutchinson probes $v\sim\mathcal N(0,\mathrm{diag}\,w)$: $\mathbb E[(J^	op v)^{\odot 2}] = \mathrm{diag}(J^	op W J)$,
+  one VJP per probe. The untempered posterior precision is $N_{m train}\,
+u + \lambda$ (`--kappa-times-ntrain`,
+  κ = 1). This is the EKFAC-style diagonal GGN that V1's torch Laplace obtained from curvlinops, here in the
+  optimizer's own eigenbasis.

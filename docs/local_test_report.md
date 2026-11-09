@@ -739,3 +739,51 @@ All force values in meV/Å.
 - **Next test:** out-of-distribution structures, where the epistemic term should grow.
 - **Energies:** the energy σ of AuMgO (≈ 115–170 meV, ranking negative) reflects per-composition energy offsets between the Au2/MgO subsets, which the single bias column (∝ N) cannot fit. This is the gauge problem of section 14, not the method.
 - **Cost:** about 3.3 s per 110-atom cell in float64 at 50 % of the RTX 4060 Ti. OMat24 on HANGANG: `runs/diag/bayes_lastlayer_oam.sh` (not run).
+
+## 18. SOAP-curvature Laplace: first runs (2026-11-09)
+
+`bam_omat24/soap_laplace.py` on the SOAP-trained local checkpoints (carbon chain, AuMgO slab; periodic cells added).
+Grid over κ (curvature weight) and λ (isotropic prior precision) on a validation subset, 8 samples, σ = sample std
+around the network (the "MAP" centre); the sample mean is also reported.
+
+**Checks passed.** κ, λ → ∞ gives the network back (2e-14). The sampler's spread in the SOAP basis is 1/√(κν+λ)
+(`tests/test_soap_laplace.py`). Whole grid of 15 points: 144 s (carbon chain), 383 s (AuMgO).
+
+**Result: the SOAP second moments are not a usable curvature.**
+
+| ν over the SOAP leaves | 10 % | median | 99.9 % | max |
+|---|---|---|---|---|
+| carbon chain, optimizer ν | 0 | 1.4e-15 | 2.8e-8 | 2.8e-3 |
+| carbon chain, recollected at θ* (`--recollect 50`, per-structure squared gradients) | 0 | 1.6e-15 | 8.5e-8 | 5.4e-3 |
+| AuMgO, optimizer ν | 0 | 1.3e-16 | 7.0e-9 | 5.9e-4 |
+
+ν is an **empirical Fisher**: squared loss gradients, which are residual-weighted and therefore tiny at convergence
+and concentrated in a handful of directions. Recollecting them at the EMA weights gives the same picture, so this is
+not an EMA artefact. Consequences on the κ grid:
+
+| regime | what happens | carbon chain test (net F RMSE 19.5 meV/Å) |
+|---|---|---|
+| κ ≤ 1e8, λ = 1e4 | κν < λ in every SOAP direction; the only parameter the curvature term touches is the global `scale` (Adam leaf, ν = 0.42, value 0.109). With κ = 0 `scale` is shaken by 10 % and all forces follow (σ_F 79, ρ 0.33). With κ = 1e6 it is frozen: σ_F 17–18, z 1.5, ρ **0.51–0.53** | best NLL; this is isotropic weight noise with `scale` fixed, not a curvature posterior |
+| κ ≥ 1e12 | the top directions freeze, the rest keep 1/√λ, and the forces barely move | σ_F 2.5 → 0.00, z 8 → 14000, ρ 0.27–0.46 |
+| AuMgO, best κ = 1e10, λ = 1e3 | σ_F 6.6 vs RMSE 4.6, z 1.1, ρ 0.33; energy σ 2.8 eV (z 0.04) because isotropic weight noise adds coherently over 110 atoms | no better than κ = 0 (ρ 0.27–0.31) |
+
+Where the theory puts κ (κ ≈ number of training structures ≈ 1e3, with recollected ν) the posterior is the prior
+λ in all but a few directions.
+
+**Comparison of the three methods on the carbon chain test set** (forces, meV/Å):
+
+| method | σ_F | rms z | 95 % coverage | Spearman(\|err\|, σ) | cost |
+|---|---|---|---|---|---|
+| ② last-layer BLR (section 17) | 12.4 | 1.06 | 0.93 | 0.37 | P backward passes per structure |
+| 3-seed ensemble | 7.9 | 4.95 | 0.62 | 0.36 | 3 trainings |
+| ③ SOAP-Laplace, κ = 1e6, λ = 1e4, 32 samples | 18.5 | 1.54 | 0.94 | 0.53 | 32 forward+force passes per structure |
+| ③ with κ = 0 (isotropic noise) | 29.3 | 1.83 | 0.91 | 0.36 | same |
+
+The ③ ranking (0.53) is the best of the three, but it comes from isotropic weight noise with the global scale fixed,
+which is a SWAG-like perturbation, not from the SOAP curvature.
+
+**Conclusion.** The design assumption "ν ≈ Fisher / B" (docs/SOAP_Laplace.md section 2) fails for the empirical
+Fisher. A Laplace posterior over all weights needs the GGN (output Jacobians, no residuals), which SOAP does not
+store; that is what BAM V1's torch Laplace (curvlinops GGN, diagonal) computes. Options: (a) GGN diagonal in the SOAP
+eigenbasis from per-structure output Jacobians (cost ≈ ② times the number of outputs; not cheap), (b) keep ② for the
+calibrated σ and the ③ κ = 1e6 perturbation as a cheap ranking heuristic, (c) stop here. ③ is on hold again.

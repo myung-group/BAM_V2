@@ -692,3 +692,14 @@ Findings:
   - multi-GPU.
   - These belong to the T6 throughput smoke on HANGANG (`docs/stream_loader_design.md` §4.10). Install `vesin` in
     `bam_cue` first, after asking.
+
+## 16. Streaming path wired into training (2026-11-09)
+
+- **What:** `data_format: "stream"` in `train_3bpa` (train / valid / test). Details and the next steps are in
+  `docs/HANDOFF_stream_loader.md`.
+- **End-to-end on the OMol25 public subset** (RACE_LR + charge loss + charge + spin, 5 epochs):
+  - Valid F RMSE: 274 meV/Å with pickle, 243 meV/Å with stream.
+  - Same time per epoch.
+  - Resume from the data cursor works.
+- **Block mixing:** a pack drawn from one 128-row block (same-molecule conformers) made training worse (282 meV/Å)
+  until the rows of 16 blocks were shuffled together (`mix_blocks`, default 16).

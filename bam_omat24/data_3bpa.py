@@ -25,6 +25,7 @@ import numpy as np
 from tqdm import tqdm
 
 from bam_omat24.neighbors import neighbor_pairs
+from bam_omat24.graph_fields import extra_fields
 
 
 # =============================================================================
@@ -73,32 +74,10 @@ def preprocess_graph(
 
     edges = None
     glob = {"energy": energy}
-    if charge_key:     # total charge of the structure (RACE_LR); only when asked, so other graphs keep their keys
-        glob["charge"] = np.array([float(atoms.info.get(charge_key, 0.0))], dtype=np.float32)
-    if spin_key:       # spin multiplicity 2S+1 of the structure (RACE_LR charge/spin embedding); default 1
-        glob["spin"] = np.array([float(atoms.info.get(spin_key, 1.0))], dtype=np.float32)
-    if fragments:      # (fragment array key, fragment charges info key, max fragments): per-fragment Qeq constraints
-        fkey, fqkey, n_frag = fragments[0], fragments[1], int(fragments[2])
-        q_tot = float(atoms.info.get(charge_key, 0.0)) if charge_key else 0.0
-        frag = atoms.arrays.get(fkey)
-        frag = np.zeros(len(atoms), np.int32) if frag is None else np.asarray(frag).astype(np.int32).reshape(-1)
-        if frag.min() < 0 or frag.max() >= n_frag:
-            raise ValueError(f"fragment ids {frag.min()}..{frag.max()} outside 0..{n_frag - 1}")
-        if fqkey in atoms.info:
-            fq = np.asarray(atoms.info[fqkey], np.float64).reshape(-1)
-            if len(fq) > n_frag:
-                raise ValueError(f"{len(fq)} fragment charges > n_fragments {n_frag}")
-            fq = np.concatenate([fq, np.zeros(n_frag - len(fq))])
-            if charge_key and abs(fq.sum() - q_tot) > 1e-6:
-                raise ValueError(f"fragment charges {fq.tolist()} do not sum to the total charge {q_tot}")
-        elif len(np.unique(frag)) == 1:       # one fragment only (e.g. a ligand or protein part): it carries Q
-            fq = np.zeros(n_frag); fq[frag[0]] = q_tot
-        else:
-            raise ValueError(f"structure with fragments {np.unique(frag).tolist()} but no info[{fqkey!r}]")
-        nodes["fragment"] = frag
-        glob["fragment_charges"] = fq.astype(np.float32)[None]
-    if charge_label_key:   # per-atom reference charges (RACE_LR optional charge loss), e.g. Hirshfeld; only when asked
-        nodes["ref_charges"] = np.asarray(atoms.arrays[charge_label_key], dtype=np.float32).reshape(-1)
+    # optional fields (charge, spin, fragments, reference charges): shared with the streaming workers
+    nx, gx = extra_fields(atoms.info, atoms.arrays, len(atoms), charge_key=charge_key, spin_key=spin_key,
+                          charge_label_key=charge_label_key, fragments=fragments)
+    nodes.update(nx); glob.update(gx)
     if periodic:
         edges = {"Sij": (-S).astype(np.float32)}
         glob.update(cell=np.array(atoms.get_cell().array, dtype=np.float32)[None],   # .array: ASE Cell.__array__ breaks under NumPy 2

@@ -43,6 +43,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from neighbors import neighbor_pairs  # noqa: E402
+from graph_fields import extra_fields  # noqa: E402
 
 _VOIGT_I = np.array([0, 1, 2, 1, 0, 0])
 _VOIGT_J = np.array([0, 1, 2, 2, 2, 1])
@@ -50,8 +51,9 @@ RESERVED_KEYS = (b"nextid", b"deleted_ids", b"metadata")
 
 
 # ----------------------------------------------------------------------------------------------- structures -> graphs
-def structure_from_atoms(a) -> dict:
-    """ase.Atoms (with a single-point calculator, or none) -> structure dict."""
+def structure_from_atoms(a, info_keys=(), array_keys=()) -> dict:
+    """ase.Atoms (with a single-point calculator, or none) -> structure dict.  info_keys / array_keys: the optional
+    fields to carry (graph_fields.field_keys), under 'info' / 'arrays'."""
     res = getattr(a.calc, 'results', {}) if a.calc is not None else {}
     st = res.get('stress')
     if st is not None:
@@ -61,7 +63,9 @@ def structure_from_atoms(a) -> dict:
             'cell': np.asarray(a.cell.array, np.float64), 'pbc': np.asarray(a.pbc, bool),
             'energy': None if res.get('energy') is None else float(res['energy']),
             'forces': None if res.get('forces') is None else np.asarray(res['forces'], np.float64),
-            'stress': st}
+            'stress': st,
+            'info': {k: a.info[k] for k in info_keys if k in a.info},
+            'arrays': {k: np.asarray(a.arrays[k]) for k in array_keys if k in a.arrays}}
 
 
 def _atoms(st):
@@ -69,10 +73,12 @@ def _atoms(st):
     return ase.Atoms(numbers=st['numbers'], positions=st['positions'], cell=st['cell'], pbc=st['pbc'])
 
 
-def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float) -> dict:
-    """Arrays of one training graph, identical to data_3bpa.preprocess_graph(targets=True):
+def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fields: dict = None) -> dict:
+    """Arrays of one training graph, identical to data_3bpa.preprocess_graph(targets=True, **fields):
     nodes species i32 / positions f32 / forces f32, receivers = i, senders = j, edges Sij = -S (f32, periodic),
-    globals energy = E - sum E0 (f32 of a float64 difference), cell / cutoff / volume / stress (periodic)."""
+    globals energy = E - sum E0 (f32 of a float64 difference), cell / cutoff / volume / stress (periodic).
+    fields: charge_key / spin_key / charge_label_key / fragments (graph_fields.extra_fields); their arrays are
+    returned under 'n:<name>' (nodes) and 'g:<name>' (globals)."""
     a = _atoms(st)
     src, dst, S = neighbor_pairs(a, cutoff)
     species = np.array([atom_indices[int(z)] for z in st['numbers']], dtype=np.int32)
@@ -89,6 +95,10 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float) -> 
         out['volume'] = np.array([abs(np.linalg.det(st['cell']))], dtype=np.float32)
         s6 = np.zeros(6, np.float32) if st['stress'] is None else np.asarray(st['stress'], np.float32).reshape(6)
         out['stress'] = s6[None]
+    if fields:
+        nx, gx = extra_fields(st.get('info'), st.get('arrays'), len(species), **fields)
+        out.update({f'n:{k}': v for k, v in nx.items()})
+        out.update({f'g:{k}': v for k, v in gx.items()})
     return out
 
 
@@ -114,9 +124,10 @@ def extxyz_offsets(path) -> np.ndarray:
 
 
 class ExtxyzSource:
-    def __init__(self, paths, offsets=None):
+    def __init__(self, paths, offsets=None, info_keys=(), array_keys=()):
         self.paths = [str(p) for p in paths]
         self.offsets = offsets if offsets is not None else [extxyz_offsets(p) for p in self.paths]
+        self.info_keys, self.array_keys = tuple(info_keys), tuple(array_keys)
 
     def read_block(self, file: int, keys) -> list:
         import ase.io
@@ -128,7 +139,7 @@ class ExtxyzSource:
                 n = int(first.split()[0])
                 buf = first + b''.join(fh.readline() for _ in range(n + 1))
                 a = ase.io.read(io.StringIO(buf.decode()), format='extxyz')
-                out.append(structure_from_atoms(a))
+                out.append(structure_from_atoms(a, self.info_keys, self.array_keys))
         return out
 
 
@@ -177,6 +188,15 @@ def _scalar(v):
     return float(v)
 
 
+def _maybe_arr(x):
+    if isinstance(x, dict):
+        try:
+            return _arr(x, np.float64)
+        except ValueError:
+            return x
+    return x
+
+
 def decode_row(raw: bytes = None, d: dict = None) -> dict:
     """raw: the LMDB value (zlib JSON); or d: the already decoded row dict."""
     d = decode_value(raw) if d is None else d
@@ -186,9 +206,17 @@ def decode_row(raw: bytes = None, d: dict = None) -> dict:
     if st is not None:
         st = st.reshape(3, 3)[_VOIGT_I, _VOIGT_J] if st.size == 9 else st.reshape(6)
     cell = _arr(d.get("cell"), np.float64)
+    # optional fields (total charge, spin, per-atom labels): ASE db key_value_pairs and data, as ase.db row.toatoms
+    # puts them in atoms.info (the OMol25 layout is to be checked with data_prep/convert_omol25.py inspect)
+    info = {}
+    for part in ("key_value_pairs", "data"):
+        v = d.get(part)
+        if isinstance(v, dict):
+            info.update({k: _maybe_arr(x) for k, x in v.items()})
     return {"numbers": _arr(d.get("numbers"), np.int64), "positions": _arr(d.get("positions"), np.float64),
             "cell": None if cell is None else cell.reshape(3, 3), "pbc": _arr(d.get("pbc"), bool),
-            "energy": _scalar(d.get("energy")), "forces": _arr(d.get("forces"), np.float64), "stress": st}
+            "energy": _scalar(d.get("energy")), "forces": _arr(d.get("forces"), np.float64), "stress": st,
+            "info": info, "arrays": {}}
 
 
 def list_row_ids(env) -> list:
@@ -263,7 +291,8 @@ def size_pass(sources, cutoff, out_dir, workers=0, block=512):
     out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
     workers = workers or min(64, int(os.environ.get('SLURM_CPUS_PER_TASK', 0)) or len(os.sched_getaffinity(0)))
     files, kinds, cols = [], [], {'n_atoms': [], 'n_edges': [], 'file': [], 'key': []}
-    meta = {'cutoff': cutoff, 'sources': [], 'ase': ase.__version__, 'numpy': np.__version__, 'tsv': {}}
+    meta = {'cutoff': cutoff, 'sources': [], 'ase': ase.__version__, 'numpy': np.__version__, 'tsv': {},
+            'neighbors': os.environ.get('BAM_NEIGHBORS', 'ase')}       # edge counts depend on nothing else
     t0 = time.time()
     for spec in sources:
         kind, fl = _source_files(spec)

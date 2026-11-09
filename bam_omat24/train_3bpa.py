@@ -127,6 +127,23 @@ Config keys (in addition to the model hyper-parameters, see README):
     graph_cache      : pickle cache of the graphs next to each xyz (default true); false recomputes the neighbour
                        lists at start and writes nothing (disk = the xyz files only)
     graph_workers    : processes for the neighbour searches (default 1; 0 = CPUs of the Slurm task, <= 64)
+    data_format      : "xyz" (default: graphs built once, pickle-cached, held in memory) | "stream" (no graphs on disk
+                       or in memory: worker processes read the structures and build the graphs every step; for
+                       OMol25 / OMat24 scale; docs/stream_loader_design.md, docs/HANDOFF_stream_loader.md).  Options in
+                       "stream":
+                         train / valid: ["extxyz:<file>" | "aselmdb:<file or dir>", ...] or {"sources": [...],
+                                  "sizes": <size-table dir> (default <log dir>/stream_sizes_<split>, made at start by
+                                  process 0 if missing), "max_structures": N (valid: fixed seeded subset per pass)}
+                         test: {name: same as valid}
+                         workers (8, per process), eval_workers (workers // 2), mix_blocks (16: rows of 16
+                         consecutive blocks shuffled together, so a batch is not one block), n_buckets (1), graphs_per_pack
+                         (batch_size), pack_max_graphs (4 * graphs_per_pack), block_rows (128), steps_per_epoch
+                         (default one data epoch; epochs are then virtual), stats_sample (2000), seed (seed)
+                       The fixed batch shapes come from the size table (one compilation per bucket).  Total charge /
+                       spin / fragments / charge labels are carried as in the xyz path.  Not with: valid_frac,
+                       boltzmann_tilt, node_weight, taylor_aug, e0_mode "regression", train_path (gauge_refit
+                       uses a seeded training subset of stream.gauge_structures, default 20000).
+                       Neighbour list: BAM_NEIGHBORS=vesin (environment) is much faster for periodic cells.
     pad_mode         : "bucket" (default) | "fixed" (one padded shape; pad_nodes, pad_edges, pack_max_graphs);
                        fixed also writes sizes_<split>.tsv (index, n_atoms, n_edges) next to log_file
     use_dataset_stats: init shift/scale/avg_n_neighbors from the training set
@@ -406,6 +423,124 @@ def build_datasets(cfg: Dict, fout):
             GraphListDataset(valid_graphs), test_sets, stats)
 
 
+def _stream_split(v) -> Dict:
+    if isinstance(v, str):
+        return {'sources': [v]}
+    if isinstance(v, (list, tuple)):
+        return {'sources': list(v)}
+    return dict(v)
+
+
+def _stream_table(spec: Dict, name: str, cutoff: float, workers: int, log_dir: Path, rank0: bool):
+    """Size table of one split: read, or made by process 0 (size pass) when missing; refuses a stale table."""
+    from bam_omat24 import stream_io as S, stream_plan as SP
+    d = Path(spec.get('sizes') or (log_dir / f'stream_sizes_{name}'))
+    if rank0 and not (d / 'sizes_meta.json').exists():
+        S.size_pass(list(spec['sources']), cutoff, d, workers=workers, block=256)
+    _barrier(f'stream_sizes_{name}')
+    meta = json.load(open(d / 'sizes_meta.json'))
+    have = [x['spec'] for x in meta['sources']]
+    if have != list(spec['sources']):
+        raise ValueError(f"{d}: size table of {have}, config asks for {spec['sources']} (delete it or set 'sizes')")
+    # the neighbour backend (meta 'neighbors') may differ from this run's: the pair sets are the same, and every
+    # structure's edge count is checked against the table when its graph is built (stream_data.StreamLoader._graphs)
+    return SP.load_size_table(d, cutoff), d
+
+
+def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
+    """data_format "stream": size tables, buckets, statistics from a sample, the training StreamLoader and the
+    evaluation sets (stream_data.StreamEvalSet).  Returns (atomic_numbers, atom_energies, train loader, valid set,
+    test sets, stats, buckets); stats['steps_per_epoch'] = steps of one (virtual) epoch."""
+    from bam_omat24 import stream_io as S, stream_plan as SP
+    from bam_omat24.stream_data import StreamLoader, StreamEvalSet, _to_graph, _cast
+    sc = dict(_get(cfg, 'stream', {}) or {})
+    atomic_numbers = [int(z) for z in _get(cfg, 'atomic_numbers', DEFAULT_ATOMIC_NUMBERS)]
+    if atomic_numbers != sorted(atomic_numbers):
+        raise ValueError("data_format stream needs a sorted atomic_numbers list (species index = sorted rank)")
+    for k in ('valid_frac', 'boltzmann_tilt', 'node_weight', 'taylor_aug', 'train_path'):
+        if _get(cfg, k, None):
+            raise ValueError(f"data_format stream does not support {k!r} (in-memory option; see the docstring)")
+    if _get(cfg, 'e0_mode', 'isolated') != 'isolated':
+        raise ValueError("data_format stream: give atom_energies (e0_mode 'isolated'); fit E0 beforehand")
+    atom_energies = [float(x) for x in _get(cfg, 'atom_energies', DEFAULT_ATOM_ENERGIES)]
+    cutoff = float(_get(cfg, 'cutoff', 5.0))
+    log_dir = Path(_get(cfg, 'log_file', 'runs/x/log.out')).parent
+    log_dir.mkdir(parents=True, exist_ok=True)
+    workers = int(sc.get('workers', 8))
+    eval_workers = int(sc.get('eval_workers', max(1, workers // 2)))
+    dtype = np.float64 if _get(cfg, 'x64', False) else np.float32
+    fields = {k: v for k, v in dict(charge_key=_get(cfg, 'total_charge_key', None),
+                                    spin_key=_get(cfg, 'total_spin_key', None),
+                                    charge_label_key=_get(cfg, 'charge_label_key', None),
+                                    fragments=fragments_of(cfg)).items() if v}
+    if 'train' not in sc or 'valid' not in sc:
+        raise ValueError("data_format stream needs stream.train and stream.valid")
+    tr = _stream_split(sc['train'])
+    table, tdir = _stream_table(tr, 'train', cutoff, workers, log_dir, rank0)
+    bs = int(_get(cfg, 'batch_size', 5))
+    gpp = int(sc.get('graphs_per_pack', bs))
+    buckets = SP.derive_buckets(table['n_atoms'], table['n_edges'], n_buckets=int(sc.get('n_buckets', 1)),
+                                graphs_per_pack=gpp, max_graphs=int(sc.get('pack_max_graphs', 4 * gpp)))
+    seed = int(sc.get('seed', _get(cfg, 'seed', 42)))
+
+    # statistics (shift, scale, residual E0) from a fixed sample; sizes and avg_n_neighbors from the full table
+    n = len(table['n_atoms'])
+    m = min(n, int(sc.get('stats_sample', 2000)))
+    rows = np.sort(np.random.default_rng(seed).choice(n, m, replace=False))
+    from bam_omat24.graph_fields import field_keys
+    ik, ak = field_keys(**fields)
+    meta = table['meta']
+    idx = {int(z): i for i, z in enumerate(atomic_numbers)}
+    sample = []
+    for fi in np.unique(table['file'][rows]):
+        kind, path = meta['kinds'][int(fi)], meta['files'][int(fi)]
+        src = S.ExtxyzSource([path], info_keys=ik, array_keys=ak) if kind == 'extxyz' else S.AselmdbSource([path])
+        keys = table['key'][rows[table['file'][rows] == fi]]
+        sample += [_to_graph(_cast(S.graph_arrays(st, idx, atom_energies, cutoff, fields), np.float32))
+                   for st in src.read_block(0, keys)]
+    if not bool(_get(cfg, 'periodic', False)) and any(g.edges is not None for g in sample):
+        raise ValueError("the stream training data hold periodic structures but the config has periodic false")
+    stats = compute_dataset_stats(sample, n_species=len(atomic_numbers))
+    stats.update(n_graphs=int(n), n_atoms=int(table['n_atoms'].sum()),
+                 avg_n_neighbors=float(table['n_edges'].sum() / max(table['n_atoms'].sum(), 1)))
+
+    train_loader = StreamLoader(table, buckets, atomic_numbers, atom_energies, cutoff, n_local=n_local,
+                                workers=workers, seed=seed, block_rows=int(sc.get('block_rows', 128)), shuffle=True,
+                                dtype=dtype, fields=fields, mix_blocks=int(sc.get('mix_blocks', 16)))
+    from bam_omat24.stream_data import counts_allgather_jax
+    plan0 = train_loader.plan(0, jax.process_index(), jax.process_count(), counts_allgather_jax)
+    stats['steps_per_epoch'] = int(sc.get('steps_per_epoch') or len(plan0.steps))
+    stats['steps_per_data_epoch'] = len(plan0.steps)
+
+    def eval_set(spec, name):
+        t, _ = _stream_table(spec, name, cutoff, workers, log_dir, rank0)
+        return StreamEvalSet(t, buckets, atomic_numbers, atom_energies, cutoff, n_local=n_local, workers=eval_workers,
+                             dtype=dtype, fields=fields, max_structures=spec.get('max_structures'), seed=seed,
+                             block_rows=int(sc.get('block_rows', 128)), name=name)
+    valid_set = eval_set(_stream_split(sc['valid']), 'valid')
+    if _get(cfg, 'gauge_refit', False):
+        # gauge refit at the end: a fixed seeded subset of the training split (gauge_structures, default 20000)
+        stats['gauge_set'] = StreamEvalSet(table, buckets, atomic_numbers, atom_energies, cutoff, n_local=n_local,
+                                           workers=eval_workers, dtype=dtype, fields=fields,
+                                           max_structures=int(sc.get('gauge_structures', 20000)), seed=seed + 1,
+                                           block_rows=int(sc.get('block_rows', 128)), name='gauge')
+    test_sets = {nm: eval_set(_stream_split(v), nm) for nm, v in dict(sc.get('test', {}) or {}).items()}
+
+    print(f"data_format stream: train {n} structures ({meta['sum_atoms']} atoms) from {tr['sources']}, size table "
+          f"{tdir}; neighbour backend {os.environ.get('BAM_NEIGHBORS', 'ase')}", file=fout)
+    for b, bk in enumerate(buckets):
+        fl = plan0.fill.get(b, (0.0, 0.0))
+        print(f"  bucket {b}: {bk.pad_nodes} nodes, {bk.pad_edges} edges, <= {bk.max_graphs} graphs, edges "
+              f"[{bk.edge_lo}, {bk.edge_hi}); fill edges {fl[0]:.2f} nodes {fl[1]:.2f}", file=fout)
+    print(f"  {stats['steps_per_data_epoch']} steps per data epoch (dropped {plan0.dropped} structures for lock-step), "
+          f"{stats['steps_per_epoch']} steps per epoch; {workers} workers per process", file=fout)
+    print(f"  valid {valid_set.n_structures} structures (this process), {len(valid_set.buckets)} shapes; tests "
+          f"{ {k: v.n_structures for k, v in test_sets.items()} }", file=fout)
+    print(f"  statistics from {m} sampled structures: shift_raw {stats['shift_raw']:.6f} eV/atom, scale "
+          f"{stats['scale']:.6f} eV/A; avg_n_neighbors {stats['avg_n_neighbors']:.3f} (full table)", file=fout)
+    return atomic_numbers, atom_energies, train_loader, valid_set, test_sets, stats, buckets
+
+
 # =============================================================================
 # Model / optimizer
 # =============================================================================
@@ -644,7 +779,8 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
     lr_mode = _get(cfg, 'lr_schedule', 'plateau')
     cosine_fn = None
     if lr_mode == 'cosine':
-        steps_per_epoch = max(int(stats['n_graphs']) // (int(_get(cfg, 'batch_size', 5)) * n_devices), 1)
+        steps_per_epoch = int(stats.get('steps_per_epoch') or
+                              max(int(stats['n_graphs']) // (int(_get(cfg, 'batch_size', 5)) * n_devices), 1))
         total_steps = int(_get(cfg, 'n_epochs', 1000)) * steps_per_epoch
         warmup_steps = int(_get(cfg, 'lr_warmup_epochs', 10)) * steps_per_epoch
         min_scale = float(_get(cfg, 'lr_cosine_min_scale', 0.01))
@@ -769,16 +905,24 @@ def train(cfg: Dict):
     # loss weights passed to the step each epoch (loss schedule, DeNS weight decay) -> no re-JIT
     dynamic_weights = use_schedule or bool(dens_cfg)
 
-    # process 0 builds the on-disk graph caches first, the others then read them
-    if not rank0:
-        _barrier("datasets")
-    (atomic_numbers, atom_energies, train_dataset, valid_dataset,
-     test_sets, stats) = build_datasets(cfg, fout)
-    if rank0:
-        _barrier("datasets")
+    stream_mode = _get(cfg, 'data_format', 'xyz') == 'stream'
+    if stream_mode:
+        # no graphs in memory or on disk: workers build them every step (stream_data); dtype set by the loaders
+        (atomic_numbers, atom_energies, stream_loader, valid_dataset, test_sets, stats,
+         stream_buckets) = build_stream_datasets(cfg, fout, rank0, jax.local_device_count())
+        train_dataset = None
+    else:
+        # process 0 builds the on-disk graph caches first, the others then read them
+        if not rank0:
+            _barrier("datasets")
+        (atomic_numbers, atom_energies, train_dataset, valid_dataset,
+         test_sets, stats) = build_datasets(cfg, fout)
+        if rank0:
+            _barrier("datasets")
     if _get(cfg, 'x64', False):
-        for ds in [train_dataset, valid_dataset] + list(test_sets.values()):
-            ds.graphs = _cast_graphs(ds.graphs, np.float64)
+        if not stream_mode:
+            for ds in [train_dataset, valid_dataset] + list(test_sets.values()):
+                ds.graphs = _cast_graphs(ds.graphs, np.float64)
         print("float64: parameters and data cast to float64", file=fout)
     nn_cfg = _get(cfg, 'noisy_nodes', None)
 
@@ -955,63 +1099,77 @@ def train(cfg: Dict):
     schedule_state = replicate_pytree(schedule_state, mesh)
     step = replicate(jnp.array(int(ckpt.get('step', 0)) if start_epoch > 0 else 0), mesh)
 
-    loader_rngs = nnx.Rngs(int(_get(cfg, 'seed', 42)) + 100)
-    pad_mode = _get(cfg, 'pad_mode', 'bucket')
-    if pad_mode == 'fixed':
-        # ONE padded shape for every train / eval batch (one compilation each): graphs are packed until a node or
-        # edge budget is full; the budgets hold on average batch_size graphs and at least the largest graph of any
-        # split.  The number of graphs per step varies (up to pack_max_graphs); the loss is a per-graph / per-atom
-        # mean, so this changes the noise of the step, not its scale.
-        all_g = [g for ds in [train_dataset, valid_dataset] + list(test_sets.values()) for g in ds.graphs]
-        nn_ = np.array([int(np.asarray(g.n_node).reshape(-1)[0]) for g in all_g])
-        ne_ = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in all_g])
-        ntr = np.array([int(np.asarray(g.n_node).reshape(-1)[0]) for g in train_dataset.graphs])
-        etr = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in train_dataset.graphs])
-        # readable size tables of every split next to the log (index, n_atoms, n_edges), see data_3bpa.write_sizes_tsv
-        from bam_omat24.data_3bpa import write_sizes_tsv, graph_sizes
-        log_dir = Path(_get(cfg, 'log_file', 'runs/x/log.out')).parent
-        log_dir.mkdir(parents=True, exist_ok=True)
-        for nm, ds in [('train', train_dataset), ('valid', valid_dataset)] + list(test_sets.items()):
-            write_sizes_tsv(log_dir / f'sizes_{nm}.tsv', *graph_sizes(ds.graphs), cutoff=float(_get(cfg, 'cutoff', 5.0)))
-        pad_nodes = int(_get(cfg, 'pad_nodes', 0)) or int(math.ceil(max(batch_size * ntr.mean(), nn_.max() + 1) / 64) * 64)
-        pad_edges = int(_get(cfg, 'pad_edges', 0)) or int(math.ceil(max(batch_size * etr.mean(), ne_.max()) / 1024) * 1024)
-        pack_graphs = int(_get(cfg, 'pack_max_graphs', 4 * batch_size))
-        if nn_.max() + 1 > pad_nodes or ne_.max() > pad_edges:
-            raise ValueError(f"pad_nodes/pad_edges ({pad_nodes}/{pad_edges}) below the largest graph ({nn_.max()}/{ne_.max()})")
-        print(f"pad_mode fixed: {pad_nodes} nodes, {pad_edges} edges, <= {pack_graphs} graphs per batch "
-              f"(train mean {ntr.mean():.1f} nodes / {etr.mean():.0f} edges per graph)", file=fout)
-        base_loader = BucketedDataLoader(
-            train_dataset, batch_size=pack_graphs, n_buckets=8,
-            shuffle=True, drop_last=False, rngs=loader_rngs,
-            max_nodes_per_batch=pad_nodes, max_edges_per_batch=pad_edges,
-        )
+    if stream_mode:
+        from bam_omat24.stream_data import StreamSteps
+        cursor = tuple(ckpt.get('data_cursor', (0, 0))) if start_epoch > 0 else (0, 0)
+        stream_steps = StreamSteps(stream_loader, mesh, cursor)
+        n_stream = int(stats['steps_per_epoch'])
+
+        class _StreamEpoch:
+            """One (virtual) epoch = steps_per_epoch steps, continuing across data epochs (cursor)."""
+            def __iter__(self):
+                return stream_steps.take(n_stream)
+        train_loader = _StreamEpoch()
+        collate, eval_bs, eval_caps = None, 1, {}       # evaluation sets carry their own shapes (StreamEvalSet)
+        print(f"stream: start at data epoch {cursor[0]} step {cursor[1]}", file=fout)
     else:
-        # the node cap must never shorten a full batch (batch_size graphs per device per step)
-        max_n = max(int(np.asarray(g.n_node).reshape(-1)[0]) for g in train_dataset.graphs)
-        base_loader = BucketedDataLoader(
-            train_dataset, batch_size=batch_size, n_buckets=8,
-            shuffle=True, drop_last=True, rngs=loader_rngs,
-            max_nodes_per_batch=max(256, batch_size * max_n + 1),
-        )
-    # one shuffle key per epoch (BucketedDataLoader._reset, plus one in __init__): continue the sequence.
-    # Advance the loader's own Rngs (an nnx attribute need not be the object that was passed in).
-    for _ in range(start_epoch):
-        base_loader.rngs.params()
-    # Padding granularity. The default collate pads nodes to multiples of 128
-    # and edges to multiples of 4096, which wastes ~50 % of the compute for
-    # small molecules; smaller buckets mean a few more JIT shapes but less work.
-    node_bucket = int(_get(cfg, 'node_bucket_size', 128))
-    edge_bucket = int(_get(cfg, 'edge_bucket_size', 4096))
-    if pad_mode == 'fixed':
-        collate = functools.partial(fixed_collate_fn, n_node_pad=pad_nodes, n_edge_pad=pad_edges)
-        eval_bs, eval_caps = pack_graphs, dict(max_nodes_per_batch=pad_nodes, max_edges_per_batch=pad_edges)
-    else:
-        collate = functools.partial(default_collate_fn, node_bucket_size=node_bucket,
-                                    edge_bucket_size=edge_bucket)
-        eval_bs, eval_caps = batch_size, {}
-    base_loader.collate_fn = collate
-    train_loader = MultiDeviceDataLoader(base_loader, n_devices=n_devices, mesh=mesh,
-                                         drop_incomplete=True)
+        loader_rngs = nnx.Rngs(int(_get(cfg, 'seed', 42)) + 100)
+        pad_mode = _get(cfg, 'pad_mode', 'bucket')
+        if pad_mode == 'fixed':
+            # ONE padded shape for every train / eval batch (one compilation each): graphs are packed until a node or
+            # edge budget is full; the budgets hold on average batch_size graphs and at least the largest graph of any
+            # split.  The number of graphs per step varies (up to pack_max_graphs); the loss is a per-graph / per-atom
+            # mean, so this changes the noise of the step, not its scale.
+            all_g = [g for ds in [train_dataset, valid_dataset] + list(test_sets.values()) for g in ds.graphs]
+            nn_ = np.array([int(np.asarray(g.n_node).reshape(-1)[0]) for g in all_g])
+            ne_ = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in all_g])
+            ntr = np.array([int(np.asarray(g.n_node).reshape(-1)[0]) for g in train_dataset.graphs])
+            etr = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in train_dataset.graphs])
+            # readable size tables of every split next to the log (index, n_atoms, n_edges), see data_3bpa.write_sizes_tsv
+            from bam_omat24.data_3bpa import write_sizes_tsv, graph_sizes
+            log_dir = Path(_get(cfg, 'log_file', 'runs/x/log.out')).parent
+            log_dir.mkdir(parents=True, exist_ok=True)
+            for nm, ds in [('train', train_dataset), ('valid', valid_dataset)] + list(test_sets.items()):
+                write_sizes_tsv(log_dir / f'sizes_{nm}.tsv', *graph_sizes(ds.graphs), cutoff=float(_get(cfg, 'cutoff', 5.0)))
+            pad_nodes = int(_get(cfg, 'pad_nodes', 0)) or int(math.ceil(max(batch_size * ntr.mean(), nn_.max() + 1) / 64) * 64)
+            pad_edges = int(_get(cfg, 'pad_edges', 0)) or int(math.ceil(max(batch_size * etr.mean(), ne_.max()) / 1024) * 1024)
+            pack_graphs = int(_get(cfg, 'pack_max_graphs', 4 * batch_size))
+            if nn_.max() + 1 > pad_nodes or ne_.max() > pad_edges:
+                raise ValueError(f"pad_nodes/pad_edges ({pad_nodes}/{pad_edges}) below the largest graph ({nn_.max()}/{ne_.max()})")
+            print(f"pad_mode fixed: {pad_nodes} nodes, {pad_edges} edges, <= {pack_graphs} graphs per batch "
+                  f"(train mean {ntr.mean():.1f} nodes / {etr.mean():.0f} edges per graph)", file=fout)
+            base_loader = BucketedDataLoader(
+                train_dataset, batch_size=pack_graphs, n_buckets=8,
+                shuffle=True, drop_last=False, rngs=loader_rngs,
+                max_nodes_per_batch=pad_nodes, max_edges_per_batch=pad_edges,
+            )
+        else:
+            # the node cap must never shorten a full batch (batch_size graphs per device per step)
+            max_n = max(int(np.asarray(g.n_node).reshape(-1)[0]) for g in train_dataset.graphs)
+            base_loader = BucketedDataLoader(
+                train_dataset, batch_size=batch_size, n_buckets=8,
+                shuffle=True, drop_last=True, rngs=loader_rngs,
+                max_nodes_per_batch=max(256, batch_size * max_n + 1),
+            )
+        # one shuffle key per epoch (BucketedDataLoader._reset, plus one in __init__): continue the sequence.
+        # Advance the loader's own Rngs (an nnx attribute need not be the object that was passed in).
+        for _ in range(start_epoch):
+            base_loader.rngs.params()
+        # Padding granularity. The default collate pads nodes to multiples of 128
+        # and edges to multiples of 4096, which wastes ~50 % of the compute for
+        # small molecules; smaller buckets mean a few more JIT shapes but less work.
+        node_bucket = int(_get(cfg, 'node_bucket_size', 128))
+        edge_bucket = int(_get(cfg, 'edge_bucket_size', 4096))
+        if pad_mode == 'fixed':
+            collate = functools.partial(fixed_collate_fn, n_node_pad=pad_nodes, n_edge_pad=pad_edges)
+            eval_bs, eval_caps = pack_graphs, dict(max_nodes_per_batch=pad_nodes, max_edges_per_batch=pad_edges)
+        else:
+            collate = functools.partial(default_collate_fn, node_bucket_size=node_bucket,
+                                        edge_bucket_size=edge_bucket)
+            eval_bs, eval_caps = batch_size, {}
+        base_loader.collate_fn = collate
+        train_loader = MultiDeviceDataLoader(base_loader, n_devices=n_devices, mesh=mesh,
+                                             drop_incomplete=True)
 
     def _evaluate(dataset, params_rep, weights):
         return evaluate_sharded(
@@ -1027,7 +1185,7 @@ def train(cfg: Dict):
         print(*args, file=fout, **kwargs)
 
     _log(f"\nStarting training: epochs {start_epoch+1}..{n_epochs}, "
-         f"{len(base_loader)} batches/epoch, loss_type={loss_type}")
+         f"{n_stream if stream_mode else len(base_loader)} batches/epoch, loss_type={loss_type}")
     _log("Columns: train losses are the weighted loss terms (eV units as in the loss); "
          "valid errors are total-energy meV and meV/A on the held-out split (EMA weights).")
     tlog = Logger(
@@ -1094,6 +1252,8 @@ def train(cfg: Dict):
         acc_graphs, acc_atoms, acc_grad, acc_applied = (acc['graphs'], acc['atoms'],
                                                         acc['grad'], acc['applied'])
         epoch_time = time.time() - epoch_start
+        if stream_mode and _get(cfg, 'log_verbose', False):
+            tlog.message(f"  stream cursor: data epoch {stream_steps.cursor[0]} step {stream_steps.cursor[1]}")
 
         e_loss = acc['energy'] / max(acc_graphs, 1)
         f_loss = acc['force'] / max(3 * acc_atoms, 1)
@@ -1140,6 +1300,7 @@ def train(cfg: Dict):
                 'best_val_loss': best_val_loss,
                 'metrics': val_metrics,
                 'config': cfg,
+                **({'data_cursor': stream_steps.cursor} if stream_mode else {}),
             }
             if rank0:
                 save_checkpoint(best_state, ckpt_name)
@@ -1162,6 +1323,7 @@ def train(cfg: Dict):
                 'opt_state': unreplicate_pytree(opt_state), 'schedule_state': new_schedule,
                 'step': int(to_host(step)), 'epoch': epoch + 1, 'best_val_loss': best_val_loss,
                 'config': cfg, 'is_last': True,
+                **({'data_cursor': stream_steps.cursor} if stream_mode else {}),
             }
             if rank0:
                 save_checkpoint(last_state, last_name)
@@ -1186,7 +1348,7 @@ def train(cfg: Dict):
             summary[name] = {k: float(v) for k, v in tm.items()}
             _log(f"  {name:>12s} | {_fmt_metrics(tm)}")
         if _get(cfg, 'gauge_refit', False):
-            delta = _evaluate(train_dataset, best_ema, weights)['gauge_shift']
+            delta = _evaluate(stats['gauge_set'] if stream_mode else train_dataset, best_ema, weights)['gauge_shift']
             g_ema = gauge_shift_params(ckpt['ema_params'], delta)
             g_rep = replicate_pytree(g_ema, mesh)
             _log(f"Gauge refit on the training split: per-atom shift {delta * 1e3:+.4f} meV "
@@ -1222,6 +1384,10 @@ def train(cfg: Dict):
         if rank0:
             with open(Path(log_path).with_suffix('.summary.json'), 'w') as f:
                 json.dump(summary, f, indent=1)
+    if stream_mode:
+        stream_steps.close()
+        for ds in [valid_dataset] + list(test_sets.values()) + ([stats['gauge_set']] if 'gauge_set' in stats else []):
+            ds.close()
     fout.close()
 
 

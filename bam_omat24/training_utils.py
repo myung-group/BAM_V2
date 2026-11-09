@@ -978,6 +978,13 @@ def evaluate_sharded(
                                                periodic=periodic, cov_mode=cov_mode, beta_nll=beta_nll)
 
     for fname in files_pkl:
+        if hasattr(fname, "iter_groups"):
+            # streaming evaluation split (stream_data.StreamEvalSet): sharded batches with per-device weights
+            for batch, w in fname.iter_groups(mesh):
+                metrics = eval_step(graphdef, params_replicated, batch, w)
+                for k in totals:
+                    totals[k] += float(to_host(metrics[k]))
+            continue
         # accept either a pickle path or an in-memory dataset object (with .graphs)
         dataset = fname if hasattr(fname, "graphs") else Dataset(file_path=fname)
         # same node cap rule as the training loader: a full batch of the largest graph must fit

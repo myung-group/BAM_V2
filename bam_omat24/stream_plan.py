@@ -109,7 +109,10 @@ def _pack(rows, n_atoms, n_edges, bk):
 
 
 def plan_data_epoch(table, buckets, data_epoch, host, n_hosts, n_local, seed=0, block_rows=128, shuffle=True,
-                    counts_allgather=None) -> HostPlan:
+                    counts_allgather=None, mix_blocks=1) -> HostPlan:
+    """mix_blocks > 1: the rows of every mix_blocks consecutive blocks of the stream are shuffled together, so a pack
+    draws from several blocks (consecutive rows of a file are often the same molecule; a pack from one block is then
+    low in diversity).  Reads stay within a window of block_rows * mix_blocks rows."""
     n_atoms, n_edges = table['n_atoms'], table['n_edges']
     rng = np.random.default_rng([int(seed), int(data_epoch)])
     blocks = _blocks(table, block_rows)
@@ -130,6 +133,8 @@ def plan_data_epoch(table, buckets, data_epoch, host, n_hosts, n_local, seed=0, 
         if owner[fi] != host:
             continue
         stream.append(rng.permutation(rows) if shuffle else rows)
+    if shuffle and mix_blocks > 1:
+        stream = [rng.permutation(np.concatenate(stream[i:i + mix_blocks])) for i in range(0, len(stream), mix_blocks)]
     rows = np.concatenate(stream) if stream else np.zeros(0, np.int64)
     bidx = bucket_of(n_edges[rows], buckets) if len(rows) else np.zeros(0, np.int64)
     packs = [_pack(rows[bidx == b], n_atoms, n_edges, bk) for b, bk in enumerate(buckets)]
@@ -148,7 +153,8 @@ def plan_data_epoch(table, buckets, data_epoch, host, n_hosts, n_local, seed=0, 
             fill[b] = (float(sum(n_edges[p].sum() for p in used)) / (len(used) * bk.pad_edges),
                        float(sum(n_atoms[p].sum() for p in used)) / (len(used) * bk.pad_nodes))
     h = hashlib.sha256()
-    h.update(json.dumps([seed, data_epoch, n_hosts, n_local, block_rows, [b.__dict__ for b in buckets]]).encode())
+    h.update(json.dumps([seed, data_epoch, n_hosts, n_local, block_rows, [b.__dict__ for b in buckets]]
+                        + ([mix_blocks] if mix_blocks > 1 else [])).encode())
     h.update(np.ascontiguousarray(n_edges).tobytes()); h.update(np.ascontiguousarray(table['key']).tobytes())
     return HostPlan(packs=packs, steps=steps, dropped=dropped, signature=h.hexdigest()[:16],
                     n_structures=int(len(rows)), fill=fill)

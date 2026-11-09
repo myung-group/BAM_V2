@@ -142,11 +142,14 @@ XLA compiles one program per input shape. A batch of variable-size structures wo
 2. **Several hosts** (design T5). `stack_local` uses `make_array_from_process_local_data`, and the eval weights and
    the plan counts are allgathered. Not run on more than one process. First test: 2 processes × 1 GPU against
    1 × 2 on 20 float64 steps.
-3. **HANGANG T6 throughput smoke**, about 20 min on one GPU node; ask the user before sbatch:
-   - install `vesin` and `lmdb` in `bam_cue` (ask first);
-   - loader only, W = 2, 4, 8, 16;
-   - 500 steps;
-   - read from Lustre.
+3. **HANGANG T6 throughput smoke**, about 30-60 min on one GPU node; ask the user before sbatch.
+   - Script ready (2026-11-09): `runs/diag/stream_t6/t6.sh` (usage line inside). It runs the stream tests, then the
+     loader alone on the OMat24 100k subset on Lustre (`loader_bench.py`: ASE W=8, vesin W=2/4/8/16, 500 steps),
+     then 2 x 250 training steps with `data_format stream` (`make_config.py` turns the in-memory sz100k config
+     into a stream config) and prints the in-memory run's epoch lines for comparison.
+   - The user approved installing `vesin` and `lmdb` in `bam_cue` (2026-11-09):
+     `pip install --no-deps vesin lmdb` on the login node. The script aborts if they are missing.
+   - Checked locally on a small periodic set (generator + 2 short epochs + loader bench); not yet run on HANGANG.
 4. **Extxyz offsets are rescanned by every worker** that opens a file (one sequential pass). For one huge xyz this
    costs W passes; split big xyz files or use aselmdb.
 5. **Model equivalence on a trained checkpoint** (design T4): stream eval vs in-memory eval of the same structures,

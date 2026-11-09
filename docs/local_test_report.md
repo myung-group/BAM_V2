@@ -703,3 +703,39 @@ Findings:
   - Resume from the data cursor works.
 - **Block mixing:** a pack drawn from one 128-row block (same-molecule conformers) made training worse (282 meV/Å)
   until the rows of 16 blocks were shuffled together (`mix_blocks`, default 16).
+
+## 17. Last-layer Bayesian regression on crystals (2026-11-09)
+
+`bam_omat24/bayes_lastlayer.py` now handles periodic cells.
+- **Features:** the cell enters the features.
+- **Stress:** stress is linear in the readout weights θ:
+  S = S_rest + (1/V) [(∂φ/∂cell)ᵀ cell + Σ_i ∂φ/∂x_i ⊗ x_i] θ.
+  It forms a third likelihood block with its own noise when the training data carry stress labels (`--stress auto|on|off`).
+- **Training rows:** force and stress rows are summed into AᵀA on the fly, so crystal sets fit in memory (`--max-train`).
+- **Jacobian:** built from P vector-Jacobian products, `--jac-chunk` at a time. A full forward Jacobian of a 110-atom cell ran out of memory on the 16 GB GPU.
+
+**Exactness** (θ fitted on training energies; then forces and stress on the validation rows with the same θ; needs more training structures than features):
+
+| case | energy max | force max | stress max |
+|---|---|---|---|
+| carbon chain (molecule, 97 features, 100 train) | 6e-15 eV | 6e-13 eV/Å | — |
+| AuMgO slab (periodic, 97 features, 110 train) | 7e-14 eV | 1e-12 eV/Å | 2e-14 eV/Å³ |
+| `tests/test_bayes_lastlayer.py` (periodic RACE_LR, Ewald + Qeq) | < 1e-10 | < 1e-8 | < 1e-10 |
+
+The test also checks that the stress of the per-structure function equals the model's own stress. Both use the graph's `volume` global.
+
+**Calibration**
+
+| set | net F RMSE | BLR F RMSE | mean σ_F | of which epistemic | rms z | 68 / 95 % coverage | Spearman(\|err\|, σ) |
+|---|---|---|---|---|---|---|---|
+| carbon chain test (300 train) | 19.5 | 13.1 | 12.4 | 1.0 | 1.06 | 0.75 / 0.93 | 0.37 |
+| carbon chain test, 3-seed ensemble | 16.3 | — | 7.9 | — | 4.95 | 0.40 / 0.62 | 0.36 |
+| AuMgO test (200 train) | 4.57 | 4.57 | 4.50 | 0.16 | 1.01 | 0.80 / 0.95 | 0.37 |
+
+All force values in meV/Å.
+
+- **Size is right, ranking is weak.** The force σ has the right size on average: rms z ≈ 1 and 95 % coverage 0.93–0.95. The 3-seed ensemble is over-confident (z ≈ 5).
+- **Almost all of σ is the fitted noise term.** The epistemic part is 1 meV/Å for the carbon chain and 0.16 meV/Å for AuMgO. In distribution, σ is therefore nearly constant per component. The ranking of errors is weak (Spearman 0.37), the same as the ensemble's.
+- **Next test:** out-of-distribution structures, where the epistemic term should grow.
+- **Energies:** the energy σ of AuMgO (≈ 115–170 meV, ranking negative) reflects per-composition energy offsets between the Au2/MgO subsets, which the single bias column (∝ N) cannot fit. This is the gauge problem of section 14, not the method.
+- **Cost:** about 3.3 s per 110-atom cell in float64 at 50 % of the RTX 4060 Ti. OMat24 on HANGANG: `runs/diag/bayes_lastlayer_oam.sh` (not run).

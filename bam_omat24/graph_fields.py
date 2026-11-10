@@ -3,7 +3,11 @@ JAX-free so that the in-memory path (data_3bpa.preprocess_graph) and the streami
 build them with the same code.  Importable as ``bam_omat24.graph_fields`` or as a top-level module.
 
     nodes, glob = extra_fields(info, arrays, n_atoms, charge_key=..., spin_key=..., charge_label_key=...,
-                               fragments=(fragment_key, fragment_charges_key, n_fragments))
+                               fragments=(fragment_key, fragment_charges_key, n_fragments), task=...)
+
+task: the labelling convention of the structure (RACE_LR long_range.n_tasks, row of the task table): an int = the
+same task for every structure of the config, or a str = info key holding the index per structure (mixed datasets;
+a structure without the key is task 0).
 
 info: per-structure values (ase.Atoms.info); arrays: per-atom arrays (ase.Atoms.arrays).  A per-atom key missing from
 arrays is looked up in info as well (aselmdb rows keep everything in key_value_pairs / data).
@@ -23,9 +27,14 @@ def _per_atom(info, arrays, key):
 
 
 def extra_fields(info, arrays, n_atoms: int, charge_key: Optional[str] = None, spin_key: Optional[str] = None,
-                 charge_label_key: Optional[str] = None, fragments: Optional[Sequence] = None):
+                 charge_label_key: Optional[str] = None, fragments: Optional[Sequence] = None, task=None):
     info = info or {}
     nodes, glob = {}, {}
+    if task is not None and task is not False:   # task index (RACE_LR task table); only when asked
+        t = info.get(task, 0) if isinstance(task, str) else task
+        if isinstance(t, bool) or float(t) != int(round(float(t))) or int(round(float(t))) < 0:
+            raise ValueError(f"task index must be a non-negative integer, got {t!r}")
+        glob["task"] = np.array([int(round(float(t)))], dtype=np.int32)
     if charge_key:     # total charge of the structure (RACE_LR); only when asked, so other graphs keep their keys
         glob["charge"] = np.array([float(info.get(charge_key, 0.0))], dtype=np.float32)
     if spin_key:       # spin multiplicity 2S+1 of the structure (RACE_LR charge/spin embedding); default 1
@@ -60,9 +69,11 @@ def extra_fields(info, arrays, n_atoms: int, charge_key: Optional[str] = None, s
     return nodes, glob
 
 
-def field_keys(charge_key=None, spin_key=None, charge_label_key=None, fragments=None):
+def field_keys(charge_key=None, spin_key=None, charge_label_key=None, fragments=None, task=None):
     """(info keys, per-atom keys) a structure must carry for these fields."""
     info_k, arr_k = [], []
+    if isinstance(task, str):
+        info_k.append(task)
     if charge_key:
         info_k.append(charge_key)
     if spin_key:

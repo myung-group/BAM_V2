@@ -63,7 +63,8 @@ def per_leaf_state(cfg, params, st, n_species):
                   max_precond_dim=int(cfg.get('soap_max_precond_dim', 10000)),
                   shampoo_beta=cfg.get('soap_shampoo_beta', None), orth=cfg.get('soap_orth', 'householder'),
                   state_dtype=cfg.get('soap_state_dtype', None),
-                  adam_leading_dim=(n_species if cfg.get('soap_species_adam', False) else None))
+                  adam_leading_dim=(n_species if cfg.get('soap_species_adam', False) else None),
+                  adam_any_axis=(cfg.get('soap_species_adam', False) == 'any_axis'))
         _tx, _to_grouped, to_per_leaf = soap_grouped_build(**kw)
         st = to_per_leaf(st, leaves, treedef)
     cols = [list(treedef.flatten_up_to(x)) for x in st[1:]]
@@ -78,7 +79,9 @@ def leaf_specs(cfg, leaves):
     if cfg.get('soap_species_adam', False):
         n_sp = len(cfg['atomic_numbers'])
         from bam_omat24.soap_optax import _Spec
-        specs = [_Spec('adam') if (sp.kind == 'soap' and len(jnp.shape(x)) >= 2 and int(jnp.shape(x)[0]) == n_sp)
+        from bam_omat24.soap_grouped import is_species_table
+        any_axis = cfg.get('soap_species_adam') == 'any_axis'
+        specs = [_Spec('adam') if (sp.kind == 'soap' and is_species_table(jnp.shape(x), n_sp, any_axis))
                  else sp for sp, x in zip(specs, leaves)]
     return specs
 

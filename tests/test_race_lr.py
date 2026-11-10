@@ -181,14 +181,49 @@ def test_ref_charges_in_graph(graph, frame):
     assert np.allclose(g1.nodes['ref_charges'], a.arrays['hirshfeld_charges'])
 
 
-def _cs_model(qeq, seed=0):
+def _cs_model(qeq, seed=0, **lr):
     from flax import nnx
     from bam_omat24.race_lr_nnx import RACE_LR
     return RACE_LR(n_species=4, lmax=2, cutoff=5.0, hidden_irreps="16x0e + 16x1o + 16x2e", n_layers=2,
                    radial_basis_size=8, radial_mlp_size=16, radial_mlp_layers=2, mlp_init_scale=4.0, shift=0.0,
                    scale=1.0, avg_n_neighbors=20.0, atom_energies=ATOM_ENERGIES, l_train=True, periodic=False,
                    x_mode="species", rngs=nnx.Rngs(seed), species_radii=[0.31, 0.76, 0.71, 0.66],
-                   species_z=ATOMIC_NUMBERS, long_range={"qeq": qeq, "charge_spin_embedding": True})
+                   species_z=ATOMIC_NUMBERS, long_range={"qeq": qeq, "charge_spin_embedding": True, **lr})
+
+
+def test_task_embedding_slot(x64, graph):
+    """n_tasks: the model equals the one without the slot at init and when 'task' is absent (row 0); rows of tasks
+    that never occur get an exactly zero gradient; a filled row changes the energy of that task only."""
+    import jax
+    import jax.numpy as jnp
+    from flax import nnx
+    g = pad_single(graph)
+    m0, g64 = as_float64(_cs_model(qeq=False), g)
+    m, _ = as_float64(_cs_model(qeq=False, n_tasks=3), g)
+
+    def run(model, task=None):
+        glob = dict(g64.globals) if task is None else {**g64.globals, 'task': np.array([task, 0.0])}
+        return model(jax.tree.map(jnp.asarray, g64._replace(globals=glob)))
+    e0 = float(run(m0)['energy'][0])
+    assert m.task_table.value.shape[0] == 3
+    assert abs(float(run(m)['energy'][0]) - e0) < 1e-9 and abs(float(run(m, 2)['energy'][0]) - e0) < 1e-9
+    rng = np.random.default_rng(1)
+    tab = np.zeros(m.task_table.value.shape); tab[0] = rng.normal(0, 0.3, tab.shape[1])
+    m.task_table.value = jnp.asarray(tab)
+    gdef, state = nnx.split(m)
+    gj = jax.tree.map(jnp.asarray, g64)                    # no 'task' key: every graph is task 0
+    grad = jax.grad(lambda st: jnp.sum(nnx.merge(gdef, st)(gj)['energy']))(state)
+    gt = np.asarray(grad['task_table'].value if hasattr(grad['task_table'], 'value') else grad['task_table'])
+    assert np.abs(gt[0]).max() > 1e-8 and np.abs(gt[1:]).max() == 0.0
+    e_t0, e_t1 = float(run(m, 0)['energy'][0]), float(run(m, 1)['energy'][0])
+    assert abs(e_t0 - e0) > 1e-5 and abs(e_t1 - e0) < 1e-9          # row 1 is still zero
+    assert abs(float(run(m, 7)['energy'][0]) - float(run(m, 2)['energy'][0])) < 1e-12     # clipped to the last row
+    out = run(m, 0)
+    p = np.asarray(g64.nodes['positions']); h = 1e-5
+    pp, pm = p.copy(), p.copy(); pp[3, 0] += h; pm[3, 0] -= h
+    ep, em = (float(m(jax.tree.map(jnp.asarray, g64._replace(nodes={**g64.nodes, 'positions': q})))['energy'][0])
+              for q in (pp, pm))
+    assert abs(-(ep - em) / (2 * h) - float(out['forces'][3, 0])) < 1e-6
 
 
 def test_charge_spin_embedding(x64, graph):

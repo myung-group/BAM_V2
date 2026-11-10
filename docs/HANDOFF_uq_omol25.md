@@ -8,6 +8,9 @@
 - **OMol25를 전체 데이터셋으로 해보기로 함.** ("전체 데이터셋으로 해볼까 해") 파일럿 부분집합이 아니라 공식 학습
   분할(약 1억 구조) 전체를 목표로 한다. 다만 §4의 순서(접근 → inspect → 변환 → 스트리밍 스모크 → 소규모 파일럿 → 전체)는
   지키고, 전체 학습은 다중 GPU/다중 노드가 전제이므로 그 전에 다중 호스트 로더(T5)부터 검증한다.
+- **OMol25를 먼저 학습하고, 나중에 다른 데이터셋(OMat24 / MPtrj / Alexandria / OC20)을 이어서 또는 트렁크를 고정한 채
+  멀티헤드로 붙일 수 있게 해 두기로 함.** 그래서 OMol25 설정은 처음부터 범용 원소 목록(Z 1..94)과 과제 임베딩 자리를
+  갖는다(§7, 구현·검증됨). 전하와 스핀은 OMol25 학습에 입력으로 들어간다.
 - 불확정도는 전체 데이터로 적합할 필요가 없다. 사후(post-hoc) 방법이라 학습 한 번 뒤에 학습 구조 수천 개(②) /
   수백 개(③)로 적합하고, 평가는 공식 검증 세트(Val Comp)에서 1–2천 개를 뽑아 한다(§3).
 
@@ -122,7 +125,9 @@
    runs/diag/stream_t6/t6.sh` (아직 안 돌림). 출력 `runs/slurm/t6stream_<jobid>.out`. 에폭당 처리량(구조/초)을 읽어
    전체 에폭 시간을 외삽한다.
 5. **파일럿**: `convert_omol25.py subset`으로 100k–1M을 뽑아 `runs/diag/make_omol_configs.py`(race / race_cs /
-   racelr / racelr_q × soap_f64 / amsgrad_f32)로 설정을 만들고 30 에폭. 로컬 OpenFF 부분집합 결과(report §11):
+   racelr / racelr_q × soap_f64 / amsgrad_f32)로 설정을 만들고 30 에폭. 기본값이 범용 원소 목록 + `n_tasks` 8이며
+   설정 이름에 `_u94`가 붙는다(§7; 예전 방식은 `--elements subset --n-tasks 0`). **전체 학습에 쓸 설정은 반드시 범용
+   목록으로 만든다**(나중에 못 바꾼다). 로컬 OpenFF 부분집합 결과(report §11):
    AMSGrad f32가 SOAP f64보다 약 10배 빠르고 정확도는 같거나 약간 낫다. 전체 학습에 AMSGrad f32를 쓰면 ③은 못 쓰고
    ②만 쓸 수 있다는 점을 사용자에게 알리고 결정받는다.
 6. **다중 호스트 검증(T5)**: 전체 학습은 단일 GPU로 불가능하다. 100k OMat24에서 L5x128이 GH200 한 장에 에폭당
@@ -161,3 +166,69 @@
 | `docs/local_test_report.md` §17–20 | 수치와 해석 |
 | `data_prep/convert_omol25.py`, `runs/diag/make_omol_configs.py`, `runs/diag/stream_t6/` | OMol25 도구 |
 | `docs/HANDOFF_stream_loader.md`, `docs/stream_loader_design.md` | 스트리밍 로더 |
+| `bam_omat24/race_lr_nnx.py` (`n_tasks`), `runs/diag/omol_universal/check_untouched.py` | 과제 임베딩 자리, 범용 원소 목록 점검 (§7) |
+
+## 7. OMol25를 먼저 학습하고 나중에 범용(다중 데이터셋) 모델로 잇기 (사용자 결정 2026-11-10)
+
+사용자 질문과 결정: OMol / OMat / MPtrj / Alexandria / OC20을 아우르는 모델을 만들 수 있는가 → 가능(UMA 방식). 일단
+OMol25로 학습하고, 필요해질 때 그 모델을 버리지 않고 **이어서 학습하거나 고정한 채 멀티헤드를 붙이는** 길을 열어 두기로
+했다. `init_params_from`은 모델 설정(파라미터 트리)이 같아야 하므로, OMol25 학습을 시작하기 전에 아래 세 가지를 고정한다.
+
+### 7.1 OMol25 학습 전에 고정하는 것 (구현됨)
+| 항목 | 설정 | 구현 |
+|---|---|---|
+| 원소 목록 | Z 1..94 (H–Pu). OMol25는 Z ≤ 83, OMat24 / MPtrj / Alexandria는 Pu까지 89개 | `make_omol_configs.py --elements universal` (기본값, 이름에 `_u94`). 부분집합에 없는 원소는 E0 = 0.0 |
+| cutoff | 5.0 Å 유지 | 설정 생성기가 항상 5.0 |
+| 과제 임베딩 자리 | `long_range.n_tasks: 8` | `race_lr_nnx.py`: 0으로 초기화한 (n_tasks, 층-0 폭) 표. `globals['task']` 행을 층-0 스칼라에 더한다 (전하·스핀 임베딩과 같은 자리). `make_omol_configs.py --n-tasks 8` (기본값; RACE_LR 계열 arm만, 순수 `race` arm에는 자리가 없다) |
+
+- 과제(task) = 라벨 규약 하나(데이터셋의 DFT 수준). **OMol25 = 과제 0** (데이터에 `task` 키가 없으면 0). 번호 예약 제안:
+  1 OMat24 / MPtrj / sAlex (PBE, PBE+U; 필요하면 둘로 나눔), 2 OC20 (RPBE), 3 이후 여유.
+- **전하·스핀은 OMol25 학습에 들어간다.** `race_cs` / `racelr` / `racelr_q` arm은 `charge_spin_embedding: true`이고 모든
+  설정이 `total_charge_key: charge`, `total_spin_key: spin`을 읽는다. 순수 `race` arm만 입력으로 쓰지 않는다(비교 기준).
+  주기계 데이터에는 키가 없으므로 기본값 Q = 0, 2S+1 = 1이 들어간다.
+- 없는 원소의 종별 표 행과 과제 1.. 행은 기울기가 정확히 0이라 초기값 그대로 남는다(가중치 감쇠 0 전제. 감쇠를 켜면 종별
+  표의 없는 원소 행이 줄어드니 켜지 말 것).
+
+### 7.2 검증 (로컬, OpenFF 부분집합 10k, 원소 7종, L3x64 lmax 2, 2 에폭)
+같은 부분집합에서 원소 목록만 바꿔 비교했다 (`race_cs`, 시드 42; 스크립트 `runs/diag/omol_universal/check_untouched.py`).
+
+| | 원소 7종 (부분집합), 과제 자리 없음 | Z 1..94, `n_tasks` 8 |
+|---|---|---|
+| 파라미터 수 (L3x64) | 859,029 | 5,854,559 |
+| AMSGrad f32 에폭 시간 | 10.6 s | 11.1 s |
+| SOAP f64 에폭 시간 | 107.4 s | 111.8 s |
+| 2 에폭 뒤 검증 힘 MAE, AMSGrad | 203.7 meV/Å | 206.3 meV/Å |
+| 2 에폭 뒤 검증 힘 MAE, SOAP | 168.4 meV/Å | 170.1 meV/Å |
+
+- 속도와 정확도는 사실상 같다(에폭 시간 +4–5 %). 파라미터가 느는 것은 종별 표(원소마다 폭×폭 행렬: skip, readout) 때문이며
+  원소 수에 **선형**이다. 생산 크기(L5x128, lmax 3)로 모델을 만들어 센 값: 7종 8.24M, **83종(OMol25 자체) 43.12M,
+  94종 48.17M (+12 %)**, 과제 표는 +1,024개. 즉 OMol25만 써도 이미 4천만 개 규모이고 범용 목록의 추가 비용은 12 %다.
+- 1 에폭 / 2 에폭 체크포인트 비교(같은 시드): 없는 원소 87종의 모든 종별 표(16개)와 과제 1–7 행이 params·EMA 모두에서
+  비트 단위로 초기값 그대로, 과제 0 행만 학습됨. AMSGrad f32와 SOAP f64 둘 다 통과.
+- **SOAP에서 발견한 문제와 수정**: `soap_species_adam: true`는 선행 축이 원소인 표만 Adam으로 보낸다. `x_hill`
+  (n_layers, 2, n_species)은 원소가 마지막 축이라 SOAP가 회전시키고, 그 고유기저가 있는 원소와 없는 원소를 섞어 없는 원소
+  값이 한 에폭에 최대 0.11 움직였다. `soap_species_adam: "any_axis"`(어느 축이든 n_species이면 Adam)를 추가했고
+  범용 목록 설정에는 자동으로 들어간다. 단위 테스트 `tests/test_soap_grouped.py::test_species_adam_any_axis_keeps_absent_species`.
+- 테스트: `tests/test_race_lr.py::test_task_embedding_slot`(자리가 없는 모델과 초기에 동일, `task` 없으면 0번, 쓰지 않는
+  행의 기울기 정확히 0, 범위 밖 번호는 마지막 행으로 클립, 힘 유한차분 일치). `test_race_lr.py` 24개, `test_soap_grouped.py` /
+  `test_soap_laplace.py` 8개 통과(CPU).
+- 로그의 E0 줄은 이제 "rank 7/94 (… 87 elements of atomic_numbers are absent)"로 나온다(예전 문구 "single stoichiometry"는
+  이 경우 틀린 말이었다).
+- 확인하지 않은 것: 스트리밍 로더(`data_format: stream`) 경로에서의 범용 목록(코드상 원소 목록은 같은 방식으로 쓰이지만
+  돌려 보지 않음), 생산 크기에서의 실제 학습, 과제 번호가 0이 아닌 데이터로의 학습.
+- 이어 받기 확인: 범용 목록 2 에폭 체크포인트를 `init_params_from`으로 받아 1 에폭 더 학습하면 검증 힘 MAE가 206.3에서
+  180.7 meV/Å로 이어서 내려간다(AMSGrad f32; 옵티마이저 상태는 새로 시작). 같은 데이터로 한 확인이며 다른 데이터셋으로의
+  전이는 아직 안 해 봤다.
+
+### 7.3 나중에 잇는 두 경로 (아직 구현 안 됨)
+- **A. 트렁크 고정 + 새 헤드**: OMol25 성능이 변하지 않는다. 새 데이터셋에 대한 계산은 ②(마지막 층 선형 회귀)와 같은
+  꼴이라 싸다. 다만 OMol25에 없던 원소(악티늄족 등)와 주기계 환경은 트렁크가 본 적이 없으므로 정확도 한계가 있다.
+- **B. 이어서 학습**: 새 데이터셋에 과제 행을 주고 트렁크까지 학습. OMol25를 일정 비율 섞어(replay) 망각을 막는다.
+  스트리밍 로더가 여러 소스를 지원하므로 혼합 자체는 가능하다.
+- 써야 할 코드:
+  1. 데이터 쪽 과제 키: 스트림 소스별 과제 번호 → `globals['task']` (`graph_fields.extra_fields`에 한 줄, `train_3bpa.py`
+     스트림 분기의 `fields`). 메모리 내 로더는 `charge_key`와 같은 방식.
+  2. 과제별 E0: DFT 수준이 다르면 원소 기준 에너지가 다르다. 지금 `atom_energies`는 설정 하나에 한 벌이므로 소스별로
+     빼도록 바꿔야 한다.
+  3. 파라미터 고정(트렁크 freeze)과 데이터셋별 readout 헤드. 지금은 둘 다 없다.
+  4. 주기계에서 Qeq arm을 쓰면 Ewald 설정과 블록 대각 Qeq가 필요(§4.3-6). `race_cs`(Qeq 없음)가 범용 트렁크로는 단순하다.

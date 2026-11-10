@@ -136,3 +136,27 @@ def test_species_tables_use_adam(x64):
         u_a, s_a = tx_adam.update(g['table'], s_a, params['table'])
         assert np.allclose(np.asarray(u_s['table']), np.asarray(u_a), rtol=1e-10, atol=1e-12)
         assert np.allclose(np.asarray(u_s['shared']), np.asarray(u_r['shared']), rtol=1e-10, atol=1e-12)
+
+
+def test_species_adam_any_axis_keeps_absent_species(x64):
+    """adam_any_axis: a table with the species on a trailing axis, shape (3, 2, n_species), goes to Adam too, and the
+    entries of species that never get a gradient stay exactly at their initial value; with the leading-dim rule the
+    same leaf is rotated by SOAP and they drift (the reason for the option)."""
+    from bam_omat24.soap_grouped import scale_by_soap_grouped
+    n_sp, present = 9, np.array([0, 3, 4, 7])
+    key = jax.random.PRNGKey(1)
+    params = {'hill': jnp.zeros((3, 2, n_sp), jnp.float64), 'shared': jnp.zeros((6, 7), jnp.float64)}
+    mask = np.zeros(n_sp); mask[present] = 1.0
+    drift = {}
+    for name, any_axis in (('leading', False), ('any', True)):
+        tx = scale_by_soap_grouped(b1=0.95, b2=0.95, eps=1e-8, precondition_frequency=2, adam_leading_dim=n_sp,
+                                   adam_any_axis=any_axis)
+        st, tot = tx.init(params), np.zeros((3, 2, n_sp))
+        for t in range(12):
+            g = jax.tree.map(lambda x: jax.random.normal(jax.random.fold_in(key, t), x.shape, x.dtype), params)
+            g = {**g, 'hill': g['hill'] * mask}
+            u, st = tx.update(g, st, params)
+            tot += np.asarray(u['hill'])
+        drift[name] = np.abs(tot[..., mask == 0]).max()
+        assert np.abs(tot[..., present]).max() > 0.1
+    assert drift['any'] == 0.0 and drift['leading'] > 1e-3

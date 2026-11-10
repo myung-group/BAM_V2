@@ -21,6 +21,11 @@ Charge / spin embedding: "charge_spin_embedding": true adds MLP(Q, 2S+1 - 1) (ze
 layer-0 scalars; the spin comes from data.globals['spin'] (cfg "total_spin_key", default 1).  "qeq": false switches
 the Qeq stratum off (embedding-only variant).  Periodic graphs: Ewald per graph (dense, for small cells; see design
 doc for limits).
+Task embedding slot (2026-11-10): "n_tasks": N > 0 adds a zero-initialised table (N, layer-0 width); row
+data.globals['task'] (integer per graph, 0 if absent, clipped to 0..N-1) is added to the layer-0 scalars, next to the
+charge / spin embedding.  A task is one labelling convention (level of theory / code of a dataset).  A run that never
+sets 'task' trains row 0 only and leaves the other rows at exactly zero, so a later multi-dataset stage can give every
+new dataset its own row without changing the parameter tree (docs/HANDOFF_uq_omol25.md §7).
 """
 from __future__ import annotations
 
@@ -35,7 +40,8 @@ from bam_omat24.race_nnx import RACE, _dense
 
 LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_hidden": 32, "chi_scale": 1.0,
                "hard_init": 5.0, "chi_init": "pauling", "chi_init_scale": 3.0, "chi_init_missing": "mean", "qeq": True,
-               "charge_spin_embedding": False, "cs_hidden": 32, "sr_switch": None, "qeq_block": None}
+               "charge_spin_embedding": False, "cs_hidden": 32, "sr_switch": None, "qeq_block": None,
+               "n_tasks": 0}
 # chi_init default "pauling" since 2026-11-07 (user decision): with chi = 0 a neutral structure has an exactly zero
 # gradient of the Qeq energy with respect to chi, so a neutral-only dataset never develops charges.  Configs written
 # before that date pin "chi_init": "zero".
@@ -98,8 +104,15 @@ class RACE_LR(RACE):
             n_e = self.embed_irreps.dim          # layer-0 features are scalars (0e) first, then the DeNS 1o block
             self.cs_mlp1 = nnx.Linear(2, int(lr['cs_hidden']), rngs=rngs)
             self.cs_mlp2 = nnx.Linear(int(lr['cs_hidden']), n_e, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
-        if not (self.qeq or self.cs_embed):
-            raise ValueError("long_range: qeq false and charge_spin_embedding false is plain RACE; use model RACE")
+        # task embedding slot (optional): one row per labelling convention, zero-initialised (see the module docstring)
+        self.n_tasks = int(lr['n_tasks'] or 0)
+        if self.n_tasks < 0:
+            raise ValueError(f"long_range n_tasks must be >= 0, got {self.n_tasks}")
+        if self.n_tasks:
+            self.task_table = nnx.Param(jnp.zeros((self.n_tasks, self.embed_irreps.dim), jnp.float32))
+        if not (self.qeq or self.cs_embed or self.n_tasks):
+            raise ValueError("long_range: qeq false, charge_spin_embedding false and n_tasks 0 is plain RACE; "
+                             "use model RACE")
 
     def _graph_globals(self, data, dt):
         n_graphs = data.n_node.shape[0]
@@ -112,13 +125,22 @@ class RACE_LR(RACE):
 
     def _prelude(self, positions, cell, cutoff, data, *args, **kw):
         ctx = super()._prelude(positions, cell, cutoff, data, *args, **kw)
-        if self.cs_embed:
+        if self.cs_embed or self.n_tasks:
             f = ctx['features']
             dt = f.array.dtype
-            Q, S = self._graph_globals(data, dt)
-            z = self.cs_mlp2(jax.nn.silu(self.cs_mlp1(jnp.stack([Q, S - 1.0], axis=-1)))).astype(dt)   # (G, n_e)
+            n_graphs = data.n_node.shape[0]
+            z = 0.0
+            if self.cs_embed:
+                Q, S = self._graph_globals(data, dt)
+                z = self.cs_mlp2(jax.nn.silu(self.cs_mlp1(jnp.stack([Q, S - 1.0], axis=-1)))).astype(dt)   # (G, n_e)
+            if self.n_tasks:
+                g = data.globals if isinstance(data.globals, dict) else {}
+                t = g.get('task')
+                t = (jnp.zeros((n_graphs,), jnp.int32) if t is None
+                     else jnp.clip(jnp.round(jnp.asarray(t)).astype(jnp.int32).reshape(n_graphs), 0, self.n_tasks - 1))
+                z = z + self.task_table[...][t].astype(dt)
             n_nodes = f.shape[0]
-            node_graph = jnp.repeat(jnp.arange(data.n_node.shape[0]), data.n_node, total_repeat_length=n_nodes)
+            node_graph = jnp.repeat(jnp.arange(n_graphs), data.n_node, total_repeat_length=n_nodes)
             add = jnp.zeros_like(f.array).at[:, :z.shape[1]].set(z[node_graph])
             ctx['features'] = e3nn.IrrepsArray(f.irreps, f.array + add)
         return ctx

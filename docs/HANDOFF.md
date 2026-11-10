@@ -230,7 +230,10 @@ sbatch). Every one of those jobs was written but not submitted.
        - Au2/MgO: RACE_LR halves the doped-slab energy error. The Au2 charge shift has the right sign but is 13 % of
          DFT.
    See `docs/RACE_LR_design.md` §3.
-5b. **OMol25 full dataset** (user decision 2026-11-10): follow `docs/HANDOFF_uq_omol25.md` §4 (HF access → inspect → size pass → T6 → 100k–1M pilot → multi-host T5 → full run → Val Comp / leaderboard → UQ with ② and ③ on subsets).
+5b. **OMol25 full dataset** (user decision 2026-11-10): follow `docs/HANDOFF_uq_omol25.md` §4 (HF access → inspect → size pass → T6 → 100k–1M pilot → multi-host T5 → full run → Val Comp / leaderboard → UQ with ② and ③ on subsets). The OMol25 configs use the universal element list
+   (Z 1..94) and a task embedding slot (`long_range.n_tasks`), so that the model can later be continued on, or get
+   heads for, OMat24 / MPtrj / Alexandria / OC20 (§7 of that document; data-side task keys, per-task E0, freezing
+   and per-dataset heads are not written yet).
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.
 7. **Paper draft**: fill the TODO/CHECK markers of `docs/paper/RACEv2_draft.md`; mechanism tests of draft §5.4

@@ -55,6 +55,12 @@ claim it cleanly.
   is the cheap global charge and spin input, also for pretraining on OMol25. The spin comes from cfg
   `total_spin_key`.
 - `long_range.qeq: false` switches the Qeq stratum off, giving an embedding-only variant.
+- `long_range.n_tasks: N` (default 0, off) reserves a task embedding table of shape (N, layer-0 width),
+  zero-initialised. Row `globals['task']` (0 if the data carry no task) is added to the layer-0 scalars, at the
+  same place as the charge and spin embedding. A task is one labelling convention, that is the level of theory of
+  one dataset. A single-dataset run trains row 0 only, and the other rows receive an exactly zero gradient. The
+  slot exists so that a model pretrained on OMol25 can later take other datasets without a change of the parameter
+  tree (`docs/HANDOFF_uq_omol25.md` §7). The data side (a task index per stream source) is not written yet.
 - `chi_init_missing: "mean"` starts elements without a Pauling value at the mean.
 - **Spin input matters** (local test, report §14).
   - Na8Cl8+ (doublet) and Na9Cl8+ (singlet) have the same total charge.

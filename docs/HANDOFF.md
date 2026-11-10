@@ -4,6 +4,8 @@ Written 2026-11-06 at the end of a long Claude Code session on KISTI HANGANG (GH
 allocation (SRU) ran out. A new Claude Code session on any server should read this file first, then
 `README.md` (results, English) and `docs/RACEv2_methods_summary.pdf` (methods, Korean).
 Update the "State" and "Next steps" sections whenever something finishes.
+Why RACE_LR is being pretrained on OMol25 (the protein–ligand use case, requirements and success criteria):
+`docs/RESEARCH_PURPOSE.md`.
 
 ## 1. Project in one paragraph
 

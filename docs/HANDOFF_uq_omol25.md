@@ -2,6 +2,7 @@
 
 다른 Claude Code 세션이 이 문서만 읽고 이어서 진행할 수 있도록 쓴다. 먼저 `docs/HANDOFF.md`(규칙·환경·경로)를
 읽고, 그 다음 이 문서를 읽는다. 세부 수치는 `docs/local_test_report.md` §17–20, 방법은 `docs/SOAP_Laplace.md`.
+이 학습이 무슨 연구를 위한 것인지는 `docs/RESEARCH_PURPOSE.md`에 있다(단백질–리간드 상호작용 에너지).
 
 ## 0. 사용자 결정 (2026-11-10)
 

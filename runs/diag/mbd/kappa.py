@@ -16,6 +16,8 @@ thermal_conductivity.py, fetched 2026-11-11; themselves adapted from MPA2suite/k
              (frequency < 0 away from Gamma or for optical modes at Gamma, < -0.01 THz for acoustic modes at Gamma)
   SRME       2 * sum_modes |kappa_pred - kappa_ref| / sum(weights) / (kappa_pred + kappa_ref) per material, 2.0 for
              skipped or failed materials; the reported value is the mean over the 103 materials.
+Packages: phono3py 3.30.0 exactly (the upstream pin: later versions removed the MS-SMM19 RTA method), phonopy 3.5.x,
+symfc, spglib, h5py.
 Differences from the upstream runner: forces of the displaced supercells are evaluated in batches (same forces),
 and the space group comes from spglib instead of moyo.  One process per GPU; a rerun skips finished materials.
 """

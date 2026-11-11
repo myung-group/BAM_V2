@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/bam_v2_logo.png" alt="BAM Package V2: Bayesian Atoms Modelling" width="560"></p>
+
 # RACEv2: Highly locally resolved MLIP
 
 RACEv2 is an improved version of RACE, an E(3)-equivariant message-passing interatomic potential. The code lives in the
@@ -10,7 +12,9 @@ augmentation. The UFF repulsion is an external empirical prior (fixed functional
 scale); results without it are in the ablation. Water has no official split (two splits are used, see below), and Si
 uses 95 % of the GAP-18 training set. Models that use pretraining (MACE-OFF fine-tunes such as MMEA, ELoRA) or
 semi-empirical baselines (NN-xTB) are not compared. All equations, tables and figures are collected in
-[`docs/RACEv2_methods_summary.pdf`](docs/RACEv2_methods_summary.pdf) (in Korean).
+[`docs/RACEv2_methods_summary.pdf`](docs/RACEv2_methods_summary.pdf) (in Korean). The RACE_LR, uncertainty and OMol25
+preparation tests are summarised in
+[`docs/RACE_LR_results_summary_ko_2026-11-11.pdf`](docs/RACE_LR_results_summary_ko_2026-11-11.pdf) (in Korean).
 
 ![RACEv2 architecture](docs/RACEv2_architecture_en.png)
 
@@ -312,6 +316,95 @@ See "Charge handling variants" above. Next checks:
 - the 1/r tail when charged fragments are pulled apart beyond the cutoff;
 - the error at reduced cutoff, compared with RACE;
 - the hardness and electronegativity initialisation, or an optional Hirshfeld charge loss as in 4G-HDNNP.
+
+### RACE_LR, uncertainty and OMol25 preparation: local test summary (2026-11-06 to 11-10)
+
+Methods, equations, all tables and figures:
+[`docs/RACE_LR_results_summary_ko_2026-11-11.pdf`](docs/RACE_LR_results_summary_ko_2026-11-11.pdf) (in Korean, 25 pages).
+
+All runs below are local small-budget tests: one PC (RTX 4060 Ti), a reduced model (hidden 64, 3 layers, lmax 2,
+cutoff 5 Å), 1,000 to 10,000 training structures, and one seed unless stated. They show directions; the HPC runs at
+full size decide. Errors are test RMSE after a per-element energy refit on the training split.
+
+**Charges and long-range electrostatics** (4G-HDNNP systems; Ko et al., Nat. Commun. 12, 398 (2021)).
+
+| Topic | Result |
+|---|---|
+| Total charge as input | Ag3+ / Ag3−: energy RMSE 1169 → 28.8 meV, force RMSE 4152 → 13.9 meV/Å |
+| Pauling χ initialisation + Hirshfeld charge loss (weight 0.1) | force RMSE −49 % on the carbon chain and −11 % on NaCl, 3 seeds (table below) |
+| Charges | with the charge loss, correlation with DFT ≥ 0.98 and the right magnitude; latent charges are 6× too small on NaCl |
+| Charge transfer beyond the cutoff | protonation changes the carbon 11.4 Å away by +0.115 e (DFT +0.132 e) |
+| Separated ions (30 Å) | total-charge constraint only: −0.13 e and +0.53 e; per-fragment constraint: −1.00 e and +1.00 e |
+| Spin input | Na8Cl8+ (doublet) vs Na9Cl8+ (singlet), same total charge: force RMSE 108 → 4.8 meV/Å with the charge / spin embedding |
+| Dopant beyond the cutoff | Au2/MgO, Al dopant 10 Å below Au2: energy RMSE of the doped slab 153 → 76 meV |
+| Cutoff 5 → 3 Å | NaCl: RACE_LR almost unchanged (35.8 → 36.7); carbon chain: both models much worse, so the cutoff stays at 5 Å |
+
+Three seeds, RACE vs RACE_LR (Pauling + charge loss), mean ± standard deviation:
+
+| System | Model | E RMSE (meV) | F RMSE (meV/Å) |
+|---|---|---|---|
+| Carbon chain | RACE | 3.4 ± 0.3 | 19.2 ± 1.7 |
+| Carbon chain | RACE_LR | **2.3 ± 0.2** | **9.8 ± 0.6** |
+| NaCl | RACE | 26.8 ± 0.2 | 42.8 ± 0.5 |
+| NaCl | RACE_LR | **23.9 ± 1.4** | **38.1 ± 2.0** |
+
+- With the default zero χ initialisation a neutral-only dataset never develops charges (the gradient is exactly zero
+  at χ = 0); Pauling initialisation removes this.
+- Charge-loss weight: 0.1 is a safe default; ionic systems prefer larger values (NaCl: 1.0).
+- The short-range switch of the Coulomb energy is off by default: at 3–5 Å it removes the NaCl gain.
+
+**OMol25 pilot** (public OpenFF redistribution of the ANI-2x part: neutral closed-shell molecules, 7 elements,
+10,000 training structures).
+- On neutral molecules the long-range stratum gives no clear gain (within noise after 100 epochs). Charged and
+  open-shell molecules exist only in the official OMol25.
+- The Löwdin charge loss fixes the charges (correlation −0.15 → 0.89–0.94) at unchanged errors.
+- AMSGrad float32 is about 10× faster than SOAP float64 on this GPU, at equal or slightly better accuracy.
+
+**Streaming data path** (`"data_format": "stream"`; no graphs on disk or in memory, workers read the structures and
+build the neighbour lists every step). Structures per second on the local GPU:
+
+| Data | Path | Loader only | With training |
+|---|---|---|---|
+| Molecules (~16 atoms) | pickle, in memory | 3,900 | 989 |
+| Molecules | stream, 1 worker | 5,200 | 1,016 |
+| Molecules | stream, 4 workers | 16,300 | 1,004 |
+| Periodic (110 atoms), ASE neighbour list | pickle, in memory | 3,550 | 102 |
+| Periodic, ASE | stream, 1 worker | 62 | 61 |
+| Periodic, ASE | stream, 8 workers | 300 | 109 |
+| Periodic, vesin | stream, 1 worker | 860 | 104 |
+| Periodic, vesin | stream, 8 workers | 3,330 | 103 |
+
+- Molecules: streaming is as fast as the pickle path; the GPU is the bottleneck.
+- Periodic cells: the ASE neighbour list is the bottleneck; vesin (`BAM_NEIGHBORS=vesin`) is 57× faster and gives
+  the same pair set.
+- Blocks must be mixed (16 blocks shuffled together) to match the pickle path: validation force RMSE 243 (mixed),
+  282 (not mixed), 274 meV/Å (pickle).
+- Resume from the data cursor works; time per epoch equals the pickle path.
+
+**Uncertainty** (② last-layer Bayesian linear regression, ③ Laplace approximation in the SOAP eigenbasis with the
+GGN curvature).
+- In distribution, both are calibrated in the force σ (rms z about 1, 95 % coverage 0.93–0.99); a 3-seed ensemble is
+  5× overconfident.
+- 3BPA temperature extrapolation (trained at 300 K): all methods detect out-of-distribution structures (AUROC
+  0.98–1.00 from the force σ). Only the linearised Laplace (GLM) σ grows with the error:
+
+  | Force, 300 / 600 / 1200 K | Network RMSE (meV/Å) | ② mean σ | ② rms z | ③ GLM mean σ | ③ GLM rms z |
+  |---|---|---|---|---|---|
+  | | 11.3 / 27.0 / 80.7 | 3.5 / 3.5 / 3.6 | 3.19 / 7.59 / 22.3 | 10.7 / 12.5 / 16.3 | 0.90 / 1.71 / 3.64 |
+
+- Use ② when only a ranking is needed (structure selection); use ③ GLM when the size of the error bar matters.
+- The second-moment state ν of the SOAP optimizer cannot serve as curvature (almost zero at convergence); only the
+  eigenbasis is reused and the GGN diagonal is computed after training.
+
+**Preparing a universal model.**
+- Element list fixed to Z 1..94 and 8 task-embedding rows: 4 % slower, same accuracy; rows of absent elements stay
+  bit-identical after training.
+- Small transfer test OMol25 → OMat24 (10,000 structures each): the plumbing works (non-periodic checkpoint continued
+  on periodic data, both datasets evaluated by one model); mixing in OMol25 data prevents forgetting (OMol25 force
+  MAE 206.0 vs 751.7 meV/Å without mixing); no gain from this small pretraining.
+
+Limits: reduced models, small training sets, mostly one seed; the public OMol25 copy has no charged or open-shell
+molecules; protein–ligand interaction energies have not been evaluated yet.
 
 Work in progress: optimizer/precision checks at 100k, ablations without shell channels / UFF / SOAP (AMSGrad),
 last-layer Bayesian uncertainty, water rerun with repulsion, MD22.

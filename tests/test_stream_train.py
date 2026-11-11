@@ -27,6 +27,7 @@ def _frames(n=40, periodic=False, seed=0):
         a = ase.Atoms(numbers=z, positions=pos, cell=np.eye(3) * 6.0 if periodic else None, pbc=periodic)
         a.info['charge'] = int(k % 3) - 1
         a.info['spin'] = 1 + (k % 2)
+        a.info['task'] = int(k % 3)
         a.arrays['ref_charges'] = rng.normal(size=m) * 0.3
         frag = (np.arange(m) >= m // 2).astype(int)
         a.arrays['is_ligand'] = frag
@@ -38,7 +39,7 @@ def _frames(n=40, periodic=False, seed=0):
 
 
 FIELDS = dict(charge_key='charge', spin_key='spin', charge_label_key='ref_charges',
-              fragments=('is_ligand', 'fragment_charges', 2))
+              fragments=('is_ligand', 'fragment_charges', 2), task='task')
 
 
 @pytest.mark.parametrize('periodic', [False, True])
@@ -63,6 +64,21 @@ def test_graph_fields_equal_in_memory(tmp_path, periodic):
         for k in g.globals:
             assert np.array_equal(g.globals[k], h.globals[k]), k
         assert np.array_equal(g.senders, h.senders) and np.array_equal(g.receivers, h.receivers)
+        assert g.globals['task'].dtype == np.int32 and int(g.globals['task'][0]) == a.info['task']
+
+
+def test_task_field():
+    """task: an int for every structure, or an info key per structure (missing key = task 0)."""
+    from graph_fields import extra_fields, field_keys
+    assert 'task' not in extra_fields({}, {}, 2)[1]
+    assert int(extra_fields({}, {}, 2, task=3)[1]['task'][0]) == 3
+    assert int(extra_fields({}, {}, 2, task=0)[1]['task'][0]) == 0
+    assert int(extra_fields({'t': 2}, {}, 2, task='t')[1]['task'][0]) == 2
+    assert int(extra_fields({}, {}, 2, task='t')[1]['task'][0]) == 0
+    assert field_keys(task='t')[0] == ['t'] and field_keys(task=1)[0] == []
+    for bad in (-1, 1.5):
+        with pytest.raises(ValueError):
+            extra_fields({'t': bad}, {}, 2, task='t')
 
 
 def test_aselmdb_row_fields():

@@ -19,6 +19,7 @@ spin multiplicity 2S+1 -> info["spin"] (int).  The location of these two fields 
 order: row top level, row["data"], row["key_value_pairs"]; a row without them stops the conversion (no default is
 guessed) unless --neutral-if-missing is given (charge 0, spin 1 for such rows; counted in meta.json).
 Per-atom partial charges are copied to arrays["ref_charges"] when a row has one of PARTIAL_KEYS.
+--train and --eval may be the same files (a piece with one public split): test is then drawn from the unused rows.
 Periodic rows (other aselmdb datasets, e.g. OMat24-type): only with --allow-periodic; the cell, pbc and the stress
 (stream_io.decode_row: eV/A^3, ASE sign and Voigt order, as stored) are kept.
 """
@@ -169,7 +170,11 @@ def subset(args):
     picks, n_rows_tr = sample(tr_files, args.n_train + args.n_valid, rng)
     frames, sk1 = read_rows(tr_files, picks, args.max_atoms)
     train, valid = frames[:args.n_train], frames[args.n_train:]
-    tpicks, n_rows_ev = sample(ev_files, args.n_test, np.random.RandomState(args.seed + 1))
+    # same files given as --train and --eval (a dataset piece with one public split only): test rows are drawn from
+    # the rows not used for train / valid, so the three sets stay disjoint
+    same = [f.resolve() for f in tr_files] == [f.resolve() for f in ev_files]
+    tpicks, n_rows_ev = sample(ev_files, args.n_test, np.random.RandomState(args.seed + 1),
+                               exclude=set(picks) if same else None)
     test, sk2 = read_rows(ev_files, tpicks, args.max_atoms)
     Z = sorted({int(z) for a in train for z in a.numbers})
     missing = sorted({int(z) for a in valid + test for z in a.numbers} - set(Z))
@@ -193,7 +198,8 @@ def subset(args):
                             rows_val_split=n_rows_ev),
                 seed=args.seed, max_atoms=args.max_atoms, skipped_over_max_atoms=sk1 + sk2,
                 rule='train+valid: RandomState(seed).permutation over all rows of the TRAIN split, first n_train = '
-                     'train, next n_valid = valid; test: RandomState(seed+1) over the VAL split',
+                     'train, next n_valid = valid; test: RandomState(seed+1) over the VAL split'
+                     + (' (same files as TRAIN: over the rows not drawn for train / valid)' if same else ''),
                 periodic=bool(any(a.pbc.any() for a in train)),
                 stress=bool(any('stress' in a.calc.results for a in train)),
                 rows_with_neutral_default=STATS['neutral_default'],

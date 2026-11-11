@@ -614,3 +614,31 @@ def test_qeq_block_equals_dense_periodic(x64):
         for k in ('energy', 'forces', 'stress', 'charges'):
             assert np.allclose(np.asarray(rd[k])[:2] if k in ('energy', 'stress') else np.asarray(rd[k]),
                                np.asarray(rb[k])[:2] if k in ('energy', 'stress') else np.asarray(rb[k]), atol=1e-8), (lr, k)
+
+
+def test_train_only_freezes_other_leaves():
+    """train_only (frozen trunk): the optimiser update is zero for every leaf matching none of the patterns and
+    the reported freeze mask marks exactly those leaves."""
+    import io
+    import jax, jax.numpy as jnp
+    from bam_omat24 import train_3bpa as T
+    cfg = {"model": "RACE_LR", "atomic_numbers": ATOMIC_NUMBERS, "atom_energies": ATOM_ENERGIES, "cutoff": 5.0,
+           "hidden_size": 8, "lmax": 1, "n_layers": 1, "radial_mlp_size": 8, "radial_mlp_layers": 1,
+           "avg_n_neighbors": 15.0, "tp_backend": "e3nn", "x64": False, "learning_rate": 1e-2,
+           "long_range": {"qeq": False, "charge_spin_embedding": True, "n_tasks": 3},
+           "train_only": ["task_table", r"\['shift'\]"]}
+    stats = {'shift_raw': 0.0, 'scale': 1.0, 'avg_n_neighbors': 15.0, 'n_graphs': 1, 'n_atoms': 1}
+    log = io.StringIO()
+    _, params, opt, *_ = T.build_model(cfg, 4, ATOM_ENERGIES, stats, log)
+    grads = jax.tree.map(jnp.ones_like, params)
+    upd, _ = opt.update(grads, opt.init(params), params)
+    names = [jax.tree_util.keystr(p) for p, _ in jax.tree_util.tree_leaves_with_path(params)]
+    moved = [n for n, u in zip(names, jax.tree.leaves(upd)) if float(jnp.abs(u).max()) > 0]
+    assert sorted(moved) == sorted(n for n in names if 'task_table' in n or "['shift']" in n) and len(moved) == 2
+    frozen = jax.tree.leaves(T.build_model.freeze_mask)
+    assert [n for n, f in zip(names, frozen) if not f] == [n for n in names if n in moved]
+    assert '2 of' in log.getvalue()
+    with pytest.raises(ValueError):
+        T.build_model({**cfg, 'train_only': 'no_such_parameter'}, 4, ATOM_ENERGIES, stats, io.StringIO())
+    T.build_model({k: v for k, v in cfg.items() if k != 'train_only'}, 4, ATOM_ENERGIES, stats, io.StringIO())
+    assert T.build_model.freeze_mask is None

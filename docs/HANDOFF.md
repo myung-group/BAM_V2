@@ -4,6 +4,8 @@ Written 2026-11-06 at the end of a long Claude Code session on KISTI HANGANG (GH
 allocation (SRU) ran out. A new Claude Code session on any server should read this file first, then
 `README.md` (results, English) and `docs/RACEv2_methods_summary.pdf` (methods, Korean).
 Update the "State" and "Next steps" sections whenever something finishes.
+Why RACE_LR is being pretrained on OMol25 (the protein–ligand use case, requirements and success criteria):
+`docs/RESEARCH_PURPOSE.md`.
 
 ## 1. Project in one paragraph
 
@@ -230,8 +232,10 @@ sbatch). Every one of those jobs was written but not submitted.
    See `docs/RACE_LR_design.md` §3.
 5b. **OMol25 full dataset** (user decision 2026-11-10): follow `docs/HANDOFF_uq_omol25.md` §4 (HF access → inspect → size pass → T6 → 100k–1M pilot → multi-host T5 → full run → Val Comp / leaderboard → UQ with ② and ③ on subsets). The OMol25 configs use the universal element list
    (Z 1..94) and a task embedding slot (`long_range.n_tasks`), so that the model can later be continued on, or get
-   heads for, OMat24 / MPtrj / Alexandria / OC20 (§7 of that document; data-side task keys, per-task E0, freezing
-   and per-dataset heads are not written yet).
+   heads for, OMat24 / MPtrj / Alexandria / OC20 (§7 of that document). The data-side task key (cfg `task`) and
+   freezing (cfg `train_only`) exist since 2026-11-10; per-dataset readout heads and partial checkpoint loading do
+   not. A small local OMol25 → OMat24 transfer test (§7.4 there) confirms the plumbing and that replay prevents
+   forgetting; it shows no gain from the 10k-molecule pretraining.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.
 7. **Paper draft**: fill the TODO/CHECK markers of `docs/paper/RACEv2_draft.md`; mechanism tests of draft §5.4

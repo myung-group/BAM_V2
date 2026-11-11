@@ -2,6 +2,8 @@
 
 Read `docs/HANDOFF.md` first: project state, the user's rules, environment, data locations, and the ordered next
 steps. Results are in `README.md` (English) and `docs/RACEv2_methods_summary.pdf` (Korean).
+What the OMol25 pretraining of RACE_LR is for (protein–ligand interaction energies) is in
+`docs/RESEARCH_PURPOSE.md` (Korean); the plan for it is in `docs/HANDOFF_uq_omol25.md`.
 
 Short version of the rules:
 - Talk to the user in Korean. Write README and its figures in English. Keep the methods PDF (Korean, from

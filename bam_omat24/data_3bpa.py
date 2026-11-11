@@ -47,6 +47,7 @@ def preprocess_graph(
     charge_label_key: Optional[str] = None,
     spin_key: Optional[str] = None,
     fragments: Optional[Sequence] = None,
+    task=None,
 ) -> jraph.GraphsTuple:
     """ase.Atoms -> GraphsTuple for a non-periodic molecule.
 
@@ -76,7 +77,7 @@ def preprocess_graph(
     glob = {"energy": energy}
     # optional fields (charge, spin, fragments, reference charges): shared with the streaming workers
     nx, gx = extra_fields(atoms.info, atoms.arrays, len(atoms), charge_key=charge_key, spin_key=spin_key,
-                          charge_label_key=charge_label_key, fragments=fragments)
+                          charge_label_key=charge_label_key, fragments=fragments, task=task)
     nodes.update(nx); glob.update(gx)
     if periodic:
         edges = {"Sij": (-S).astype(np.float32)}
@@ -246,12 +247,13 @@ def compute_dataset_stats(
 
 def _cache_path(xyz_path: Path, cutoff: float, atom_energies: Sequence[float], cache_dir: Optional[Path],
                 charge_key: Optional[str] = None, charge_label_key: Optional[str] = None,
-                spin_key: Optional[str] = None, fragments: Optional[Sequence] = None) -> Path:
+                spin_key: Optional[str] = None, fragments: Optional[Sequence] = None, task=None) -> Path:
     tag = hashlib.md5(np.asarray(atom_energies, dtype=np.float64).tobytes()).hexdigest()[:8]
     cache_dir = xyz_path.parent if cache_dir is None else Path(cache_dir)
     q = ((f"_q-{charge_key}" if charge_key else "") + (f"_ql-{charge_label_key}" if charge_label_key else "")
          + (f"_s-{spin_key}" if spin_key else "")
-         + (f"_f-{fragments[0]}-{fragments[1]}-{int(fragments[2])}" if fragments else ""))
+         + (f"_f-{fragments[0]}-{fragments[1]}-{int(fragments[2])}" if fragments else "")
+         + (f"_t-{task}" if task is not None and task is not False else ""))
     return cache_dir / f"{xyz_path.stem}_omat24_cutoff_{cutoff}_e0_{tag}{q}.pkl"
 
 
@@ -261,26 +263,26 @@ def load_frames(xyz_path: str | Path) -> List[ase.Atoms]:
 
 def _graphs_chunk(args):
     """Worker of build_graphs: one chunk of frames -> graphs (module level: picklable for process pools)."""
-    frames, atomic_numbers, atom_energies, cutoff, charge_key, charge_label_key, spin_key, fragments = args
+    frames, atomic_numbers, atom_energies, cutoff, charge_key, charge_label_key, spin_key, fragments, task = args
     atom_indices = atomic_numbers_to_indices(atomic_numbers)
     return [preprocess_graph(a, atom_indices, atom_energies, cutoff, targets=True, charge_key=charge_key,
-                             charge_label_key=charge_label_key, spin_key=spin_key, fragments=fragments)
+                             charge_label_key=charge_label_key, spin_key=spin_key, fragments=fragments, task=task)
             for a in frames]
 
 
 def build_graphs(frames, atomic_numbers, atom_energies, cutoff, n_workers: int = 1, chunk: int = 256,
                  desc: str = "graphs", charge_key: Optional[str] = None,
                  charge_label_key: Optional[str] = None, spin_key: Optional[str] = None,
-                 fragments: Optional[Sequence] = None) -> List[jraph.GraphsTuple]:
+                 fragments: Optional[Sequence] = None, task=None) -> List[jraph.GraphsTuple]:
     """Graphs of a list of frames; n_workers > 1 runs the neighbour searches in a process pool (forkserver: no fork
     of a process that already initialised JAX / CUDA).  Order is preserved."""
     if n_workers <= 1 or len(frames) <= chunk:
         return _graphs_chunk((frames, atomic_numbers, atom_energies, cutoff, charge_key, charge_label_key, spin_key,
-                              fragments))
+                              fragments, task))
     import concurrent.futures as cf
     import multiprocessing as mp
     jobs = [(frames[k:k + chunk], list(atomic_numbers), list(atom_energies), cutoff, charge_key, charge_label_key,
-             spin_key, fragments)
+             spin_key, fragments, task)
             for k in range(0, len(frames), chunk)]
     out: List[jraph.GraphsTuple] = []
     with cf.ProcessPoolExecutor(max_workers=n_workers, mp_context=mp.get_context("forkserver")) as ex:
@@ -323,12 +325,14 @@ def load_3bpa_graphs(
     charge_label_key: Optional[str] = None,
     spin_key: Optional[str] = None,
     fragments: Optional[Sequence] = None,
+    task=None,
 ) -> List[jraph.GraphsTuple]:
     """Read an extxyz file into graphs.  use_cache: pickle cache next to the file (read if present, else written);
     use_cache=False recomputes the neighbour lists (n_workers processes) and writes nothing."""
     xyz_path = Path(xyz_path)
     assert xyz_path.exists(), f"{xyz_path} does not exist"
-    cache = _cache_path(xyz_path, cutoff, atom_energies, cache_dir, charge_key, charge_label_key, spin_key, fragments)
+    cache = _cache_path(xyz_path, cutoff, atom_energies, cache_dir, charge_key, charge_label_key, spin_key, fragments,
+                        task)
     if use_cache and cache.exists():
         with open(cache, "rb") as f:
             return pickle.load(f)
@@ -337,7 +341,7 @@ def load_3bpa_graphs(
         frames = load_frames(xyz_path)
     graphs = build_graphs(frames, atomic_numbers, atom_energies, cutoff, n_workers=n_workers,
                           desc=f"graphs {xyz_path.name}", charge_key=charge_key,
-                          charge_label_key=charge_label_key, spin_key=spin_key, fragments=fragments)
+                          charge_label_key=charge_label_key, spin_key=spin_key, fragments=fragments, task=task)
     if use_cache:
         with open(cache, "wb") as f:
             pickle.dump(graphs, f)

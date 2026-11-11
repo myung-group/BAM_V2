@@ -101,6 +101,9 @@ Config keys (in addition to the model hyper-parameters, see README):
                        Taylor energies E - F.d (energy-only, no DFT; review §11.14)        (default null)
     init_params_from : checkpoint path; start from its EMA params with a fresh optimiser (stage-two
                        fine-tune: set learning_rate / energy_weight / n_epochs for the stage)  (default null)
+    train_only       : regex or list of regexes on the parameter paths (jax keystr, printed in the log); leaves
+                       matching none are frozen: zero gradient and update, EMA untouched (frozen trunk with
+                       init_params_from).  Row-level freezing inside a table is not available.  (default null)
     init_from_ema    : bool, use the EMA (true) or raw params of that checkpoint              (default true)
     x_basis_lmax     : int|null, x_mode "basis": keep only l <= lmax of the atomic basis A_i (0 = scalar
                        density gating only)                                                   (default null)
@@ -123,6 +126,9 @@ Config keys (in addition to the model hyper-parameters, see README):
                        of the fragment charges, default "fragment_charges") and "n_fragments" (default 2), RACE_LR
                        constrains the total charge of every fragment (no charge flow between fragments; default none)
     total_spin_key   : extxyz info key of the spin multiplicity 2S+1 (RACE_LR charge/spin embedding; default none)
+    task             : task index of the structures = row of the RACE_LR task table (long_range.n_tasks): an int
+                       (every structure of this config, test sets included) or a str (info key with the index per
+                       structure, for mixed datasets; missing = 0).  Default none = task 0.
     charge_label_key : extxyz per-atom array of reference charges, e.g. "hirshfeld_charges" (RACE_LR; default none)
     charge_weight    : weight of the charge loss mean_i (q_i - q_ref_i)^2 in e^2 (needs charge_label_key; default 0 =
                        latent charges, no charge labels used)
@@ -389,7 +395,7 @@ def build_datasets(cfg: Dict, fout):
     # graph_cache false: no pickle cache (neighbour lists recomputed at start, graph_workers processes)
     gl = dict(use_cache=bool(_get(cfg, 'graph_cache', True)), n_workers=_graph_workers(cfg),
               charge_key=_get(cfg, 'total_charge_key', None), charge_label_key=_get(cfg, 'charge_label_key', None),
-              spin_key=_get(cfg, 'total_spin_key', None), fragments=fragments_of(cfg))
+              spin_key=_get(cfg, 'total_spin_key', None), fragments=fragments_of(cfg), task=_get(cfg, 'task', None))
     all_graphs = load_3bpa_graphs(train_path, atomic_numbers, atom_energies, cutoff,
                                   frames=train_frames, **gl)
     if not bool(_get(cfg, 'periodic', False)) and any('cell' in g.globals for g in all_graphs[:1000]):
@@ -476,6 +482,7 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
     dtype = np.float64 if _get(cfg, 'x64', False) else np.float32
     fields = {k: v for k, v in dict(charge_key=_get(cfg, 'total_charge_key', None),
                                     spin_key=_get(cfg, 'total_spin_key', None),
+                                    task=_get(cfg, 'task', None),
                                     charge_label_key=_get(cfg, 'charge_label_key', None),
                                     fragments=fragments_of(cfg)).items() if v}
     if 'train' not in sc or 'valid' not in sc:
@@ -806,6 +813,32 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
     print(f"Optimizer: {opt_name} lr={lr} grad_clip={grad_clip} pair_term={_get(cfg, 'pair_term', False)} "
           f"stratum_gain={_get(cfg, 'stratum_gain', 'uniform')}", file=fout)
 
+    # train_only: every leaf whose path matches none of the patterns is frozen (gradient and update set to zero,
+    # so the clipping norm and the optimiser statistics see the trainable leaves only; EMA kept by the train step)
+    build_model.freeze_mask = None
+    train_only = _get(cfg, 'train_only', None)
+    if train_only:
+        import re
+        pats = [re.compile(p) for p in ([train_only] if isinstance(train_only, str) else train_only)]
+        frozen = jax.tree_util.tree_map_with_path(
+            lambda path, _: not any(p.search(jax.tree_util.keystr(path)) for p in pats), params)
+        named = [(jax.tree_util.keystr(path), int(np.size(x)))
+                 for path, x in jax.tree_util.tree_leaves_with_path(params)]
+        flags = jax.tree.leaves(frozen)
+        free = [(nm, sz) for (nm, sz), fz in zip(named, flags) if not fz]
+        if not free:
+            raise ValueError(f"train_only {train_only!r} matches no parameter; paths look like {named[0][0]!r}")
+
+        def _zero_frozen():
+            def update(updates, state, params=None):
+                return jax.tree.map(lambda u, fz: jnp.zeros_like(u) if fz else u, updates, frozen), state
+            return optax.GradientTransformation(lambda p: optax.EmptyState(), update)
+        optimizer = optax.chain(_zero_frozen(), optimizer, _zero_frozen())
+        build_model.freeze_mask = frozen
+        print(f"train_only {train_only}: {len(free)} of {len(named)} leaves trainable "
+              f"({sum(s for _, s in free):,} of {sum(s for _, s in named):,} parameters): "
+              f"{[nm for nm, _ in free]}", file=fout)
+
     if lr_mode == 'cosine':
         # plateau transform kept for the state/plumbing but made inert (never fires)
         schedule = optax.contrib.reduce_on_plateau(factor=0.5, patience=10**8, min_scale=1.0)
@@ -1040,7 +1073,7 @@ def train(cfg: Dict):
         raise ValueError("stress_loss needs periodic=true")
 
     train_step = make_sharded_train_step(
-        optimizer=optimizer, mesh=mesh,
+        optimizer=optimizer, mesh=mesh, freeze_mask=build_model.freeze_mask,
         energy_weight=float(_get(cfg, 'energy_weight', 1.0)),
         force_weight=float(_get(cfg, 'force_weight', 1.0)),
         stress_weight=float(_get(cfg, 'stress_weight', 1.0)) if use_stress else 0.0,

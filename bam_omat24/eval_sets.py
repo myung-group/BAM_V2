@@ -24,7 +24,8 @@ from bam_omat24.training_utils import (load_checkpoint, replicate_pytree, make_s
                                        evaluate_sharded)
 
 
-def _frames_to_graphs(frames, atom_indices, atom_energies, cutoff, charge_key=None, spin_key=None, fragments=None):
+def _frames_to_graphs(frames, atom_indices, atom_energies, cutoff, charge_key=None, spin_key=None, fragments=None,
+                      task=None):
     """charge_key: the config's total_charge_key (RACE_LR); None keeps the graphs as before."""
     has_forces = all(("forces" in a.calc.results) if a.calc is not None else False for a in frames)
     graphs = []
@@ -34,7 +35,7 @@ def _frames_to_graphs(frames, atom_indices, atom_energies, cutoff, charge_key=No
         if "forces" not in a.calc.results:
             a.calc.results["forces"] = np.zeros((len(a), 3))
         graphs.append(preprocess_graph(a, atom_indices, atom_energies, cutoff, charge_key=charge_key,
-                                       spin_key=spin_key, fragments=fragments))
+                                       spin_key=spin_key, fragments=fragments, task=task))
     return graphs, has_forces
 
 
@@ -100,7 +101,7 @@ def main():
             graphs, _ = _frames_to_graphs(fr, atom_indices, atom_energies, cutoff,
                                           charge_key=T._get(cfg, 'total_charge_key', None),
                                           spin_key=T._get(cfg, 'total_spin_key', None),
-                                          fragments=T.fragments_of(cfg))
+                                          fragments=T.fragments_of(cfg), task=T._get(cfg, 'task', None))
             has_forces = file_has_forces
             m = evaluate(graphs)
             e_rmse, e_mae = m["energy_rmse_total"] * 1e3, m["energy_mae_total"] * 1e3
@@ -109,7 +110,9 @@ def main():
             label = f"{Path(xyz).name}" + (f"[{args.group_key}={gname}]" if args.group_key else "")
             print(f"{label:34s} {len(fr):5d} | {e_rmse:10.2f} {e_mae:8.2f} | {f_rmse:12.2f} {f_mae:8.2f}")
             report["sets"][label] = dict(n=len(fr), energy_rmse_meV=e_rmse, energy_mae_meV=e_mae,
-                                         force_rmse_meVA=f_rmse, force_mae_meVA=f_mae, has_forces=has_forces)
+                                         force_rmse_meVA=f_rmse, force_mae_meVA=f_mae, has_forces=has_forces,
+                                         energy_rmse_meV_per_atom=float(m["energy_rmse"]) * 1e3,
+                                         energy_mae_meV_per_atom=float(m["energy_mae"]) * 1e3)
     out = Path(args.ckpt).parent / f"eval_{args.tag}.json"
     json.dump(report, open(out, "w"), indent=1)
     print("written", out)

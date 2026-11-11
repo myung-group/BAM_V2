@@ -85,7 +85,7 @@ class Predictor:
         T, cfg = self._T, self.cfg
         ai = atomic_numbers_to_indices(self.atomic_numbers)
         kw = dict(charge_key=T._get(cfg, 'total_charge_key', None), spin_key=T._get(cfg, 'total_spin_key', None),
-                  fragments=T.fragments_of(cfg))
+                  fragments=T.fragments_of(cfg), task=T._get(cfg, 'task', None))
         graphs = [preprocess_graph(a, ai, list(self.atom_energies), float(T._get(cfg, 'cutoff', 5.0)),
                                    targets=False, **kw) for a in frames]
         if cfg.get('x64'):

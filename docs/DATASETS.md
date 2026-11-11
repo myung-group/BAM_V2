@@ -1507,3 +1507,71 @@ fabdbc4ecf8ac648b2f51f9dab8a0a96  nacl/train_sub1000.xyz
 b8b492c8386c09fc13e495ed8f2442bb  aumgo/train_sub1000.xyz
 87b08a8475b107695a0b1c8beef76ae9  aumgo/train_sub100.xyz
 ```
+
+## 17. OMat24 piece `rattled-300-subsampled` and the OMol25 → OMat24 transfer set (RACE_LR)
+
+Data of the small-scale transfer test of 2026-11-10 (`docs/HANDOFF_uq_omol25.md` §7.4). Downloaded and converted on
+the local PC, so the paths are relative to the repo root. `data_local/` is git-ignored.
+
+**Source.** OMat24 (Barroso-Luque et al., arXiv 2410.12771), the public **validation** split, sub-dataset
+`rattled-300-subsampled` (75 MB, the smallest piece of the split).
+- URL: https://dl.fbaipublicfiles.com/opencatalystproject/data/omat/241018/omat/val/rattled-300-subsampled.tar.gz
+- No login needed. License of OMat24: CC BY 4.0 as remembered from the dataset card; **not re-read on 2026-11-10**.
+- This is a validation piece of OMat24. A model trained on it must not be reported against the OMat24 validation set.
+
+| file | size (bytes) | md5 |
+|---|---|---|
+| rattled-300-subsampled.tar.gz | 74995647 | 4a2a35a16eca98c9f8e1eb25e33fe308 |
+| rattled-300-subsampled/val.aselmdb (extracted) | 116310016 | 378d885dbeac1b39afe79efc0d7d1400 |
+| rattled-300-subsampled/metadata.npz (extracted) | 299410 | 09d4d8d616512dc31d01dddb2a7be893 |
+
+The archive holds these two files only. It was listed before extraction and extracted with
+`tar -xzf ... --no-same-owner --no-same-permissions` in its own directory
+`data_local/omat24_val/rattled-300-subsampled_dl/`. 37,393 rows.
+
+**Subset `data_local/omat24_val/r300_10k`.**
+
+```
+python -I data_prep/convert_omol25.py subset \
+  --train data_local/omat24_val/rattled-300-subsampled_dl/rattled-300-subsampled \
+  --eval  data_local/omat24_val/rattled-300-subsampled_dl/rattled-300-subsampled \
+  --out data_local/omat24_val/r300_10k --n-train 10000 --n-valid 1000 --n-test 2000 --seed 0 \
+  --allow-periodic --neutral-if-missing
+```
+
+- `--train` and `--eval` are the same files, so the test rows are drawn from the rows not used for train or valid
+  (the three sets are disjoint; rule text in `meta.json`).
+- 85 elements, charge 0 and spin 1 written for every row (`--neutral-if-missing`), stress kept.
+- E0: least squares on the 10,000 train rows only, rank 85 (`e0.json`). `avg_n_neighbors` 19.804 at 5.0 Å.
+
+| file | structures | md5 |
+|---|---|---|
+| train.xyz | 10000 | 8d473d0577bf66d7584a9842a21d8de7 |
+| valid.xyz | 1000 | 99213d1bd4be4d5b6b09b57984ecb5d2 |
+| test.xyz | 2000 | 73aaf1860e075d8223a61c594a635235 |
+
+**Transfer set `data_local/transfer_omol_omat`** (`runs/diag/transfer/prepare.py`).
+
+```
+python -I runs/diag/transfer/prepare.py --omol data_local/omol25_openff/sub10k --omat data_local/omat24_val/r300_10k \
+  --pre input/omol/tr_u94_race_cs_amsgrad_f32_s42.json
+```
+
+- OMol25 side: `data_local/omol25_openff/sub10k` (the ANI-2x part redistributed by OpenFF, `docs/local_test_report.md`),
+  each molecule in a cubic vacuum box (edge = extent + 2 × 5.0 Å + 2 Å, pbc true), info `task` = 0.
+- OMat24 side: `r300_10k`, info `task` = 1.
+- Energies are referenced, E − Σ E0(Z), with the E0 of the structure's own subset. The configs use `atom_energies` 0.
+- `mix_{train,valid}.xyz` hold both tasks, shuffled (replay arm).
+
+| file | structures | md5 |
+|---|---|---|
+| mix_train.xyz | 20000 | 32234529cdc2d74b6ac5af32ef5fb463 |
+| mix_valid.xyz | 2000 | 0ce0438f50a7fea8cb469d92b45d5f7d |
+| omat_test.xyz | 2000 | 4560f12b37eb3b4de5f923692ea68c5c |
+| omat_train.xyz | 10000 | 7c81ca0cef0dcf530fc4ea25aa086984 |
+| omat_valid.xyz | 1000 | 905853704f358e184389da1b3e5196ca |
+| omol_test.xyz | 2932 | 9d5749da409fd18bd9155874b1691ccf |
+| omol_train.xyz | 10000 | d0f8d4c1ec132e737039314f1a204dc2 |
+| omol_valid.xyz | 1000 | 7a64870078e021e197af1ae5fd687140 |
+
+The `*_omat24_cutoff_*.pkl` files next to them are graph caches and can be deleted.

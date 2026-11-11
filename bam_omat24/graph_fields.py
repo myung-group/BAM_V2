@@ -27,7 +27,10 @@ def _per_atom(info, arrays, key):
 
 
 def extra_fields(info, arrays, n_atoms: int, charge_key: Optional[str] = None, spin_key: Optional[str] = None,
-                 charge_label_key: Optional[str] = None, fragments: Optional[Sequence] = None, task=None):
+                 charge_label_key: Optional[str] = None, fragments: Optional[Sequence] = None, task=None,
+                 charge_label_optional: bool = False):
+    """charge_label_optional: a structure without the labels gets NaN labels instead of an error; the charge loss
+    skips NaN labels (training_utils.masked_charge_loss), so such a structure still trains energy and forces."""
     info = info or {}
     nodes, glob = {}, {}
     if task is not None and task is not False:   # task index (RACE_LR task table); only when asked
@@ -62,14 +65,17 @@ def extra_fields(info, arrays, n_atoms: int, charge_key: Optional[str] = None, s
     if charge_label_key:   # per-atom reference charges (RACE_LR optional charge loss), e.g. Hirshfeld; only when asked
         v = _per_atom(info, arrays, charge_label_key)
         if v is None:
-            raise KeyError(f"no per-atom charge labels {charge_label_key!r}")
+            if not charge_label_optional:
+                raise KeyError(f"no per-atom charge labels {charge_label_key!r}")
+            v = np.full(n_atoms, np.nan)
         nodes["ref_charges"] = np.asarray(v, dtype=np.float32).reshape(-1)
         if len(nodes["ref_charges"]) != n_atoms:
             raise ValueError(f"{charge_label_key!r}: {len(nodes['ref_charges'])} values for {n_atoms} atoms")
     return nodes, glob
 
 
-def field_keys(charge_key=None, spin_key=None, charge_label_key=None, fragments=None, task=None):
+def field_keys(charge_key=None, spin_key=None, charge_label_key=None, fragments=None, task=None,
+               charge_label_optional=False):
     """(info keys, per-atom keys) a structure must carry for these fields."""
     info_k, arr_k = [], []
     if isinstance(task, str):

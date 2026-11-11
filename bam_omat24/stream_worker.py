@@ -65,3 +65,14 @@ def _worker_block(task):
     seq, fi, keys = task
     sts = _source(fi).read_block(0, keys)
     return seq, [S.graph_arrays(st, _W['idx'], _W['e0'], _W['cutoff'], _W['fields']) for st in sts]
+
+
+def _worker_state(names=('jax', 'bam_omat24')):
+    """Diagnostics: (pid, which of the modules `names` this worker has loaded, its number of threads)."""
+    threads = -1
+    try:
+        with open('/proc/self/status') as fh:
+            threads = next(int(line.split()[1]) for line in fh if line.startswith('Threads'))
+    except OSError:
+        pass
+    return os.getpid(), [n for n in names if n in sys.modules], threads

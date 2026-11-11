@@ -159,6 +159,17 @@ def force_whiten(frc_var: jnp.ndarray, force_diff: jnp.ndarray, cov_mode: str):
     return z, log_det_L
 
 
+def masked_charge_loss(q: jnp.ndarray, q_ref: jnp.ndarray, node_mask: jnp.ndarray, n_atoms) -> jnp.ndarray:
+    """sum_i (q_i - q_ref_i)^2 / n_atoms over the real atoms that have a label.  NaN labels (structures without
+    reference charges, graph_fields charge_label_optional) contribute nothing, also to the gradient; n_atoms stays
+    the number of real atoms of the batch, so fully labelled batches are unchanged."""
+    ref = q_ref.astype(q.dtype)
+    has = jnp.isfinite(ref)
+    m = node_mask.astype(q.dtype) * has.astype(q.dtype)
+    dq = q - jnp.where(has, ref, 0.0)
+    return jnp.sum(m * dq ** 2) / n_atoms
+
+
 def _build_stress_L(stress_var: jnp.ndarray) -> jnp.ndarray:
     """Build 6x6 lower triangular Cholesky L from 21 parameters per graph.
 
@@ -532,9 +543,8 @@ def compute_loss(
         total_loss = total_loss + radial_l2 * rl2_loss
     q_loss = jnp.zeros(())
     if charge_weight > 0.0 and 'charges' in results and isinstance(batch.nodes, dict) and 'ref_charges' in batch.nodes:
-        qm = jraph.get_node_padding_mask(batch).astype(results['charges'].dtype)
-        dq = results['charges'] - batch.nodes['ref_charges'].astype(results['charges'].dtype)
-        q_loss = jnp.sum(qm * dq ** 2) / n_atoms
+        q_loss = masked_charge_loss(results['charges'], batch.nodes['ref_charges'],
+                                    jraph.get_node_padding_mask(batch), n_atoms)
         total_loss = total_loss + charge_weight * q_loss
 
     aux = {

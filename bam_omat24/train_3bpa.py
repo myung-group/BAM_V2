@@ -132,6 +132,8 @@ Config keys (in addition to the model hyper-parameters, see README):
     charge_label_key : extxyz per-atom array of reference charges, e.g. "hirshfeld_charges" (RACE_LR; default none)
     charge_weight    : weight of the charge loss mean_i (q_i - q_ref_i)^2 in e^2 (needs charge_label_key; default 0 =
                        latent charges, no charge labels used)
+    charge_label_optional : bool, data_format "stream" only: a structure without charge_label_key gets NaN labels and
+                       is left out of the charge loss (it still trains energy and forces); default false = error
     graph_cache      : pickle cache of the graphs next to each xyz (default true); false recomputes the neighbour
                        lists at start and writes nothing (disk = the xyz files only)
     graph_workers    : processes for the neighbour searches (default 1; 0 = CPUs of the Slurm task, <= 64)
@@ -484,6 +486,7 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
                                     spin_key=_get(cfg, 'total_spin_key', None),
                                     task=_get(cfg, 'task', None),
                                     charge_label_key=_get(cfg, 'charge_label_key', None),
+                                    charge_label_optional=bool(_get(cfg, 'charge_label_optional', False)),
                                     fragments=fragments_of(cfg)).items() if v}
     if 'train' not in sc or 'valid' not in sc:
         raise ValueError("data_format stream needs stream.train and stream.valid")

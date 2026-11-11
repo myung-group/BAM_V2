@@ -289,7 +289,10 @@ def load_filters(spec) -> dict:
     if spec is None or isinstance(spec, dict):
         return spec
     d = json.load(open(spec))
-    return dict(d.get('filters', d))
+    d = dict(d.get('filters', d))
+    if isinstance(d.get('e0'), dict):              # JSON keys are strings: {"26": E0} -> {26: E0}
+        d['e0'] = {int(k): float(v) for k, v in d['e0'].items()}
+    return d
 
 
 def drop_reason(st: dict, flt: dict):

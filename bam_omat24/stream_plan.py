@@ -48,7 +48,8 @@ def load_size_table(sizes_dir, cutoff=None) -> dict:
         raise ValueError(f"{d}: size table made for cutoff {meta['cutoff']}, model cutoff {cutoff}")
     z = np.load(d / 'sizes.npz')
     return {'n_atoms': z['n_atoms'].astype(np.int64), 'n_edges': z['n_edges'].astype(np.int64),
-            'file': z['file_index'].astype(np.int64), 'key': z['key'].astype(np.int64), 'meta': meta}
+            'file': z['file_index'].astype(np.int64), 'key': z['key'].astype(np.int64), 'meta': meta,
+            'cell': z['cell'] if 'cell' in z.files else None}
 
 
 def _budget(n, e, graphs_per_pack):

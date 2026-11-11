@@ -110,7 +110,7 @@ class RACE_LR(RACE):
             raise ValueError(f"long_range n_tasks must be >= 0, got {self.n_tasks}")
         if self.n_tasks:
             self.task_table = nnx.Param(jnp.zeros((self.n_tasks, self.embed_irreps.dim), jnp.float32))
-        if not (self.qeq or self.cs_embed or self.n_tasks):
+        if not (self.qeq or self.cs_embed or self.n_tasks or getattr(self, '_allow_plain', False)):
             raise ValueError("long_range: qeq false, charge_spin_embedding false and n_tasks 0 is plain RACE; "
                              "use model RACE")
 

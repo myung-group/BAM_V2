@@ -159,14 +159,19 @@ def force_whiten(frc_var: jnp.ndarray, force_diff: jnp.ndarray, cov_mode: str):
     return z, log_det_L
 
 
-def masked_charge_loss(q: jnp.ndarray, q_ref: jnp.ndarray, node_mask: jnp.ndarray, n_atoms) -> jnp.ndarray:
-    """sum_i (q_i - q_ref_i)^2 / n_atoms over the real atoms that have a label.  NaN labels (structures without
-    reference charges, graph_fields charge_label_optional) contribute nothing, also to the gradient; n_atoms stays
-    the number of real atoms of the batch, so fully labelled batches are unchanged."""
+def masked_charge_loss(q: jnp.ndarray, q_ref: jnp.ndarray, node_mask: jnp.ndarray, n_atoms, weights=None) -> jnp.ndarray:
+    """Charge loss sum_i w_i (q_i - q_ref_i)^2 / norm over the real atoms that have a label.
+    NaN labels (structures without reference charges, graph_fields charge_label_optional) contribute nothing, also
+    to the gradient.  weights None: norm = n_atoms, the number of real atoms of the batch, so fully labelled batches
+    keep the old value.  weights (nodes 'ref_charges_w' of mixed corpora; 0 = no label): norm = the sum of the
+    weights of the labelled atoms (at least 1)."""
     ref = q_ref.astype(q.dtype)
     has = jnp.isfinite(ref)
     m = node_mask.astype(q.dtype) * has.astype(q.dtype)
     dq = q - jnp.where(has, ref, 0.0)
+    if weights is not None:
+        m = m * weights.astype(q.dtype)
+        return jnp.sum(m * dq ** 2) / jnp.maximum(jnp.sum(m), 1.0)
     return jnp.sum(m * dq ** 2) / n_atoms
 
 
@@ -189,6 +194,38 @@ def _build_stress_L(stress_var: jnp.ndarray) -> jnp.ndarray:
             L = L.at[:, i, j].set(stress_var[:, idx])
             idx += 1
     return L
+
+
+def _dipole_sq(results, batch, graph_mask):
+    """(sum of squared dipole errors, number of elements) of the labelled graphs (e A).  Open-boundary graphs: the
+    three components of results['dipole'].  Periodic graphs (slabs; batch.globals['pbc'] and
+    results['dipole_normal']): one element, the component along the slab normal (what a dipole-corrected slab
+    calculation labels), as BAM-torch dipole_components "auto"."""
+    dt = results['dipole'].dtype
+    w = batch.globals['dipole_w'].reshape(-1).astype(dt) * graph_mask.astype(dt)
+    ref = batch.globals['dipole'].reshape(-1, 3).astype(dt)
+    dd = results['dipole'] - ref
+    if 'dipole_normal' in results and 'pbc' in batch.globals:
+        per = (batch.globals['pbc'].reshape(-1) > 0.5).astype(dt)
+        dn = results['dipole_normal'] - jnp.sum(ref * results['slab_normal'], axis=-1)
+        se = jnp.sum(w * (1.0 - per) * jnp.sum(dd ** 2, axis=-1)) + jnp.sum(w * per * dn ** 2)
+        return se, jnp.sum(w * (3.0 - 2.0 * per))
+    return jnp.sum(w[:, None] * dd ** 2), 3.0 * jnp.sum(w)
+
+
+def _charge_dipole_sums(results, batch, node_mask, graph_mask):
+    """Sums for the charge / dipole metrics of models that return them (RACE_LR, RACE_POLAR); zeros otherwise."""
+    z = jnp.zeros(())
+    out = {'charge_se': z, 'n_charge': z, 'dipole_se': z, 'n_dipole': z}
+    if 'charges' in results and isinstance(batch.nodes, dict) and 'ref_charges' in batch.nodes:
+        w = node_mask.astype(results['charges'].dtype)
+        if 'ref_charges_w' in batch.nodes:
+            w = w * batch.nodes['ref_charges_w'].astype(w.dtype)
+        dq = results['charges'] - batch.nodes['ref_charges'].astype(w.dtype)
+        out['charge_se'], out['n_charge'] = jnp.sum(w * dq ** 2), jnp.sum(w)
+    if 'dipole' in results and isinstance(batch.globals, dict) and 'dipole' in batch.globals:
+        out['dipole_se'], out['n_dipole'] = _dipole_sq(results, batch, graph_mask)       # n_dipole = elements
+    return out
 
 
 def _loss_terms(
@@ -272,6 +309,11 @@ def _loss_terms(
     if periodic:
         stress = results['stress']
         stress_diff_raw = (stress - batch.globals["stress"]) * graph_mask[:, None]
+        # mixed corpora (stream fields 'mixed'): graphs without a stress label (molecules, OC25) have stress_w = 0
+        sw = batch.globals.get("stress_w") if isinstance(batch.globals, dict) else None
+        if sw is not None:
+            sw = sw.reshape(-1).astype(stress_diff_raw.dtype) * graph_mask
+            stress_diff_raw = stress_diff_raw * sw[:, None]
         if clip_residuals:
             vmax_S = 0.5
             stress_diff = vmax_S * jnp.tanh(stress_diff_raw / vmax_S)
@@ -369,6 +411,9 @@ def _loss_terms(
         'stress_ae': jnp.sum(jnp.abs(stress_diff_raw)) if periodic else 0.0,
         'n_graphs': n_graphs,
         'n_atoms': n_atoms,
+        **_charge_dipole_sums(results, batch, node_mask, graph_mask),
+        # graphs with a stress label (= real graphs unless the batch carries globals['stress_w'])
+        'n_stress': (jnp.sum(sw) if (periodic and sw is not None) else graph_mask.sum()),
     })
     return out
 
@@ -395,6 +440,7 @@ def compute_loss(
     dens: Optional[Dict] = None,
     dens_weight: Any = 0.0,
     charge_weight: float = 0.0,
+    dipole_weight: float = 0.0,
 ) -> Tuple[jnp.ndarray, Dict]:
     """Compute training loss for a single batch (no device dimension).
 
@@ -430,6 +476,8 @@ def compute_loss(
                                (ACE purification / restratification as a penalty)
       noisy_nodes (sigma, w) : + w * mean |head(x + eps) - eps/sigma|^2, eps = batch.nodes['noise']
                                (Noisy Nodes denoising auxiliary task; needs model.noise_head)
+      dipole_weight w        : + w * mean over labelled graphs and components of (p - p_ref)^2 (e A)^2, p =
+                               results['dipole'] (RACE_POLAR), p_ref / mask = batch.globals['dipole'] / ['dipole_w']
       charge_weight w        : + w * sum_i (q_i - q_ref_i)^2 / n_atoms (e^2), q = results['charges'] (RACE_LR),
                                q_ref = batch.nodes['ref_charges'] (cfg charge_label_key); skipped if either is absent
 
@@ -544,8 +592,15 @@ def compute_loss(
     q_loss = jnp.zeros(())
     if charge_weight > 0.0 and 'charges' in results and isinstance(batch.nodes, dict) and 'ref_charges' in batch.nodes:
         q_loss = masked_charge_loss(results['charges'], batch.nodes['ref_charges'],
-                                    jraph.get_node_padding_mask(batch), n_atoms)
+                                    jraph.get_node_padding_mask(batch), n_atoms,
+                                    weights=batch.nodes.get('ref_charges_w'))
         total_loss = total_loss + charge_weight * q_loss
+    d_loss = jnp.zeros(())
+    if dipole_weight > 0.0 and 'dipole' in results and isinstance(batch.globals, dict) and 'dipole' in batch.globals:
+        # graph dipoles (RACE_POLAR; e A): mean squared error over the labelled elements (_dipole_sq)
+        d_se, d_n = _dipole_sq(results, batch, jraph.get_graph_padding_mask(batch))
+        d_loss = d_se / jnp.maximum(d_n, 1.0)
+        total_loss = total_loss + dipole_weight * d_loss
 
     aux = {
         'energy_loss': energy_loss,
@@ -553,10 +608,11 @@ def compute_loss(
         'stress_loss': stress_loss,
         'aux_loss': (deep_supervision * ds_loss + stratum_decorrelation * decor_loss + w_dn * denoise_loss
                      + dens_weight * dens_loss
-                     + w_tc * tc_loss + radial_l2 * rl2_loss + charge_weight * q_loss),
+                     + w_tc * tc_loss + radial_l2 * rl2_loss + charge_weight * q_loss
+                     + dipole_weight * d_loss),
         'ds_loss': ds_loss, 'decor_loss': decor_loss, 'denoise_loss': denoise_loss, 'dens_loss': dens_loss,
         'dens_sum': dens_sum, 'dens_count': dens_count,
-        'tc_loss': tc_loss, 'rl2_loss': rl2_loss, 'q_loss': q_loss,
+        'tc_loss': tc_loss, 'rl2_loss': rl2_loss, 'q_loss': q_loss, 'd_loss': d_loss,
         'energy_mse': t['energy_se'] / n_graphs,
         'force_mse': t['force_se'] / (3 * n_atoms),       # all atoms (DeNS: incl. the corrupted ones)
         'stress_mse': t['stress_se'] / n_graphs if periodic else 0.0,
@@ -636,6 +692,7 @@ def make_sharded_train_step(
     radial_l2: float = 0.0,
     dens: Optional[Dict] = None,
     charge_weight: float = 0.0,
+    dipole_weight: float = 0.0,
 ):
     """Create sharded training step with gradient synchronization.
 
@@ -771,6 +828,7 @@ def make_sharded_train_step(
                 dens=None if dens is None else {'sigma': dens['sigma'], 'noisy_ef': dens['noisy_ef']},
                 dens_weight=dw,
                 charge_weight=charge_weight,
+                dipole_weight=dipole_weight,
             )
 
         # Compute gradients locally
@@ -980,7 +1038,9 @@ def evaluate_sharded(
         'energy_dN': 0.0,
         'n_node_sq': 0.0,
         'n_graphs': 0.0,
-        'n_atoms': 0.0
+        'n_atoms': 0.0,
+        'n_stress': 0.0,
+        'charge_se': 0.0, 'n_charge': 0.0, 'dipole_se': 0.0, 'n_dipole': 0.0,
     }
 
     if eval_step is None:
@@ -1033,6 +1093,7 @@ def evaluate_sharded(
     # Compute final metrics
     n_g = max(totals['n_graphs'], 1)
     n_a = max(totals['n_atoms'], 1)
+    n_s = max(totals['n_stress'], 1)          # graphs with a stress label (= n_g without globals['stress_w'])
     total_loss = (energy_weight * totals['energy_loss'] / n_g +
                   force_weight * totals['force_loss'] / (3* n_a) +
                   stress_weight * totals['stress_loss'] / n_g )
@@ -1044,9 +1105,9 @@ def evaluate_sharded(
         'energy_mae_total': totals['energy_ae_total'] / n_g,
         'energy_rmse_total': np.sqrt(totals['energy_se_total']/n_g),
         'force_mae': totals['force_ae'] / (3 * n_a),
-        'stress_mae': totals['stress_ae'] / n_g,                    # sum of the 6 Voigt |errors| per graph (legacy)
-        'stress_mae_comp': totals['stress_ae'] / (6 * n_g),         # per Voigt component, eV/A^3
-        'stress_rmse_comp': np.sqrt(totals['stress_se'] / (6 * n_g)),
+        'stress_mae': totals['stress_ae'] / n_s,                    # sum of the 6 Voigt |errors| per graph (legacy)
+        'stress_mae_comp': totals['stress_ae'] / (6 * n_s),         # per Voigt component, eV/A^3
+        'stress_rmse_comp': np.sqrt(totals['stress_se'] / (6 * n_s)),
         'force_rmse': np.sqrt(totals['force_se']/(3 * n_a)),
         'energy_loss': totals['energy_loss'] / n_g,
         'force_loss': totals['force_loss'] / (3 * n_a),
@@ -1054,6 +1115,10 @@ def evaluate_sharded(
         'total_loss': total_loss,
         'n_graphs': n_g,
         'n_atoms': n_a,
+        # charges (e) and graph dipoles (e A, per component) of the labelled atoms / graphs; 0 without labels
+        'charge_rmse': np.sqrt(totals['charge_se'] / max(totals['n_charge'], 1)),
+        'dipole_rmse': np.sqrt(totals['dipole_se'] / max(totals['n_dipole'], 1)),      # per labelled element
+        'n_charge': totals['n_charge'], 'n_dipole': totals['n_dipole'],
         # per-atom shift that minimises sum_n (d_n + N_n delta)^2 (VarPro / closed-form gauge refit;
         # apply with gauge_shift_params, only from a *training*-set evaluation)
         'gauge_shift': -totals['energy_dN'] / max(totals['n_node_sq'], 1.0),

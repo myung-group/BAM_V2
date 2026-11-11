@@ -122,6 +122,29 @@ exact conversion commands and splits, and the md5s of the outputs. The converter
   - weak scaling 1→8 GPUs on 2 nodes at 88 % (42,496 atoms);
   - halo is still 3.3× slower than owner on one GPU.
 
+## 6b. State on 2026-11-11 (user's local PC, RTX 4090, conda env `jax`)
+
+**Read `docs/HANDOFF_multidataset_thole.md`** for the details, the verification and the open items.
+
+- **Multi-dataset aselmdb reading** (user request): `data_format: "stream"` now takes per-source options
+  (`max_frames_per_shard` seeded subsets, `meta_dir` exclusions, `task` / `task_rules`, `energy_key`,
+  per-source charge labels), `stream.mixed` (periodic + open-boundary structures in one batch),
+  `stream.atom_energies_by_task` and `stream.dipole`. All six corpora of `~/Datasets` (alex, mptrj, oc25, omc25,
+  omol25, opoly26) read and train together; configs from `runs/diag/make_multidataset_configs.py`.
+- **Thole-type electrostatics, phase 1** (user request): `bam_omat24/thole.py` + `"model": "RACE_POLAR"`
+  (`race_polar_nnx.py`), a JAX port of the `pbc_split` mode of BAM-torch `bam_ufo/model/thole.py`. It equals the
+  torch block to 5e-8 (energies, forces, cell gradients) in `tests/test_thole.py`.
+- **Thole phase 2** (same day): slab dipole correction, electrode / charge-group constraints from the `*_meta_v2`
+  files, contact charge transfer and the OC25 slab-dipole labels; equal to the torch functions to 1e-7
+  (`tests/test_thole_phase2.py`). Only 2-epoch plumbing runs so far.
+- The `jax` env got `lmdb`, `vesin`, `pytest` (user approved). It has no cuequivariance: use `tp_backend: "e3nn"`.
+- **First real run prepared, not started**: `input/multi/multi_full_L4x96.json` / `multi_full_L5x128.json`,
+  `runs/diag/multi_sizes.py`, `runs/diag/run_multi.sh`; benchmarks and commands in
+  `docs/HANDOFF_multidataset_thole.md` §5b. Stream workers no longer create CUDA contexts
+  (`stream_io.worker_context`; before, about 5 GB of GPU memory went to 12 workers).
+- This checkout is not a git repository; nothing was committed.
+- Local runs: `runs/multi/` (plumbing checks; numbers in `docs/HANDOFF_multidataset_thole.md` §5).
+
 ## 7. Work done without compute (2026-11-06 afternoon, allocation exhausted)
 
 The user asked for this list ("4번 빼고 순서대로", 2026-11-06) and asked to record it so that Claude Code can continue.
@@ -236,6 +259,11 @@ sbatch). Every one of those jobs was written but not submitted.
    freezing (cfg `train_only`) exist since 2026-11-10; per-dataset readout heads and partial checkpoint loading do
    not. A small local OMol25 → OMat24 transfer test (§7.4 there) confirms the plumbing and that replay prevents
    forgetting; it shows no gain from the 10k-molecule pretraining.
+5c. **Multi-dataset training with RACE_POLAR** (user request 2026-11-11; `docs/HANDOFF_multidataset_thole.md` §6):
+   - a first real run on the BAM-torch frame counts (about 1M frames per weight unit and epoch): choose the model
+     size and batch for the 24 GB GPU first (the e3nn backend is memory hungry; cuequivariance is not installed);
+   - compare with the BAM-torch results of `~/Python/BAM-torch/examples/oc25_mptrj` on the same validation subsets.
+   Show the user the exact command before a long run.
 6. **Stream loader integration** (2c'), then full OAM training: OMat24 pretraining, then MPtrj + sAlex fine-tuning, at
    the chosen size.
 7. **Paper draft**: fill the TODO/CHECK markers of `docs/paper/RACEv2_draft.md`; mechanism tests of draft §5.4

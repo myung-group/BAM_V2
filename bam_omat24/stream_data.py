@@ -27,6 +27,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import stream_plan as P  # noqa: E402
+from stream_io import file_opts as S_file_opts, worker_context as S_worker_context  # noqa: E402
 
 import stream_worker as _SW  # noqa: E402  (top-level module: the workers must not import the package)
 
@@ -52,7 +53,7 @@ def _to_graph(d):
 
 class StreamLoader:
     def __init__(self, table, buckets, atomic_numbers, atom_energies, cutoff, n_local=1, workers=8, seed=0,
-                 block_rows=128, shuffle=True, dtype=np.float64, fields=None, mix_blocks=1):
+                 block_rows=128, shuffle=True, dtype=np.float64, fields=None, mix_blocks=1, e0_tables=None):
         meta = table['meta']
         self.table, self.buckets, self.n_local, self.seed = table, buckets, n_local, seed
         self.block_rows, self.shuffle, self.dtype, self.mix_blocks = block_rows, shuffle, dtype, int(mix_blocks)
@@ -60,9 +61,9 @@ class StreamLoader:
             raise ValueError("stream mode needs a sorted atomic_numbers list (species index = sorted rank)")
         _SW.clean_main()                         # children: no re-import of train_3bpa (JAX) as __main__
         self.pool = cf.ProcessPoolExecutor(
-            max_workers=workers, mp_context=mp.get_context('forkserver'), initializer=_worker_init,
+            max_workers=workers, mp_context=S_worker_context(), initializer=_worker_init,
             initargs=(meta['kinds'], meta['files'], list(atomic_numbers), list(atom_energies), float(cutoff),
-                      dict(fields or {})))
+                      dict(fields or {}), S_file_opts(meta), dict(e0_tables or {})))
         self.workers = workers
 
     def close(self):
@@ -224,7 +225,8 @@ class StreamEvalSet:
     """
 
     def __init__(self, table, buckets, atomic_numbers, atom_energies, cutoff, n_local=1, workers=4,
-                 dtype=np.float64, fields=None, max_structures=None, seed=0, block_rows=128, name='eval'):
+                 dtype=np.float64, fields=None, max_structures=None, seed=0, block_rows=128, name='eval',
+                 e0_tables=None):
         import jax
         self.name, self.n_local, self.dtype = name, int(n_local), dtype
         n = len(table['n_atoms'])
@@ -250,7 +252,8 @@ class StreamEvalSet:
         self.groups = [-(-len(ps[0::n_hosts]) // self.n_local) if ps else 0 for ps in self.all_packs]
         self.n_structures = int(sum(len(p) for ps in self.mine for p in ps))
         self.loader = StreamLoader(table, self.buckets, atomic_numbers, atom_energies, cutoff, n_local=self.n_local,
-                                   workers=workers, dtype=dtype, fields=fields, block_rows=block_rows, shuffle=False)
+                                   workers=workers, dtype=dtype, fields=fields, block_rows=block_rows, shuffle=False,
+                                   e0_tables=e0_tables)
 
     def iter_groups(self, mesh):
         import jax

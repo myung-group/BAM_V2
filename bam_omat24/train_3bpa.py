@@ -1272,6 +1272,7 @@ def train(cfg: Dict):
         acc = {k: replicate(np.zeros(()), mesh) for k in
                ('energy', 'force', 'graphs', 'atoms', 'grad', 'applied', 'aux', 'dens_sum', 'dens_count')}
         n_steps = 0
+        _progress_steps = int(os.environ.get('BAM_PROGRESS_STEPS', 0) or 0)
         epoch_start = time.time()
         for batch, _info in train_loader:
             if dynamic_weights:
@@ -1293,6 +1294,19 @@ def train(cfg: Dict):
             acc['dens_count'] = acc['dens_count'] + metrics['dens_count']
             n_steps += 1
             global_step += 1
+            if n_steps == 1 and epoch == start_epoch:
+                # the start-up window (first compile, first multi-process collective) is over: say so, and stop the
+                # periodic stack dumps of BAM_STACK_DUMP_SECS (they are for a hang in that window)
+                jax.block_until_ready(metrics['n_graphs'])
+                if os.environ.get("BAM_STACK_DUMP_SECS"):
+                    import faulthandler
+                    faulthandler.cancel_dump_traceback_later()
+                if rank0:
+                    print(f"first training step done, {time.time() - epoch_start:.0f} s after the epoch start",
+                          flush=True)
+            if _progress_steps and rank0 and n_steps % _progress_steps == 0:
+                # steps dispatched so far (the device may lag by a few steps); stdout only
+                print(f"epoch {epoch + 1} step {n_steps} {time.time() - epoch_start:.0f} s", flush=True)
         acc = {k: float(to_host(v)) for k, v in acc.items()}
         acc_graphs, acc_atoms, acc_grad, acc_applied = (acc['graphs'], acc['atoms'],
                                                         acc['grad'], acc['applied'])

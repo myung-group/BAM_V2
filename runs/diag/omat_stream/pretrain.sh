@@ -13,6 +13,7 @@ source $(conda info --base)/etc/profile.d/conda.sh
 conda activate ${BAM_ENV:-/scratch/t510a13/envs/bam_cue}
 export XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS="--xla_gpu_enable_triton_gemm=false" BAM_NEIGHBORS=ase
 export OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 NCCL_PROTO=^LL128
+export BAM_STACK_DUMP_SECS=${BAM_STACK_DUMP_SECS:-300} BAM_PROGRESS_STEPS=${BAM_PROGRESS_STEPS:-1000} PYTHONUNBUFFERED=1
 echo "nodes $SLURM_JOB_NODELIST  tasks $SLURM_NTASKS  config $CFG  code $(git -C $(readlink -f bam_omat24)/.. rev-parse --short HEAD)  $(date '+%F %T')"
 TPN=${TPN:-1}                      # processes per node: 1 (4 GPUs each) or 4 (one per GPU; sbatch --ntasks-per-node=4)
 if [ "${SLURM_NNODES:-1}" -gt 1 ] || [ $TPN -gt 1 ]; then

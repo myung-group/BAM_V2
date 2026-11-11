@@ -1126,10 +1126,22 @@ def train(cfg: Dict):
         # carried by both)
         cands = [load_checkpoint(p) for p in (last_name, ckpt_name) if Path(p).exists()]
         ckpt = max(cands, key=lambda c: int(c.get('epoch', 0)))
-        params = ckpt['params']
-        ema_params = ckpt['ema_params']
-        opt_state = ckpt['opt_state']
-        schedule_state = ckpt['schedule_state']
+        # leaves take the dtypes of this run's fresh state, so a float64 run can be resumed as float32 model +
+        # float64 SOAP state ("x64": false, "soap_state_dtype": "float64") and the reverse; same tree structure
+        n_cast = [0]
+
+        def _as_run(x, ref):
+            if x.dtype != ref.dtype:
+                n_cast[0] += 1
+                x = np.asarray(x).astype(ref.dtype)
+            return x
+        params, ema_params, opt_state, schedule_state = (
+            jax.tree.map(_as_run, ckpt[k], ref) for k, ref in (
+                ('params', params), ('ema_params', params), ('opt_state', opt_state),
+                ('schedule_state', schedule_state)))
+        if n_cast[0]:
+            print(f"Resume: {n_cast[0]} checkpoint leaves cast to the dtypes of this run "
+                  f"(parameters {jax.tree.leaves(params)[0].dtype})", file=fout)
         best_val_loss = min(c.get('best_val_loss', math.inf) for c in cands)
         start_epoch = int(ckpt.get('epoch', 0))
         del cands

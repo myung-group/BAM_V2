@@ -87,17 +87,20 @@ def _blocks(table, block_rows):
     """Blocks of consecutive rows of one file (rows sorted by (file, key) in the table)."""
     f = table['file']
     order = np.lexsort((table['key'], f))
+    fs = f[order]                                        # sorted by file: one slice per file (O(N), not O(N * files))
+    cut = np.flatnonzero(np.diff(fs)) + 1
     out = []
-    for fi in np.unique(f):
-        rows = order[f[order] == fi]
-        out += [(int(fi), rows[k:k + block_rows]) for k in range(0, len(rows), block_rows)]
+    for s, e in zip(np.concatenate([[0], cut]).tolist(), np.concatenate([cut, [len(fs)]]).tolist()):
+        if e > s:
+            fi, rows = int(fs[s]), order[s:e]
+            out += [(fi, rows[k:k + block_rows]) for k in range(0, len(rows), block_rows)]
     return out
 
 
 def _pack(rows, n_atoms, n_edges, bk):
     packs, cur, cn, ce = [], [], 0, 0
-    for r in rows:
-        a, e = int(n_atoms[r]), int(n_edges[r])
+    rows = np.asarray(rows)
+    for r, a, e in zip(rows.tolist(), np.asarray(n_atoms)[rows].tolist(), np.asarray(n_edges)[rows].tolist()):
         if a + 1 > bk.pad_nodes or e > bk.pad_edges:
             raise ValueError(f"structure {r} ({a} atoms, {e} edges) exceeds its bucket {bk}")
         if cur and (cn + a + 1 > bk.pad_nodes or ce + e > bk.pad_edges or len(cur) >= bk.max_graphs):

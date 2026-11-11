@@ -277,50 +277,143 @@ def _source_files(spec: str):
     raise ValueError(f"unknown source kind {kind!r} (extxyz | aselmdb)")
 
 
+def load_filters(spec) -> dict:
+    """Row filters of the size pass: a JSON file (or a BAM-GAMP convert_config.json, whose 'filters' entry is used).
+
+    Keys (all optional): max_atoms, max_force (eV/A, per-atom norm), max_stress (eV/A^3, any Voigt component),
+    max_energy_per_atom (raw E/N above it is dropped), min_energy_residual / max_energy_residual (eV/atom after
+    subtracting the reference energies 'e0': {"Z": E0}; a species without E0 drops the row), require_pbc (default
+    true when any filter is given), min_volume (|det cell|, default 1e-3).  Unknown keys are ignored, so the
+    converter's energy_floor_ref (a table of another repository) is NOT applied: the E0 residual bound replaces it.
+    """
+    if spec is None or isinstance(spec, dict):
+        return spec
+    d = json.load(open(spec))
+    return dict(d.get('filters', d))
+
+
+def drop_reason(st: dict, flt: dict):
+    """None when the row is kept, else the name of the first filter that drops it."""
+    z, f, e = st['numbers'], st['forces'], st['energy']
+    n = len(z)
+    if n == 0 or e is None or f is None or not np.isfinite(e) or not np.all(np.isfinite(f)):
+        return 'missing'
+    if flt.get('max_atoms') and n > flt['max_atoms']:
+        return 'max_atoms'
+    if flt.get('require_pbc', True):
+        if st['cell'] is None or st['pbc'] is None or not np.all(st['pbc']):
+            return 'pbc'
+        if abs(np.linalg.det(st['cell'])) < flt.get('min_volume', 1e-3):
+            return 'volume'
+    if flt.get('max_force') is not None and float(np.sqrt((f * f).sum(-1).max())) > flt['max_force']:
+        return 'max_force'
+    if flt.get('max_stress') is not None and st['stress'] is not None:
+        if not np.all(np.isfinite(st['stress'])) or float(np.abs(st['stress']).max()) > flt['max_stress']:
+            return 'max_stress'
+    if flt.get('max_energy_per_atom') is not None and e / n > flt['max_energy_per_atom']:
+        return 'max_energy_per_atom'
+    e0 = flt.get('e0')
+    if e0 is not None:
+        try:
+            r = (e - sum(e0[int(k)] for k in z)) / n
+        except KeyError:
+            return 'species'
+        if flt.get('min_energy_residual') is not None and r < flt['min_energy_residual']:
+            return 'min_energy_residual'
+        if flt.get('max_energy_residual') is not None and r > flt['max_energy_residual']:
+            return 'max_energy_residual'
+    return None
+
+
 def _count_task(args):
-    kind, path, keys, cutoff = args
-    src = ExtxyzSource([path]) if kind == 'extxyz' else AselmdbSource([path])
-    sts = src.read_block(0, keys)
-    return [(len(s['numbers']), int(len(neighbor_pairs(_atoms(s), cutoff)[0]))) for s in sts]
+    """(kind, path, keys | None, cutoff, filters) -> (keys kept, n_atoms, n_edges, {drop reason: count}).
+
+    keys None (aselmdb): every row of the file in one sequential cursor pass."""
+    kind, path, keys, cutoff, flt = args
+    if kind == 'extxyz':
+        sts = ExtxyzSource([path]).read_block(0, keys)
+    elif keys is not None:
+        sts = AselmdbSource([path]).read_block(0, keys)
+    else:
+        env = open_lmdb(path)
+        keys, sts = [], None
+        with env.begin() as txn:
+            items = [(int(k), bytes(v)) for k, v in txn.cursor() if k.isdigit()]
+        env.close()
+        items.sort()
+        keys = [k for k, _ in items]
+        sts = (decode_row(v) for _, v in items)
+    kk, na, ne, drops = [], [], [], {}
+    for k, s in zip(keys, sts):
+        why = drop_reason(s, flt) if flt else None
+        if why is not None:
+            drops[why] = drops.get(why, 0) + 1
+            continue
+        kk.append(int(k)); na.append(len(s['numbers'])); ne.append(int(len(neighbor_pairs(_atoms(s), cutoff)[0])))
+    return np.asarray(kk, np.int64), np.asarray(na, np.int64), np.asarray(ne, np.int64), drops
 
 
-def size_pass(sources, cutoff, out_dir, workers=0, block=512):
+def size_pass(sources, cutoff, out_dir, workers=0, block=512, filters=None):
+    """One pool for all files.  extxyz: tasks of `block` frames; aselmdb: one task per file.  With `filters`
+    (load_filters) only the kept rows enter the table, so training never reads the dropped ones."""
     import concurrent.futures as cf
     import multiprocessing as mp
     import ase
     out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
     workers = workers or min(64, int(os.environ.get('SLURM_CPUS_PER_TASK', 0)) or len(os.sched_getaffinity(0)))
-    files, kinds, cols = [], [], {'n_atoms': [], 'n_edges': [], 'file': [], 'key': []}
+    filters = load_filters(filters)
+    files, kinds, tasks, owner = [], [], [], []
     meta = {'cutoff': cutoff, 'sources': [], 'ase': ase.__version__, 'numpy': np.__version__, 'tsv': {},
             'neighbors': os.environ.get('BAM_NEIGHBORS', 'ase')}       # edge counts depend on nothing else
+    if filters:
+        meta['filters'] = {k: (v if k != 'e0' else f'{len(v)} species') for k, v in filters.items()}
     t0 = time.time()
     for spec in sources:
         kind, fl = _source_files(spec)
         meta['sources'].append({'spec': spec, 'kind': kind, 'files': fl})
         for path in fl:
             fi = len(files); files.append(path); kinds.append(kind)
-            keys = (np.arange(len(extxyz_offsets(path))) if kind == 'extxyz'
-                    else np.asarray(AselmdbSource([path]).row_ids(0), np.int64))
-            tasks = [(kind, path, keys[k:k + block], cutoff) for k in range(0, len(keys), block)]
-            res = []
-            if workers <= 1:
-                for t in tasks:
-                    res += _count_task(t)
+            if kind == 'extxyz':
+                keys = np.arange(len(extxyz_offsets(path)))
+                for k in range(0, len(keys), block):
+                    tasks.append((kind, path, keys[k:k + block], cutoff, filters)); owner.append(fi)
             else:
-                with cf.ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context('forkserver')) as ex:
-                    for part in ex.map(_count_task, tasks):
-                        res += part
-            r = np.asarray(res, np.int64).reshape(-1, 2)
-            tag = f"{fi:04d}_{Path(path).stem}"
-            tsv = out / f'{tag}.sizes.tsv'
-            with open(tsv, 'w') as fh:
-                fh.write(f'# source {path}\n# cutoff {cutoff}\nindex\tn_atoms\tn_edges\tfile\tkey\n')
-                for j, ((na, ne), k) in enumerate(zip(r, keys)):
-                    fh.write(f'{j}\t{na}\t{ne}\t{fi}\t{int(k)}\n')
-            meta['tsv'][tag] = hashlib.sha256(tsv.read_bytes()).hexdigest()
-            cols['n_atoms'].append(r[:, 0]); cols['n_edges'].append(r[:, 1])
-            cols['file'].append(np.full(len(r), fi, np.int64)); cols['key'].append(keys)
-            print(f'{path}: {len(r)} structures, {time.time() - t0:.0f} s', flush=True)
+                tasks.append((kind, path, None, cutoff, filters)); owner.append(fi)
+    per = [[] for _ in files]
+    drops, done = {}, 0
+
+    def take(i, res):
+        nonlocal done
+        per[owner[i]].append(res[:3])
+        for k, v in res[3].items():
+            drops[k] = drops.get(k, 0) + v
+        done += 1
+        if done % max(1, len(tasks) // 50) == 0 or done == len(tasks):
+            print(f'size pass: {done}/{len(tasks)} tasks, {time.time() - t0:.0f} s', flush=True)
+
+    if workers <= 1:
+        for i, t in enumerate(tasks):
+            take(i, _count_task(t))
+    else:
+        with cf.ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context('forkserver')) as ex:
+            for i, res in enumerate(ex.map(_count_task, tasks, chunksize=1)):
+                take(i, res)
+    cols = {'n_atoms': [], 'n_edges': [], 'file': [], 'key': []}
+    for fi, path in enumerate(files):
+        keys = np.concatenate([r[0] for r in per[fi]]) if per[fi] else np.zeros(0, np.int64)
+        na = np.concatenate([r[1] for r in per[fi]]) if per[fi] else np.zeros(0, np.int64)
+        ne = np.concatenate([r[2] for r in per[fi]]) if per[fi] else np.zeros(0, np.int64)
+        tag = f"{fi:04d}_{Path(path).stem}"
+        tsv = out / f'{tag}.sizes.tsv'
+        with open(tsv, 'w') as fh:
+            fh.write(f'# source {path}\n# cutoff {cutoff}\nindex\tn_atoms\tn_edges\tfile\tkey\n')
+            fh.write(''.join(f'{j}\t{a}\t{e}\t{fi}\t{k}\n' for j, (a, e, k) in
+                             enumerate(zip(na.tolist(), ne.tolist(), keys.tolist()))))
+        meta['tsv'][tag] = hashlib.sha256(tsv.read_bytes()).hexdigest()
+        cols['n_atoms'].append(na); cols['n_edges'].append(ne)
+        cols['file'].append(np.full(len(na), fi, np.int64)); cols['key'].append(keys)
+        if len(files) <= 20:
+            print(f'{path}: {len(na)} structures, {time.time() - t0:.0f} s', flush=True)
     arr = {k: np.concatenate(v) if v else np.zeros(0, np.int64) for k, v in cols.items()}
     np.savez(out / 'sizes.npz', n_atoms=arr['n_atoms'].astype(np.uint16 if arr['n_atoms'].max(initial=0) < 65535
                                                             else np.uint32),
@@ -328,10 +421,12 @@ def size_pass(sources, cutoff, out_dir, workers=0, block=512):
     meta.update(files=files, kinds=kinds, n=int(len(arr['n_atoms'])), sum_atoms=int(arr['n_atoms'].sum()),
                 sum_edges=int(arr['n_edges'].sum()),
                 avg_n_neighbors=float(arr['n_edges'].sum() / max(arr['n_atoms'].sum(), 1)),
-                max_atoms=int(arr['n_atoms'].max(initial=0)), max_edges=int(arr['n_edges'].max(initial=0)))
+                max_atoms=int(arr['n_atoms'].max(initial=0)), max_edges=int(arr['n_edges'].max(initial=0)),
+                dropped=drops)
     json.dump(meta, open(out / 'sizes_meta.json', 'w'), indent=1)
-    print(f"size pass: {meta['n']} structures, avg_n_neighbors {meta['avg_n_neighbors']:.3f}, "
-          f"max {meta['max_atoms']} atoms / {meta['max_edges']} edges, {time.time() - t0:.0f} s ({workers} workers)")
+    print(f"size pass: {meta['n']} structures kept, dropped {drops or 0}, avg_n_neighbors "
+          f"{meta['avg_n_neighbors']:.3f}, max {meta['max_atoms']} atoms / {meta['max_edges']} edges, "
+          f"{time.time() - t0:.0f} s ({workers} workers)")
     return meta
 
 
@@ -342,9 +437,20 @@ def main(argv=None):
     s.add_argument('--source', action='append', required=True, help='extxyz:<file> or aselmdb:<file|dir>')
     s.add_argument('--cutoff', type=float, required=True); s.add_argument('--out', required=True)
     s.add_argument('--workers', type=int, default=0); s.add_argument('--block', type=int, default=512)
+    s.add_argument('--filters', help='JSON of row filters, or a convert_config.json (see load_filters)')
+    s.add_argument('--e0-npz', help='reference energies for the residual filters: npz with Z_to_idx / atom_ref')
+    s.add_argument('--max-residual', type=float, help='also drop rows with E0 residual above this (eV/atom)')
     a = ap.parse_args(argv)
     if a.cmd == 'sizes':
-        size_pass(a.source, a.cutoff, a.out, a.workers, a.block)
+        flt = load_filters(a.filters)
+        if a.e0_npz:
+            z = np.load(a.e0_npz)
+            enc, ref = z['species_encoding'], z['atom_ref']
+            flt = dict(flt or {})
+            flt['e0'] = {int(Z): float(ref[i]) for Z, i in enumerate(enc) if i >= 0}
+            if a.max_residual is not None:
+                flt['max_energy_residual'] = a.max_residual
+        size_pass(a.source, a.cutoff, a.out, a.workers, a.block, filters=flt)
     return 0
 
 

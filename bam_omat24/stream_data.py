@@ -28,31 +28,9 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import stream_plan as P  # noqa: E402
 
-_W = {}
+import stream_worker as _SW  # noqa: E402  (top-level module: the workers must not import the package)
 
-
-def _worker_init(kinds, files, atomic_numbers, atom_energies, cutoff, fields=None):
-    import stream_io as S
-    from graph_fields import field_keys
-    _W['S'] = S
-    _W['src'] = {}
-    _W['fields'] = dict(fields or {})
-    _W['keys'] = field_keys(**_W['fields'])
-    _W['kinds'], _W['files'] = kinds, files
-    _W['idx'] = {int(z): i for i, z in enumerate(sorted(atomic_numbers))}
-    _W['e0'], _W['cutoff'] = list(atom_energies), float(cutoff)
-
-
-def _worker_block(task):
-    """task = (seq, file, keys) -> (seq, list of graph-array dicts)."""
-    S = _W['S']
-    seq, fi, keys = task
-    if fi not in _W['src']:
-        kind, path = _W['kinds'][fi], _W['files'][fi]
-        _W['src'][fi] = (S.ExtxyzSource([path], info_keys=_W['keys'][0], array_keys=_W['keys'][1])
-                         if kind == 'extxyz' else S.AselmdbSource([path]))
-    sts = _W['src'][fi].read_block(0, keys)
-    return seq, [S.graph_arrays(st, _W['idx'], _W['e0'], _W['cutoff'], _W['fields']) for st in sts]
+_W, _worker_init, _worker_block = _SW._W, _SW._worker_init, _SW._worker_block
 
 
 def _to_graph(d):
@@ -80,6 +58,7 @@ class StreamLoader:
         self.block_rows, self.shuffle, self.dtype, self.mix_blocks = block_rows, shuffle, dtype, int(mix_blocks)
         if list(atomic_numbers) != sorted(atomic_numbers):
             raise ValueError("stream mode needs a sorted atomic_numbers list (species index = sorted rank)")
+        _SW.clean_main()                         # children: no re-import of train_3bpa (JAX) as __main__
         self.pool = cf.ProcessPoolExecutor(
             max_workers=workers, mp_context=mp.get_context('forkserver'), initializer=_worker_init,
             initargs=(meta['kinds'], meta['files'], list(atomic_numbers), list(atom_energies), float(cutoff),

@@ -23,8 +23,18 @@ def _vesin_pairs(atoms, cutoff: float, periodic: bool):
     from vesin import NeighborList
     nl = NeighborList(cutoff=float(cutoff), full_list=True)
     box = atoms.cell.array if periodic else np.zeros((3, 3))
-    i, j, S = nl.compute(points=np.asarray(atoms.positions, np.float64), box=np.asarray(box, np.float64),
-                         periodic=periodic, quantities="ijS")
+    for attempt in range(6):
+        try:
+            i, j, S = nl.compute(points=np.asarray(atoms.positions, np.float64), box=np.asarray(box, np.float64),
+                                 periodic=periodic, quantities="ijS")
+            break
+        except RuntimeError as e:          # vesin starts threads per call: EAGAIN when many workers do so at once
+            if 'temporarily unavailable' not in str(e):
+                raise
+            if attempt == 5:
+                return None                # caller falls back to ASE (same pairs, tests/test_neighbors_vesin.py)
+            import time
+            time.sleep(0.05 * 2 ** attempt)
     S = np.asarray(S, np.int64).reshape(-1, 3)
     k = np.lexsort((S[:, 2], S[:, 1], S[:, 0], j, i))
     i, j, S = np.asarray(i, np.int64)[k], np.asarray(j, np.int64)[k], S[k]
@@ -37,7 +47,10 @@ def neighbor_pairs(atoms, cutoff: float):
     if backend == "vesin":
         if periodic and not bool(np.all(atoms.pbc)):
             raise ValueError("vesin backend: mixed pbc is not supported (use BAM_NEIGHBORS=ase)")
-        return _vesin_pairs(atoms, cutoff, periodic)
+        res = _vesin_pairs(atoms, cutoff, periodic)
+        if res is not None:
+            return res
+        backend = "ase"                  # vesin could not start (thread limit): same pairs from ASE, other order
     if backend != "ase":
         raise ValueError(f"BAM_NEIGHBORS={backend!r}: expected 'ase' or 'vesin'")
     if periodic:

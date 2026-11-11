@@ -130,6 +130,10 @@ Config keys (in addition to the model hyper-parameters, see README):
                        (every structure of this config, test sets included) or a str (info key with the index per
                        structure, for mixed datasets; missing = 0).  Default none = task 0.
     charge_label_key : extxyz per-atom array of reference charges, e.g. "hirshfeld_charges" (RACE_LR; default none)
+    dipole_weight    : weight of the graph-dipole loss (RACE_POLAR; stream option "dipole": true; (e A)^2; default 0)
+    polar            : options of "model": "RACE_POLAR" (Thole-type polarizable electrostatics; bam_omat24/thole.py
+                       POLAR_DEFAULTS, race_polar_nnx.py).  For periodic stream data the reciprocal-space budget
+                       (max_cell_length, max_cell_volume) is taken from the size tables.
     charge_weight    : weight of the charge loss mean_i (q_i - q_ref_i)^2 in e^2 (needs charge_label_key; default 0 =
                        latent charges, no charge labels used)
     graph_cache      : pickle cache of the graphs next to each xyz (default true); false recomputes the neighbour
@@ -152,6 +156,13 @@ Config keys (in addition to the model hyper-parameters, see README):
                        boltzmann_tilt, node_weight, taylor_aug, e0_mode "regression", train_path (gauge_refit
                        uses a seeded training subset of stream.gauge_structures, default 20000).
                        Neighbour list: BAM_NEIGHBORS=vesin (environment) is much faster for periodic cells.
+                       Multi-dataset training (2026-11-11; docs/HANDOFF_multidataset_thole.md): a source may be a
+                       dict {"path": "aselmdb:<dir>", "name", "max_frames_per_shard", "subset_seed", "meta_dir",
+                       "task", "task_rules", "energy_key", "charge_label_key", "charge_label_scale", "dipole"}
+                       (bam_omat24/stream_io.py module docstring), with the stream options
+                         mixed (false): periodic and open-boundary structures in one batch (globals 'pbc',
+                                  'stress_w'; needs "periodic": true), dipole (false): dipole labels,
+                         atom_energies_by_task: {task: E0 file | list | {Z: E0}} (default: atom_energies)
     pad_mode         : "bucket" (default) | "fixed" (one padded shape; pad_nodes, pad_edges, pack_max_graphs);
                        fixed also writes sizes_<split>.tsv (index, n_atoms, n_edges) next to log_file
     use_dataset_stats: init shift/scale/avg_n_neighbors from the training set
@@ -434,6 +445,33 @@ def build_datasets(cfg: Dict, fout):
             GraphListDataset(valid_graphs), test_sets, stats)
 
 
+def _polar_config(cfg: Dict, stats: Dict) -> Dict:
+    """cfg "polar" for RACE_POLAR, completed from the data: the largest cell (stream size tables) sizes the
+    reciprocal sums, and a mixed stream switches the open-boundary pair sums on.  The values taken from the data are
+    written to <ckpt_name>.polar.json, which the tools that rebuild the model without the training data
+    (predict.py, eval_sets.py, dump_frame_errors.py) read back."""
+    polar = dict(_get(cfg, 'polar', {}) or {})
+    side = Path(str(_get(cfg, 'ckpt_name', 'ckpt.pkl')) + '.polar.json')
+    periodic = bool(_get(cfg, 'periodic', False))
+    derived = {}
+    if periodic and not (polar.get('k_grid') and polar.get('n_k')):
+        for k in ('max_cell_length', 'max_cell_volume'):
+            if not polar.get(k) and stats.get(k):
+                derived[k] = stats[k]
+    if polar.get('open_boundary', 'auto') == 'auto' and stats.get('has_open_boundary') is not None:
+        derived['open_boundary'] = bool(stats['has_open_boundary']) or not periodic
+    if polar.get('charge_transfer', 'none') == 'contact' and 'contact_eps' not in polar:
+        # conductance of a full contact = 1 / eps: float32 loses that many digits in the group solve
+        polar['contact_eps'] = 1e-6 if _get(cfg, 'x64', False) else 1e-3
+    if derived:
+        polar.update(derived)
+        if jax.process_index() == 0 and side.parent.is_dir():
+            json.dump(derived, open(side, 'w'), indent=1)
+    elif side.exists():
+        polar.update({k: v for k, v in json.load(open(side)).items() if not polar.get(k) or k == 'open_boundary'})
+    return polar
+
+
 def _stream_split(v) -> Dict:
     if isinstance(v, str):
         return {'sources': [v]}
@@ -488,6 +526,28 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
     if 'train' not in sc or 'valid' not in sc:
         raise ValueError("data_format stream needs stream.train and stream.valid")
     tr = _stream_split(sc['train'])
+    # multi-dataset options (stream_io module docstring): periodic and open-boundary structures in one batch,
+    # per-source tasks / charge labels / dipole labels, and one E0 table per task
+    src_opts = [S.parse_source(x)['opts'] for x in tr['sources']]
+    if sc.get('mixed'):
+        fields['mixed'] = True
+    if any('task' in o or o.get('task_rules') for o in src_opts) and not fields.get('task'):
+        fields['task'] = 0          # every graph carries a task (sources without one: task 0)
+    if any(o.get('charge_label_key') for o in src_opts):
+        if fields.get('charge_label_key'):
+            raise ValueError("give charge_label_key either per source (stream sources) or for the whole config")
+        fields['opt_charge_labels'] = True
+    if sc.get('dipole'):
+        fields['dipole'] = True
+    if _get(cfg, 'model', 'RACE') == 'RACE_POLAR':
+        pol = dict(_get(cfg, 'polar', {}) or {})
+        if pol.get('charge_constraint', 'graph') == 'electrode':
+            from bam_omat24.thole import POLAR_DEFAULTS
+            fields['groups'] = int(pol.get('max_groups', POLAR_DEFAULTS['max_groups']))
+        if pol.get('slab_correction'):
+            fields['slab'] = True
+    e0_tables = {int(t): S.load_e0_table(v, atomic_numbers).tolist()
+                 for t, v in dict(sc.get('atom_energies_by_task') or {}).items()}
     table, tdir = _stream_table(tr, 'train', cutoff, workers, log_dir, rank0)
     bs = int(_get(cfg, 'batch_size', 5))
     gpp = int(sc.get('graphs_per_pack', bs))
@@ -500,7 +560,7 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
     m = min(n, int(sc.get('stats_sample', 2000)))
     rows = np.sort(np.random.default_rng(seed).choice(n, m, replace=False))
     from bam_omat24.graph_fields import field_keys
-    ik, ak = field_keys(**fields)
+    ik, ak = field_keys(**{k: v for k, v in fields.items() if k not in ('mixed', 'dipole', 'opt_charge_labels', 'groups', 'slab')})
     meta = table['meta']
     idx = {int(z): i for i, z in enumerate(atomic_numbers)}
     sample = []
@@ -508,7 +568,8 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
         kind, path = meta['kinds'][int(fi)], meta['files'][int(fi)]
         src = S.ExtxyzSource([path], info_keys=ik, array_keys=ak) if kind == 'extxyz' else S.AselmdbSource([path])
         keys = table['key'][rows[table['file'][rows] == fi]]
-        sample += [_to_graph(_cast(S.graph_arrays(st, idx, atom_energies, cutoff, fields), np.float32))
+        fo = S.file_opts(meta)[int(fi)]
+        sample += [_to_graph(_cast(S.graph_arrays(st, idx, atom_energies, cutoff, fields, fo, e0_tables), np.float32))
                    for st in src.read_block(0, keys)]
     if not bool(_get(cfg, 'periodic', False)) and any(g.edges is not None for g in sample):
         raise ValueError("the stream training data hold periodic structures but the config has periodic false")
@@ -518,26 +579,34 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
 
     train_loader = StreamLoader(table, buckets, atomic_numbers, atom_energies, cutoff, n_local=n_local,
                                 workers=workers, seed=seed, block_rows=int(sc.get('block_rows', 128)), shuffle=True,
-                                dtype=dtype, fields=fields, mix_blocks=int(sc.get('mix_blocks', 16)))
+                                dtype=dtype, fields=fields, mix_blocks=int(sc.get('mix_blocks', 16)),
+                                e0_tables=e0_tables)
     from bam_omat24.stream_data import counts_allgather_jax
     plan0 = train_loader.plan(0, jax.process_index(), jax.process_count(), counts_allgather_jax)
     stats['steps_per_epoch'] = int(sc.get('steps_per_epoch') or len(plan0.steps))
+    cell_tables = [meta]        # largest cell over every split (RACE_POLAR reciprocal budget)
     stats['steps_per_data_epoch'] = len(plan0.steps)
 
     def eval_set(spec, name):
         t, _ = _stream_table(spec, name, cutoff, workers, log_dir, rank0)
+        cell_tables.append(t['meta'])
         return StreamEvalSet(t, buckets, atomic_numbers, atom_energies, cutoff, n_local=n_local, workers=eval_workers,
                              dtype=dtype, fields=fields, max_structures=spec.get('max_structures'), seed=seed,
-                             block_rows=int(sc.get('block_rows', 128)), name=name)
+                             block_rows=int(sc.get('block_rows', 128)), name=name, e0_tables=e0_tables)
     valid_set = eval_set(_stream_split(sc['valid']), 'valid')
     if _get(cfg, 'gauge_refit', False):
         # gauge refit at the end: a fixed seeded subset of the training split (gauge_structures, default 20000)
         stats['gauge_set'] = StreamEvalSet(table, buckets, atomic_numbers, atom_energies, cutoff, n_local=n_local,
                                            workers=eval_workers, dtype=dtype, fields=fields,
                                            max_structures=int(sc.get('gauge_structures', 20000)), seed=seed + 1,
-                                           block_rows=int(sc.get('block_rows', 128)), name='gauge')
+                                           block_rows=int(sc.get('block_rows', 128)), name='gauge',
+                                           e0_tables=e0_tables)
     test_sets = {nm: eval_set(_stream_split(v), nm) for nm, v in dict(sc.get('test', {}) or {}).items()}
 
+    if all('max_cell_volume' in m for m in cell_tables):
+        stats['max_cell_volume'] = max(float(m['max_cell_volume']) for m in cell_tables)
+        stats['max_cell_length'] = [max(float(m['max_cell_length'][k]) for m in cell_tables) for k in range(3)]
+        stats['has_open_boundary'] = any(int(m['n_periodic']) < int(m['n']) for m in cell_tables)
     print(f"data_format stream: train {n} structures ({meta['sum_atoms']} atoms) from {tr['sources']}, size table "
           f"{tdir}; neighbour backend {os.environ.get('BAM_NEIGHBORS', 'ase')}", file=fout)
     for b, bk in enumerate(buckets):
@@ -575,7 +644,9 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
     else:
         shift = float(_get(cfg, 'shift', 0.0))
         scale = float(_get(cfg, 'scale', 1.0))
-        avg_n_neighbors = float(_get(cfg, 'avg_n_neighbors', 25.0))
+        # stream configs without the key take the value of the size table (in-memory configs keep the old default)
+        avg_n_neighbors = float(_get(cfg, 'avg_n_neighbors', stats['avg_n_neighbors']
+                                     if _get(cfg, 'data_format', 'xyz') == 'stream' else 25.0))
     print(f"Model init: shift={shift:.6f} scale={scale:.6f} avg_n_neighbors={avg_n_neighbors:.3f}",
           file=fout)
 
@@ -606,6 +677,10 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         if model_type == 'RACE_LR':      # RACEv2 + charge equilibration + long-range electrostatics (race_lr_nnx.py)
             from bam_omat24.race_lr_nnx import RACE_LR
             race_cls, lr_kw = RACE_LR, dict(long_range=_get(cfg, 'long_range', None))
+        elif model_type == 'RACE_POLAR':  # RACEv2 + Thole-type polarizable electrostatics (race_polar_nnx.py)
+            from bam_omat24.race_polar_nnx import RACE_POLAR
+            race_cls, lr_kw = RACE_POLAR, dict(long_range=_get(cfg, 'long_range', None),
+                                               polar=_polar_config(cfg, stats))
         model = race_cls(**common, **lr_kw,
                      x_mode=_get(cfg, 'x_mode', 'species'),
                      x_basis_lmax=_get(cfg, 'x_basis_lmax', None),
@@ -863,7 +938,9 @@ def _fmt_metrics(m: Dict) -> str:
             f"F_RMSE: {m['force_rmse']*1e3:7.2f} meV/A"
             + (f" | E_MAE/atom: {m['energy_mae']*1e3:7.2f} meV | S_MAE: {m['stress_mae_comp']*160.21766:6.3f} GPa | "
                f"S_RMSE: {m['stress_rmse_comp']*160.21766:6.3f} GPa"
-               if m.get('stress_rmse_comp', 0.0) > 0 else ""))
+               if m.get('stress_rmse_comp', 0.0) > 0 else "")
+            + (f" | q_RMSE: {m['charge_rmse']*1e3:6.1f} me" if m.get('n_charge', 0) > 0 else "")
+            + (f" | mu_RMSE: {m['dipole_rmse']:6.4f} eA" if m.get('n_dipole', 0) > 0 else ""))
 
 
 def _cast_graphs(graphs, dtype):
@@ -1094,8 +1171,11 @@ def train(cfg: Dict):
         radial_l2=float(_get(cfg, 'radial_l2', 0.0)),
         dens=dens_cfg or None,
         charge_weight=float(_get(cfg, 'charge_weight', 0.0)),
+        dipole_weight=float(_get(cfg, 'dipole_weight', 0.0)),
     )
-    if float(_get(cfg, 'charge_weight', 0.0)) > 0 and not _get(cfg, 'charge_label_key', None):
+    if (float(_get(cfg, 'charge_weight', 0.0)) > 0 and not _get(cfg, 'charge_label_key', None)
+            and not any(isinstance(x, dict) and x.get('charge_label_key')
+                        for x in _stream_split((_get(cfg, 'stream', {}) or {}).get('train', []))['sources'])):
         raise ValueError("charge_weight needs charge_label_key")
     if float(_get(cfg, 'stochastic_depth', 0.0)) > 0 and _get(cfg, 'residual', 'none') == 'none':
         raise ValueError("stochastic_depth needs residual='identity' or 'identity_cum'")

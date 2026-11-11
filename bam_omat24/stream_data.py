@@ -27,17 +27,22 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import stream_plan as P  # noqa: E402
+from stream_io import file_opts as S_file_opts, worker_context as S_worker_context  # noqa: E402
 
 _W = {}
 
 
-def _worker_init(kinds, files, atomic_numbers, atom_energies, cutoff, fields=None):
+def _worker_init(kinds, files, atomic_numbers, atom_energies, cutoff, fields=None, opts=None, e0_tables=None):
     import stream_io as S
     from graph_fields import field_keys
     _W['S'] = S
     _W['src'] = {}
     _W['fields'] = dict(fields or {})
-    _W['keys'] = field_keys(**_W['fields'])
+    _W['keys'] = field_keys(**{k: v for k, v in _W['fields'].items()
+                               if k not in ('mixed', 'dipole', 'opt_charge_labels', 'groups', 'slab')})
+    _W['meta'] = {}
+    _W['opts'] = list(opts) if opts else [{} for _ in files]
+    _W['e0_tables'] = {int(k): np.asarray(v, np.float64) for k, v in (e0_tables or {}).items()}
     _W['kinds'], _W['files'] = kinds, files
     _W['idx'] = {int(z): i for i, z in enumerate(sorted(atomic_numbers))}
     _W['e0'], _W['cutoff'] = list(atom_energies), float(cutoff)
@@ -52,7 +57,16 @@ def _worker_block(task):
         _W['src'][fi] = (S.ExtxyzSource([path], info_keys=_W['keys'][0], array_keys=_W['keys'][1])
                          if kind == 'extxyz' else S.AselmdbSource([path]))
     sts = _W['src'][fi].read_block(0, keys)
-    return seq, [S.graph_arrays(st, _W['idx'], _W['e0'], _W['cutoff'], _W['fields']) for st in sts]
+    if _W['fields'].get('groups') and _W['kinds'][fi] == 'aselmdb':
+        # charge-constraint groups of the rows from the shard's meta-data (memory-mapped)
+        if fi not in _W['meta']:
+            mp_ = S.meta_path(_W['opts'][fi].get('meta_dir'), _W['files'][fi])
+            _W['meta'][fi] = S.ShardMeta(mp_) if mp_ is not None else None
+        if _W['meta'][fi] is not None:
+            for st, k in zip(sts, keys):
+                st['groups'] = _W['meta'][fi].get(int(k))
+    return seq, [S.graph_arrays(st, _W['idx'], _W['e0'], _W['cutoff'], _W['fields'], _W['opts'][fi], _W['e0_tables'])
+                 for st in sts]
 
 
 def _to_graph(d):
@@ -74,16 +88,16 @@ def _to_graph(d):
 
 class StreamLoader:
     def __init__(self, table, buckets, atomic_numbers, atom_energies, cutoff, n_local=1, workers=8, seed=0,
-                 block_rows=128, shuffle=True, dtype=np.float64, fields=None, mix_blocks=1):
+                 block_rows=128, shuffle=True, dtype=np.float64, fields=None, mix_blocks=1, e0_tables=None):
         meta = table['meta']
         self.table, self.buckets, self.n_local, self.seed = table, buckets, n_local, seed
         self.block_rows, self.shuffle, self.dtype, self.mix_blocks = block_rows, shuffle, dtype, int(mix_blocks)
         if list(atomic_numbers) != sorted(atomic_numbers):
             raise ValueError("stream mode needs a sorted atomic_numbers list (species index = sorted rank)")
         self.pool = cf.ProcessPoolExecutor(
-            max_workers=workers, mp_context=mp.get_context('forkserver'), initializer=_worker_init,
+            max_workers=workers, mp_context=S_worker_context(), initializer=_worker_init,
             initargs=(meta['kinds'], meta['files'], list(atomic_numbers), list(atom_energies), float(cutoff),
-                      dict(fields or {})))
+                      dict(fields or {}), S_file_opts(meta), dict(e0_tables or {})))
         self.workers = workers
 
     def close(self):
@@ -245,7 +259,8 @@ class StreamEvalSet:
     """
 
     def __init__(self, table, buckets, atomic_numbers, atom_energies, cutoff, n_local=1, workers=4,
-                 dtype=np.float64, fields=None, max_structures=None, seed=0, block_rows=128, name='eval'):
+                 dtype=np.float64, fields=None, max_structures=None, seed=0, block_rows=128, name='eval',
+                 e0_tables=None):
         import jax
         self.name, self.n_local, self.dtype = name, int(n_local), dtype
         n = len(table['n_atoms'])
@@ -271,7 +286,8 @@ class StreamEvalSet:
         self.groups = [-(-len(ps[0::n_hosts]) // self.n_local) if ps else 0 for ps in self.all_packs]
         self.n_structures = int(sum(len(p) for ps in self.mine for p in ps))
         self.loader = StreamLoader(table, self.buckets, atomic_numbers, atom_energies, cutoff, n_local=self.n_local,
-                                   workers=workers, dtype=dtype, fields=fields, block_rows=block_rows, shuffle=False)
+                                   workers=workers, dtype=dtype, fields=fields, block_rows=block_rows, shuffle=False,
+                                   e0_tables=e0_tables)
 
     def iter_groups(self, mesh):
         import jax

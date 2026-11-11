@@ -326,6 +326,9 @@ def energy_forces_stress(
                 'strata': results.get('strata'),
                 'node_features': results.get('node_features'),
                 'charges': results.get('charges'),     # RACE_LR Qeq charges; None for every other model
+                'dipole': results.get('dipole'),       # RACE_POLAR graph dipoles (n_graphs, 3); None otherwise
+                'dipole_normal': results.get('dipole_normal'),   # RACE_POLAR: (n_graphs,) along the slab normal
+                'slab_normal': results.get('slab_normal'),       # RACE_POLAR: (n_graphs, 3) unit normals
             }
             return jnp.sum(ne), aux
 
@@ -354,6 +357,9 @@ def energy_forces_stress(
                 'strata': results.get('strata'),
                 'node_features': results.get('node_features'),
                 'charges': results.get('charges'),     # RACE_LR Qeq charges; None for every other model
+                'dipole': results.get('dipole'),       # RACE_POLAR graph dipoles (n_graphs, 3); None otherwise
+                'dipole_normal': results.get('dipole_normal'),   # RACE_POLAR: (n_graphs,) along the slab normal
+                'slab_normal': results.get('slab_normal'),       # RACE_POLAR: (n_graphs, 3) unit normals
             }
             return jnp.sum(ne), aux
 
@@ -444,4 +450,8 @@ def energy_forces_stress(
     }
     if aux.get('charges') is not None:     # only models that return charges (RACE_LR) get the key; others unchanged
         out['charges'] = aux['charges']
+    if aux.get('dipole') is not None:      # RACE_POLAR
+        out['dipole'] = aux['dipole']
+        if aux.get('dipole_normal') is not None:
+            out['dipole_normal'], out['slab_normal'] = aux['dipole_normal'], aux['slab_normal']
     return out

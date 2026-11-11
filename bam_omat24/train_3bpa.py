@@ -1318,7 +1318,10 @@ def train(cfg: Dict):
                           flush=True)
             if _progress_steps and rank0 and n_steps % _progress_steps == 0:
                 # steps dispatched so far (the device may lag by a few steps); stdout only
-                print(f"epoch {epoch + 1} step {n_steps} {time.time() - epoch_start:.0f} s", flush=True)
+                ht = stream_loader.host_times if stream_mode else None      # cumulative since the start of the run
+                print(f"epoch {epoch + 1} step {n_steps} {time.time() - epoch_start:.0f} s"
+                      + (f"  host s: wait {ht['wait']:.1f} collate {ht['collate']:.1f} stack {ht['stack']:.1f}"
+                         if ht else ""), flush=True)
         acc = {k: float(to_host(v)) for k, v in acc.items()}
         acc_graphs, acc_atoms, acc_grad, acc_applied = (acc['graphs'], acc['atoms'],
                                                         acc['grad'], acc['applied'])

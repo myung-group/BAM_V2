@@ -19,6 +19,7 @@ import math
 import multiprocessing as mp
 import os
 import sys
+import time
 from collections import deque
 
 import numpy as np
@@ -53,6 +54,7 @@ def _to_graph(d):
 class StreamLoader:
     def __init__(self, table, buckets, atomic_numbers, atom_energies, cutoff, n_local=1, workers=8, seed=0,
                  block_rows=128, shuffle=True, dtype=np.float64, fields=None, mix_blocks=1):
+        self.host_times = {'wait': 0.0, 'collate': 0.0, 'stack': 0.0}     # main-process seconds (iter_epoch, take)
         meta = table['meta']
         self.table, self.buckets, self.n_local, self.seed = table, buckets, n_local, seed
         self.block_rows, self.shuffle, self.dtype, self.mix_blocks = block_rows, shuffle, dtype, int(mix_blocks)
@@ -125,11 +127,15 @@ class StreamLoader:
             out = []
             for i in ids:
                 members = [int(r) for r in pl.packs[b][i]]
+                t0 = time.perf_counter()
                 while not all(m in cache for m in members):
                     r, g = next(it)
                     cache[r] = g
+                t1 = time.perf_counter()
                 gs = [_to_graph(_cast(cache.pop(m), self.dtype)) for m in members]
                 out.append(fixed_collate_fn(gs, bk.max_graphs, bk.pad_nodes, bk.pad_edges))
+                # main-process seconds: waiting for worker results / building the padded batches (host_times)
+                self.host_times['wait'] += t1 - t0; self.host_times['collate'] += time.perf_counter() - t1
             yield b, out
 
 
@@ -204,7 +210,10 @@ class StreamSteps:
                 continue
             self.cursor = (ep, st + 1)
             k += 1
-            yield stack_local(batches, self.mesh), batches
+            t0 = time.perf_counter()
+            sharded = stack_local(batches, self.mesh)
+            self.loader.host_times['stack'] += time.perf_counter() - t0
+            yield sharded, batches
 
     def close(self):
         self._it = None

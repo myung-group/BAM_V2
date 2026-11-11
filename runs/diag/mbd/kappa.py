@@ -177,6 +177,7 @@ def run_one(atoms, forces: Forces, RB) -> dict:
         rec['t_fc2'] = time.time() - t1
         if rec['has_imag_ph_modes'] or rec['broken_symmetry']:
             rec['conductivity_skipped'] = True
+            rec['t_total'] = time.time() - t0
             return rec
         t2 = time.time()
         d3 = ph3.supercells_with_displacements
@@ -236,7 +237,8 @@ def cmd_run(a):
         print(f"[kappa] {mid} {rec['name']}: steps {rec.get('n_steps')} spg {rec.get('init_spg_num')}->"
               f"{rec.get('final_spg_num')} imag {rec.get('has_imag_ph_modes')} fc2 {rec.get('n_fc2')} fc3 "
               f"{rec.get('n_fc3')} kappa {None if k is None else round(float(k[0]), 3)} "
-              f"t {rec['t_total']:.0f} s {'; '.join(rec['errors'])}", flush=True)
+              f"min_freq {rec.get('min_freq')} t {rec.get('t_total', float('nan')):.0f} s "
+              f"{'; '.join(rec['errors'])}", flush=True)
     forces.close()
 
 

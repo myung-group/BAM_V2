@@ -28,7 +28,8 @@ def bessel_basis(x: jax.Array, num_basis: int, r_max: jax.Array) -> jax.Array:
     r_max = r_max[:, None]
     x = x[:, None]
     prefactor = 2.0 / r_max
-    bessel_weights = jnp.linspace(1.0, num_basis, num_basis) * jnp.pi
+    # dtype of the input: with jax_enable_x64 a default-dtype linspace is float64 and promotes a float32 model
+    bessel_weights = jnp.linspace(1.0, num_basis, num_basis, dtype=x.dtype) * jnp.pi
 
     return prefactor * jnp.where(
         x == 0.0,
@@ -72,7 +73,7 @@ def separated_layer_norm(input: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
     eps = 1e-6
 
     # Compute RMS for non-scalar features
-    xi_s = jnp.zeros((input.shape[0], 1))
+    xi_s = jnp.zeros((input.shape[0], 1), dtype=input.array.dtype)
     cnt = 0
     for (mul, ir), chunk in zip(input.irreps, input.chunks):
         if not ir.is_scalar():
@@ -81,7 +82,7 @@ def separated_layer_norm(input: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
             cnt += mul * ir.dim
 
     # Use rsqrt for numerical stability
-    xi_rms_inv_nonscalar = jax.lax.rsqrt(xi_s / jnp.maximum(cnt, 1) + eps)
+    xi_rms_inv_nonscalar = jax.lax.rsqrt(xi_s / max(cnt, 1) + eps)      # Python int: no int64 -> float64 promotion
 
     new_chunks = []
     for (mul, ir), chunk in zip(input.irreps, input.chunks):
@@ -203,7 +204,8 @@ def compute_node_edge_features(
     """
     node_features = e3nn.IrrepsArray(
         e3nn.Irreps(f"{n_species}x0e"),
-        jax.nn.one_hot(data.nodes["species"], n_species)
+        # dtype of the positions: the default (float64 with jax_enable_x64) would promote a float32 model
+        jax.nn.one_hot(data.nodes["species"], n_species, dtype=positions.dtype)
     )
 
     if periodic:
@@ -379,7 +381,8 @@ def energy_forces_stress(
         grad = jnp.where(node_mask[:, None], grad, 0.0)
         if frc_variation_fill is None:
             frc_variation_fill = 1.0
-        frc_variation = jnp.where(node_mask[:, None], frc_variation, frc_variation_fill)
+        frc_variation = jnp.where(node_mask[:, None], frc_variation,
+                                  jnp.asarray(frc_variation_fill, frc_variation.dtype))   # no float64 fill
         if energy_variation is not None:
             energy_variation = jnp.where(node_mask[:, None], energy_variation, 0.0)
         if stress_variation is not None:

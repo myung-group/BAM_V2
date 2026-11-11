@@ -106,7 +106,9 @@ def test_charges_batch_forces_blocked(x64):
         assert abs(q[off[g]:off[g + 1]].sum() - st['info']['charge']) < 1e-10
     assert np.all(q[off[-1]:] == 0.0) and np.all(np.isfinite(np.asarray(out['energy'])))
     assert float(np.abs(q[:off[-1]]).max()) > 1e-3
-    assert float(np.abs(np.asarray(out['polar']['induced_dipoles'])).max()) > 1e-6     # induction is active
+    # induction is active: the same parameters without induced dipoles give another energy
+    no_ind = _with_params_of(model, _polar_model(polar={'induction': False}))
+    assert abs(float(no_ind(_batch(sts))['energy'][0]) - float(out['energy'][0])) > 1e-6
 
     for g, st in enumerate(sts):                       # every graph alone = in the batch
         o1 = model(_batch([st], extra_nodes=2, extra_edges=5))

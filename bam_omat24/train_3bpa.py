@@ -82,6 +82,8 @@ Config keys (in addition to the model hyper-parameters, see README):
                        b1 / b2 / eps) instead of SOAP                                          (default false)
     soap_state_dtype : null | "float64" (grouped only): SOAP moments / factors / eigenbases in float64 while the
                        model runs in float32 (turns on jax_enable_x64; params and data stay float32)  (default null)
+    soap_distributed_refresh : bool (grouped only, several devices): the QRs of the basis refresh are split over
+                       the devices and all-gathered (same maths; every device otherwise repeats all of them) (default false)
     gauge_refit      : bool, after training refit the per-atom energy shift in closed form on the training
                        split (least squares of the energy residuals; forces are unchanged: the force-null
                        gauge direction, VarPro), report test metrics as summary 'gauge' and write
@@ -801,10 +803,15 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
             sp_adam = _get(cfg, 'soap_species_adam', False)
             if sp_adam not in (False, True, 'any_axis', None):
                 raise ValueError(f"soap_species_adam must be false, true or 'any_axis', got {sp_adam!r}")
+            # soap_distributed_refresh: with several devices every device orthonormalises 1/D of each factor group
+            # in the basis refresh and the bases are all-gathered, instead of every device repeating all QRs (the
+            # optimizer update runs inside shard_map on replicated state; axis 'dp' of make_sharded_train_step)
+            dist = bool(_get(cfg, 'soap_distributed_refresh', False)) and int(n_devices) > 1
             soap_fn = functools.partial(scale_by_soap_grouped, orth=_get(cfg, 'soap_orth', 'householder'),
                                         state_dtype=_get(cfg, 'soap_state_dtype', None),
                                         adam_leading_dim=(n_species if sp_adam else None),
-                                        adam_any_axis=(sp_adam == 'any_axis'))
+                                        adam_any_axis=(sp_adam == 'any_axis'),
+                                        **(dict(axis_name='dp', axis_size=int(n_devices)) if dist else {}))
         elif soap_impl == 'reference':
             if _get(cfg, 'soap_state_dtype', None):
                 raise ValueError("soap_state_dtype needs soap_impl='grouped'")

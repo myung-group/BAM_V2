@@ -1352,7 +1352,8 @@ def train(cfg: Dict):
             # LOSS column is wE*E + wF*F without the stress term)
             tlog.message(f"  valid loss terms epoch {epoch + 1}: E {val_metrics['energy_loss']:.4e}  "
                          f"F {val_metrics['force_loss']:.4e}  S {val_metrics['stress_loss']:.4e}  "
-                         f"S_RMSE {val_metrics['stress_rmse_comp'] * 160.21766:.3f} GPa")
+                         f"S_RMSE {val_metrics['stress_rmse_comp'] * 160.21766:.3f} GPa  "
+                         f"E_MAE {val_metrics['energy_mae'] * 1e3:.2f} meV/atom")
         if dens_cfg and ((epoch + 1) % 10 == 0 or epoch == start_epoch):
             tlog.message(f"  DeNS epoch {epoch+1}: weight {dens_w:.3e} noise L2MAE over the corrupted atoms "
                          f"{acc['dens_sum'] / max(acc['dens_count'], 1.0):.4f} ({acc['dens_count']:.0f} atoms) "

@@ -18,6 +18,10 @@ Feature normalisation "smooth": every irrep type is multiplied by rsqrt(1 + mean
 Config: "model": "RACE_POLAR", "polar": {thole.POLAR_DEFAULTS; for periodic data "max_cell_length" and
 "max_cell_volume" (or "k_grid" and "n_k") size the reciprocal sums: train_3bpa fills them from the stream size
 tables}, "long_range": {"charge_spin_embedding": true, "n_tasks": N} as for RACE_LR (qeq is forced off).
+"polar": {"charges": "qeq"} (2026-11-11) = RACE_LR's charge equilibration + this block: q_i are the Qeq charges
+(long_range options chi_init, qeq_block, fragments; the heads q^raw and f are unused), Qeq adds only its on-site
+energy chi q + 1/2 (J + self) q^2, and E_elec below carries the Coulomb energy of q with mu, Theta and the induced
+dipoles.
 Boundary conditions per graph: data.globals['pbc'] (stream option "mixed"); without it every graph is periodic
 when the model is periodic and open otherwise.  The open-boundary pair sums (dense N x N per batch) are built
 only when open graphs can occur ("open_boundary": "auto").  The total charge comes from data.globals['charge'] (0 if absent).
@@ -71,9 +75,27 @@ class RACE_POLAR(RACE_LR):
 
     def __init__(self, *args, polar=None, long_range=None, **kw):
         lr = dict(long_range or {})
-        if lr.get('qeq'):
-            raise ValueError("RACE_POLAR: long_range.qeq must be false (the Thole block carries the charges)")
-        lr['qeq'] = False
+        mode = (polar or {}).get('charges', thole.POLAR_DEFAULTS['charges'])
+        if mode not in ('fukui', 'qeq'):
+            raise ValueError("polar.charges must be 'fukui' or 'qeq'")
+        if mode == 'qeq':
+            # Qeq + Thole: the charges are the Qeq solution (environment-dependent chi and hardness, total charge or
+            # fragment constraints, long_range options as for RACE_LR); Qeq contributes its on-site energy only and
+            # the Thole block computes the Coulomb energy of these charges with the dipoles, quadrupoles and
+            # induced dipoles (no double counting).  The energy is not variational in q; forces are exact (autodiff
+            # through the linear solve).
+            if lr.get('qeq') is False:
+                raise ValueError("RACE_POLAR with polar.charges 'qeq' needs the Qeq stratum (long_range.qeq)")
+            if lr.get('coulomb_energy'):
+                raise ValueError("RACE_POLAR with polar.charges 'qeq': long_range.coulomb_energy must be false")
+            if (polar or {}).get('charge_constraint', 'graph') != 'graph':
+                raise ValueError("polar.charges 'qeq' supports charge_constraint 'graph' only (use the fragment "
+                                 "constraints of RACE_LR for per-fragment charges)")
+            lr['qeq'], lr['coulomb_energy'] = True, False
+        else:
+            if lr.get('qeq'):
+                raise ValueError("RACE_POLAR: long_range.qeq must be false unless polar.charges is 'qeq'")
+            lr['qeq'] = False
         super().__init__(*args, long_range=lr, **kw)
         p = dict(thole.POLAR_DEFAULTS)
         unknown = [k for k in (polar or {}) if k not in p and not k.startswith('_')]
@@ -237,7 +259,11 @@ class RACE_POLAR(RACE_LR):
         cells = cell.reshape(n_graphs, 3, 3).astype(dt) if periodic else None
         sij = data.edges['Sij'] if (periodic and isinstance(data.edges, dict) and 'Sij' in data.edges) else None
         pos = positions.astype(dt)
-        q = self.polar_charges(q_raw.astype(dt), logits, pos, cells, data, node_graph, node_mask, edge_mask, n_graphs, Q)
+        if self.polar['charges'] == 'qeq':
+            q = out['charges'].astype(dt)          # RACE_LR Qeq charges (exact total / fragment charges)
+        else:
+            q = self.polar_charges(q_raw.astype(dt), logits, pos, cells, data, node_graph, node_mask, edge_mask,
+                                   n_graphs, Q)
         # slab dipole correction: graphs flagged globals['slab']; charges enter the dipole at their unwrapped positions
         slab_on, pos_field = None, None
         if self.polar['slab_correction'] and periodic and 'slab' in glb:

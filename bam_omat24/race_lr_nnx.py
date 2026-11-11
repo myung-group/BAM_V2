@@ -41,7 +41,10 @@ from bam_omat24.race_nnx import RACE, _dense
 LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_hidden": 32, "chi_scale": 1.0,
                "hard_init": 5.0, "chi_init": "pauling", "chi_init_scale": 3.0, "chi_init_missing": "mean", "qeq": True,
                "charge_spin_embedding": False, "cs_hidden": 32, "sr_switch": None, "qeq_block": None,
-               "n_tasks": 0}
+               "n_tasks": 0, "coulomb_energy": True}
+# "coulomb_energy": false (2026-11-11): the Qeq charges are solved as usual, but the energy keeps only the on-site
+# part chi_i q_i + 1/2 (J_i + K / (sqrt(pi) sigma_i)) q_i^2; the pair Coulomb energy is left to another stratum
+# (RACE_POLAR with polar.charges "qeq": the Thole block computes the electrostatics of these charges once).
 # chi_init default "pauling" since 2026-11-07 (user decision): with chi = 0 a neutral structure has an exactly zero
 # gradient of the Qeq energy with respect to chi, so a neutral-only dataset never develops charges.  Configs written
 # before that date pin "chi_init": "zero".
@@ -190,6 +193,8 @@ class RACE_LR(RACE):
                 else:
                     sr = short_range_part(positions, sigma, same, r_on, r_off)
                 gamma_e = gamma - sr
+            if not self.lr['coulomb_energy']:
+                gamma_e = jnp.zeros_like(gamma)
             q, e = qeq_solve(chi, hard, sigma, gamma, group, node_mask, Qg, n_groups, gamma_energy=gamma_e)
         out = dict(out)
         out['node_energies'] = out['node_energies'] + e.reshape(out['node_energies'].shape).astype(out['node_energies'].dtype)
@@ -234,7 +239,11 @@ class RACE_LR(RACE):
             gamma = jnp.where(same_b, gamma, 0.0)
         else:
             gamma = jax.vmap(coulomb_direct)(P, Sg, same_b)
-        if lr['sr_switch'] is not None:
+        if not lr['coulomb_energy']:
+            qb, eb = jax.vmap(lambda ch, hd, sg, gm, fb, m, qf: qeq_solve(ch, hd, sg, gm, fb, m, qf, n_frag,
+                                                                          gamma_energy=jnp.zeros_like(gm)))(
+                Ch, Hd, Sg, gamma, Fb, M, fq)
+        elif lr['sr_switch'] is not None:
             r_on, r_off = (float(x) for x in lr['sr_switch'])
             if periodic:
                 rows = jnp.broadcast_to(cells[:, None], (n_graphs, B, 3, 3))

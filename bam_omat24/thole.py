@@ -62,6 +62,10 @@ POLAR_DEFAULTS = {
     "charge_constraint": "graph", "max_groups": 128, "charge_transfer": "none", "contact_radius": 2.5,
     "transfer_cutoff": 4.0, "contact_pairs": "charged", "contact_eps": 1e-6,
     "slab_correction": False, "slab_axis": 2,
+    # 2026-11-11: where the charges of the Thole block come from.  "fukui" (default): raw charge + Fukui partition of
+    # the missing total charge (the torch block).  "qeq": the charge-equilibration charges of RACE_LR
+    # (long_range chi / hardness heads; the pair Coulomb energy is then counted here only, see race_polar_nnx.py).
+    "charges": "fukui",
 }
 
 

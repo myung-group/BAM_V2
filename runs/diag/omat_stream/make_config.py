@@ -14,9 +14,11 @@ ap.add_argument('base'); ap.add_argument('out')
 ap.add_argument('--name', required=True)
 ap.add_argument('--train', required=True); ap.add_argument('--train-sizes', required=True)
 ap.add_argument('--valid', required=True); ap.add_argument('--valid-sizes', required=True)
-ap.add_argument('--steps-per-epoch', type=int, default=250); ap.add_argument('--epochs', type=int, default=2)
+ap.add_argument('--steps-per-epoch', type=int, default=250, help='0 = one data pass per epoch'); ap.add_argument('--epochs', type=int, default=2)
 ap.add_argument('--workers', type=int, default=8); ap.add_argument('--valid-max', type=int, default=2000)
 ap.add_argument('--batch', type=int, help='graphs per device and per pack (default: batch_size of the base)')
+ap.add_argument('--e0-json', help='JSON with {"e0_ls_train": {Z: E0}} (convert_mptrj.json): replaces atom_energies')
+ap.add_argument('--sizes-avg-n', action='store_true', help='avg_n_neighbors from the training size table')
 ap.add_argument('--set', action='append', default=[], help='key=<json value>, applied last')
 a = ap.parse_args()
 c = json.load(open(a.base))
@@ -27,6 +29,11 @@ assert c['atomic_numbers'] == sorted(c['atomic_numbers']), 'reorder atom_energie
 assert c.get('e0_mode', 'isolated') == 'isolated' and 'atom_energies' in c
 if a.batch:
     c['batch_size'] = a.batch
+if a.e0_json:
+    e0 = json.load(open(a.e0_json))['e0_ls_train']
+    c['atom_energies'] = [float(e0.get(str(z), 0.0)) for z in c['atomic_numbers']]   # absent species: 0
+if a.sizes_avg_n:
+    c['avg_n_neighbors'] = round(json.load(open(Path(a.train_sizes) / 'sizes_meta.json'))['avg_n_neighbors'], 3)
 run = Path('runs') / f'{a.name}_cue'
 c.update(data_format='stream', n_epochs=a.epochs, restart=False, gauge_refit=False, eval_test_every=10 ** 9,
          log_file=str(run / f'loss_{a.name}_cue.out'), ckpt_name=str(run / f'ckpt_{a.name}_cue.pkl'),
@@ -35,7 +42,7 @@ c.update(data_format='stream', n_epochs=a.epochs, restart=False, gauge_refit=Fal
 c['stream'] = {'train': {'sources': [a.train], 'sizes': a.train_sizes},
                'valid': {'sources': [a.valid], 'sizes': a.valid_sizes, 'max_structures': a.valid_max},
                'workers': a.workers, 'eval_workers': max(1, a.workers // 2),
-               'graphs_per_pack': int(c.get('batch_size', 16)), 'steps_per_epoch': a.steps_per_epoch}
+               'graphs_per_pack': int(c.get('batch_size', 16)), 'steps_per_epoch': a.steps_per_epoch or None}
 for kv in a.set:
     k, v = kv.split('=', 1)
     c[k] = json.loads(v)

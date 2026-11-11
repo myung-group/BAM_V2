@@ -6,7 +6,7 @@
 #SBATCH -J soapgchk
 #SBATCH -o runs/slurm/%x_%j.out
 # grouped SOAP: equivalence tests (GPU 0) and 30-epoch timing runs, Householder (GPU 1) / CholeskyQR3 (GPU 2)
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue

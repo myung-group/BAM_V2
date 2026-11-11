@@ -3,7 +3,7 @@
 #   trains each run on its own GPU (runs/run_cue.sh, input/input_3bpa_omat24_<run>_cue.json); no 3BPA dihedral scan
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 RUNS=("$@")
 for i in "${!RUNS[@]}"; do CUDA_VISIBLE_DEVICES=$i bash runs/run_cue.sh ${RUNS[$i]} & done
 wait

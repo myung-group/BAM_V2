@@ -1,9 +1,9 @@
 {
     "model": "RACE",
     "cutoff": 5.0,
-    "train_path": "/scratch/t589a02/datasets_ext/si_gap18/train_strat.xyz",
+    "train_path": "/scratch/t510a13/data/datasets_ext/si_gap18/train_strat.xyz",
     "test_paths": [
-        "/scratch/t589a02/datasets_ext/si_gap18/test_strat.xyz"
+        "/scratch/t510a13/data/datasets_ext/si_gap18/test_strat.xyz"
     ],
     "valid_frac": 0.1,
     "atomic_numbers": [

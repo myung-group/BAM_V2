@@ -14,13 +14,13 @@ conda activate bam_cue
 # 1 BLAS/OMP thread, and at most 4 processes at a time (run 4 starts when the first run finishes).
 export XLA_PYTHON_CLIENT_PREALLOCATE=false OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false --xla_gpu_force_compilation_parallelism=1"
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 C=runs/${N}_cue/ckpt_${N}_cue.gauge.pkl; [ -f $C ] || C=runs/${N}_cue/ckpt_${N}_cue.pkl
 STEPS=${MD_STEPS:-200000}; OUT=runs/md_lips_${N}${MD_TAG:-}   # MD_STEPS/MD_TAG: short test runs in a separate folder
 for k in 0 1 2 3 4; do
   if [ $k -eq 4 ]; then wait -n; fi      # never more than 4 MD processes at once
   CUDA_VISIBLE_DEVICES=$((k % 4)) python -m bam_omat24.md_run input/input_3bpa_omat24_${N}_cue.json --ckpt $C \
-    --init-xyz /scratch/t589a02/datasets_ext/lips/fu_test.xyz --out $OUT --run $k --n-runs 5 --init-seed 123 \
+    --init-xyz /scratch/t510a13/data/datasets_ext/lips/fu_test.xyz --out $OUT --run $k --n-runs 5 --init-seed 123 \
     --steps $STEPS --dt 0.25 --temp 520 --ttime 20 --save-freq 50 --chunk 400 --max-hours 23.3 > $OUT.run$k.log 2>&1 &
 done
 wait

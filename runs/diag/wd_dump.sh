@@ -6,14 +6,14 @@
 #SBATCH -J wd_dump
 #SBATCH -o runs/slurm/%x_%j.out
 # per-atom errors for the water / 3BPA dihedral analysis (docs/RACE_water_dihedral_analysis_2026-11-02.md)
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
-B=/scratch/t589a02/datasets_ext/BOTNet-datasets/dataset_3BPA
-W=/scratch/t589a02/datasets_ext/water_xyz
+B=/scratch/t510a13/data/datasets_ext/BOTNet-datasets/dataset_3BPA
+W=/scratch/t510a13/data/datasets_ext/water_xyz
 d3() { N=$1; G=$2; C=runs/${N}_cue/ckpt_${N}_cue.gauge.pkl; [ -f $C ] || C=runs/${N}_cue/ckpt_${N}_cue.pkl
   CUDA_VISIBLE_DEVICES=$G python -m bam_omat24.dump_frame_errors input/input_3bpa_omat24_${N}_cue.json --ckpt $C --per-atom --index-key none --batch-size 32 \
    --xyz $B/test_dih.xyz --xyz dataset_3BPA/train_300K.xyz --xyz dataset_3BPA/test_300K.xyz --xyz dataset_3BPA/test_1200K.xyz --out runs/diag/wd/$N 2>&1 | grep -E "MAE|Error|Traceback"; }

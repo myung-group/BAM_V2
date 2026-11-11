@@ -7,12 +7,12 @@
 #SBATCH -o runs/slurm/%x_%j.out
 # MACE baseline (official mace-torch 0.3.17, docs liquid-water example settings = paper's 64-0 model) on OUR water splits:
 #   split1 = random seed-42 split (train_only 1290 / valid 144 / test 159); split2 = documented first-1393 / last-200
-cd /scratch/t589a02/BAM_V2/runs/mace_water
+cd /scratch/t510a13/race_v2/work/runs/mace_water
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate mace
 export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
-W=/scratch/t589a02/datasets_ext/water_xyz; S=/scratch/t589a02/datasets_ext/water_split1393
+W=/scratch/t510a13/data/datasets_ext/water_xyz; S=/scratch/t510a13/data/datasets_ext/water_split1393
 COMMON="--model MACE --num_interactions 2 --num_channels 64 --max_L 0 --correlation 3 --r_max 6.0 --E0s average \
  --energy_key energy --forces_key forces --energy_weight 10 --forces_weight 1000 --batch_size 2 --valid_batch_size 4 \
  --max_num_epochs 800 --swa --start_swa 400 --scheduler_patience 15 --patience 30 --eval_interval 4 --ema \

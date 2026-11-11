@@ -5,7 +5,7 @@
 #SBATCH -p normal
 #SBATCH --comment="field=sciai;appl=jax"
 #SBATCH -o runs/slurm/%x_%j.out
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 JID=$1; shift
 while squeue -h -j $JID 2>/dev/null | grep -q .; do sleep 60; done
 RUNS=()

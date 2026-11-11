@@ -6,5 +6,5 @@
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
-cd /scratch/t589a02/datasets_ext
-python -I convert_qm9_props.py qm9_src/dsgdb9nsd.xyz.tar.bz2 qm9 . | tee /scratch/t589a02/BAM_V2/runs/diag/qm9_props_prep.log
+cd /scratch/t510a13/data/datasets_ext
+python -I convert_qm9_props.py qm9_src/dsgdb9nsd.xyz.tar.bz2 qm9 . | tee /scratch/t510a13/race_v2/work/runs/diag/qm9_props_prep.log

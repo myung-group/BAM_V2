@@ -4,7 +4,7 @@
 # usage: sbatch -J oam_soap -p normal --comment="field=sciai;appl=jax" --gres=gpu:3 -t 01:30:00 runs/diag/oam_soap_scan.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue

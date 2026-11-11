@@ -3,7 +3,7 @@
 # usage: sbatch -J rv2_lmp -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 00:40:00 runs/diag/lammps_step4.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
@@ -12,7 +12,7 @@ export LD_LIBRARY_PATH=$(ls -d $SP/nvidia/*/lib | tr '\n' ':')${LD_LIBRARY_PATH}
 export PATH=$SP/nvidia/cuda_nvcc/bin:$PATH
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false --xla_gpu_cuda_data_dir=$SP/nvidia/cuda_nvcc"
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
-python runs/diag/lammps_validate.py /scratch/t589a02/src/lammps-racev2-build/lmp_racev2 \
+python runs/diag/lammps_validate.py /scratch/t510a13/src/lammps-racev2-build/lmp_racev2 \
   $SP/jax_plugins/xla_cuda12/xla_cuda_plugin.so runs/lammps_export/lips_e3nn \
   input/input_3bpa_omat24_lipsF_fu_s42_cue.json runs/lipsF_fu_s42_cue/ckpt_lipsF_fu_s42_cue.gauge.pkl \
-  /scratch/t589a02/datasets_ext/lips/fu_test.xyz 2>&1 | grep -E "^run 0|^NVE|performance|Error|ERROR|Traceback|error"
+  /scratch/t510a13/data/datasets_ext/lips/fu_test.xyz 2>&1 | grep -E "^run 0|^NVE|performance|Error|ERROR|Traceback|error"

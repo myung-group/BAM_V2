@@ -1,10 +1,10 @@
 {
     "model": "RACE",
     "cutoff": 6.0,
-    "train_path": "/scratch/t589a02/datasets_ext/water_xyz/train_only.xyz",
+    "train_path": "/scratch/t510a13/data/datasets_ext/water_xyz/train_only.xyz",
     "test_paths": [
-        "/scratch/t589a02/datasets_ext/water_xyz/test.xyz",
-        "/scratch/t589a02/datasets_ext/water_xyz/test_noout.xyz"
+        "/scratch/t510a13/data/datasets_ext/water_xyz/test.xyz",
+        "/scratch/t510a13/data/datasets_ext/water_xyz/test_noout.xyz"
     ],
     "atomic_numbers": [
         1,
@@ -69,5 +69,5 @@
     "gauge_refit": true,
     "report_final_ema": true,
     "ckpt_last_every": 10,
-    "valid_path": "/scratch/t589a02/datasets_ext/water_xyz/valid.xyz"
+    "valid_path": "/scratch/t510a13/data/datasets_ext/water_xyz/valid.xyz"
 }

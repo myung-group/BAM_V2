@@ -1,11 +1,11 @@
 {
     "model": "RACE",
     "cutoff": 5.0,
-    "train_path": "/scratch/t589a02/datasets_ext/si_gap18/train_extrap.xyz",
+    "train_path": "/scratch/t510a13/data/datasets_ext/si_gap18/train_extrap.xyz",
     "test_paths": [
-        "/scratch/t589a02/datasets_ext/si_gap18/test_extrap.xyz",
-        "/scratch/t589a02/datasets_ext/si_gap18/test_rss.xyz",
-        "/scratch/t589a02/datasets_ext/si_gap18/test_compressionMD.xyz"
+        "/scratch/t510a13/data/datasets_ext/si_gap18/test_extrap.xyz",
+        "/scratch/t510a13/data/datasets_ext/si_gap18/test_rss.xyz",
+        "/scratch/t510a13/data/datasets_ext/si_gap18/test_compressionMD.xyz"
     ],
     "valid_frac": 0.1,
     "atomic_numbers": [

@@ -1,9 +1,9 @@
 {
     "model": "RACE",
     "cutoff": 5.0,
-    "train_path": "/scratch/t589a02/datasets_ext/qm9_U/train.xyz",
+    "train_path": "/scratch/t510a13/data/datasets_ext/qm9_U/train.xyz",
     "test_paths": [
-        "/scratch/t589a02/datasets_ext/qm9_U/test.xyz"
+        "/scratch/t510a13/data/datasets_ext/qm9_U/test.xyz"
     ],
     "atomic_numbers": [
         1,
@@ -70,7 +70,7 @@
     "gauge_refit": true,
     "report_final_ema": true,
     "soap_impl": "grouped",
-    "valid_path": "/scratch/t589a02/datasets_ext/qm9_U/valid.xyz",
+    "valid_path": "/scratch/t510a13/data/datasets_ext/qm9_U/valid.xyz",
     "e0_mode": "regression",
     "global_batch_size": 16,
     "ckpt_last_every": 5,

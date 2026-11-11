@@ -7,7 +7,7 @@
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 python - <<'EOF' | tee runs/diag/check_scale.log
 import pickle, numpy as np, jax
 names = ['r37_uffw03_s42', 'r37_uffw03_s43', 'r37_uffw03_s44', 'siF_s42', 'siF_s43', 'siF_s44',

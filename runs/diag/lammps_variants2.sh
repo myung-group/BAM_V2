@@ -2,7 +2,7 @@
 # re-export the float32 variants (outputs cast to the model dtype) and test e3nn_float32, cue_float64, cue_float32
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue

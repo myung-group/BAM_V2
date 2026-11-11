@@ -1,9 +1,9 @@
 {
     "model": "RACE",
     "cutoff": 5.0,
-    "train_path": "/scratch/t589a02/datasets_ext/rmd17_xyz/salicylic/train_1000.xyz",
+    "train_path": "/scratch/t510a13/data/datasets_ext/rmd17_xyz/salicylic/train_1000.xyz",
     "test_paths": [
-        "/scratch/t589a02/datasets_ext/rmd17_xyz/salicylic/test_2000.xyz"
+        "/scratch/t510a13/data/datasets_ext/rmd17_xyz/salicylic/test_2000.xyz"
     ],
     "valid_frac": 0.05,
     "atomic_numbers": [

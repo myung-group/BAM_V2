@@ -4,7 +4,7 @@
 # usage: sbatch -J rv2_export -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 01:00:00 runs/diag/export_lammps.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
@@ -14,6 +14,6 @@ C=input/input_3bpa_omat24_lipsF_fu_s42_cue.json
 K=runs/lipsF_fu_s42_cue/ckpt_lipsF_fu_s42_cue.gauge.pkl
 for B in e3nn cue; do
   python -m bam_omat24.export_lammps $C --ckpt $K --out runs/lammps_export/lips_$B --backend $B \
-    --buckets 128:4096 256:8192 --check /scratch/t589a02/datasets_ext/lips/fu_test.xyz --n-check 20 2>&1 \
+    --buckets 128:4096 256:8192 --check /scratch/t510a13/data/datasets_ext/lips/fu_test.xyz --n-check 20 2>&1 \
     | grep -E "exported|custom_call|written|check on|Error|error|Traceback" 
 done

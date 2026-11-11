@@ -1,9 +1,9 @@
 {
     "model": "RACE",
     "cutoff": 5.0,
-    "train_path": "/scratch/t589a02/datasets_ext/rmd17_official/aspirin/train_split01.xyz",
+    "train_path": "/scratch/t510a13/data/datasets_ext/rmd17_official/aspirin/train_split01.xyz",
     "test_paths": [
-        "/scratch/t589a02/datasets_ext/rmd17_official/aspirin/test_split01.xyz"
+        "/scratch/t510a13/data/datasets_ext/rmd17_official/aspirin/test_split01.xyz"
     ],
     "valid_frac": 0.05,
     "atomic_numbers": [

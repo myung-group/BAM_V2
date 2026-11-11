@@ -4,9 +4,9 @@ Reads the packed super-batch shards of BAM-GAMP-jax (``bam_jax.data.schema``: on
 super-batches with positions, species index, cell, raw DFT energy, forces, stress) and writes
 ``<out>/<name>_{train,valid,test}.xyz`` plus ``<out>/<name>_meta.json``.
 
-    python -m bam_omat24.oam_subset --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
-        --eval-root /scratch/t589a02/oam_data/omat24_val --atom-ref /scratch/t589a02/oam_data/refs/omat24_train_ls.npz \
-        --n-train 10000 --n-valid 1000 --n-test 1000 --out /scratch/t589a02/datasets_ext/oam_subsets
+    python -m bam_omat24.oam_subset --name omat24 --train-root /scratch/t510a13/data/oam_data/omat24_train \
+        --eval-root /scratch/t510a13/data/oam_data/omat24_val --atom-ref /scratch/t510a13/data/oam_data/refs/omat24_train_ls.npz \
+        --n-train 10000 --n-valid 1000 --n-test 1000 --out /scratch/t510a13/data/datasets_ext/oam_subsets
 
 Conventions of the shards (scripts/convert_aselmdb_to_shards.py): energy = raw total DFT energy (eV), forces eV/A,
 stress eV/A^3 with ASE sign (positive = tensile) and ASE Voigt order (xx, yy, zz, yz, xz, xy).  Species are encoded

@@ -1,9 +1,9 @@
 {
     "model": "RACE",
     "cutoff": 6.0,
-    "train_path": "/scratch/t589a02/datasets_ext/oam_subsets/mptrj_train.xyz",
+    "train_path": "/scratch/t510a13/data/datasets_ext/oam_subsets/mptrj_train.xyz",
     "test_paths": [
-        "/scratch/t589a02/datasets_ext/oam_subsets/mptrj_test.xyz"
+        "/scratch/t510a13/data/datasets_ext/oam_subsets/mptrj_test.xyz"
     ],
     "atomic_numbers": [
         1,
@@ -242,7 +242,7 @@
     "pair_repulsion_switch": 1.25,
     "pair_repulsion_switch_width": 0.3,
     "ckpt_last_every": 5,
-    "valid_path": "/scratch/t589a02/datasets_ext/oam_subsets/mptrj_valid.xyz",
+    "valid_path": "/scratch/t510a13/data/datasets_ext/oam_subsets/mptrj_valid.xyz",
     "e0_mode": "isolated",
     "periodic": true,
     "stress_loss": true,

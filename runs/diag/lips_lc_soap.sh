@@ -6,7 +6,7 @@
 #SBATCH -J lipslc_soap
 #SBATCH -o runs/slurm/%x_%j.out
 # LiPS learning curve (NequIP Table VI / CAMP): train 10/100/1000/2500, valid lc_valid (1000), test fu_test (5001)
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 RUNS=(lips_lc10_hill_soap_s42 lips_lc100_hill_soap_s42 lips_lc1000_hill_soap_s42 lips_lc2500_hill_soap_s42)
 for i in 0 1 2 3; do CUDA_VISIBLE_DEVICES=$i bash runs/run_cue.sh ${RUNS[$i]} & done
 wait

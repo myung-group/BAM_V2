@@ -1,9 +1,9 @@
 {
     "model": "RACE",
     "cutoff": 5.0,
-    "train_path": "/scratch/t589a02/datasets_ext/water_xyz/train.xyz",
+    "train_path": "/scratch/t510a13/data/datasets_ext/water_xyz/train.xyz",
     "test_paths": [
-        "/scratch/t589a02/datasets_ext/water_xyz/test.xyz"
+        "/scratch/t510a13/data/datasets_ext/water_xyz/test.xyz"
     ],
     "valid_frac": 0.1,
     "atomic_numbers": [

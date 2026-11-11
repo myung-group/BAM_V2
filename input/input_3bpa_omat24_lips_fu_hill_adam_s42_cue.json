@@ -1,9 +1,9 @@
 {
     "model": "RACE",
     "cutoff": 5.0,
-    "train_path": "/scratch/t589a02/datasets_ext/lips/fu_train.xyz",
+    "train_path": "/scratch/t510a13/data/datasets_ext/lips/fu_train.xyz",
     "test_paths": [
-        "/scratch/t589a02/datasets_ext/lips/fu_test.xyz"
+        "/scratch/t510a13/data/datasets_ext/lips/fu_test.xyz"
     ],
     "atomic_numbers": [
         3,
@@ -62,7 +62,7 @@
     "x_norm": "hill",
     "report_final_ema": true,
     "ckpt_last_every": 10,
-    "valid_path": "/scratch/t589a02/datasets_ext/lips/fu_valid.xyz",
+    "valid_path": "/scratch/t510a13/data/datasets_ext/lips/fu_valid.xyz",
     "learning_rate": 0.01,
     "gauge_refit": true,
     "global_batch_size": 4

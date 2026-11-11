@@ -6,7 +6,7 @@
 #SBATCH -J si_resume
 #SBATCH -o runs/slurm/%x_%j.out
 # resume the Si GAP-18 full runs cut by the 10 h limit of si_fair (restart: true, .last.pkl)
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 while squeue -h -j 1181879 2>/dev/null | grep -q .; do sleep 60; done
 RUNS=()
 for N in si_full_hill_soap_s42 si_full_hill_adam_s42; do grep -q "^exit 0" runs/${N}_cue/stdout.txt || RUNS+=($N); done

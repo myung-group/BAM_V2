@@ -2,13 +2,13 @@
 # memory of the exported function per bucket (gather vs ragged indexed linear), largest buffers with source lines
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
-export TMPDIR=/scratch/t589a02/tmp_xla_dump; mkdir -p $TMPDIR
+export TMPDIR=/scratch/t510a13/tmp_xla_dump; mkdir -p $TMPDIR
 C=input/input_3bpa_omat24_lipsF_fu_s42_cue.json
 K=runs/lipsF_fu_s42_cue/ckpt_lipsF_fu_s42_cue.gauge.pkl
 for REMAT in 1 0; do

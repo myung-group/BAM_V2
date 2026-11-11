@@ -7,13 +7,13 @@
 #SBATCH -o runs/slurm/%x_%j.out
 # (1) dihedral + train errors of the SOAP energy-weight sweep (r27_soap_ew*, 500 ep) -> does energy weight fix the collision bias?
 # (2) parameter-norm probe of lr 1e-2 vs 3e-3 vs v9a checkpoints (radial MLP extrapolation hypothesis)
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
-B=/scratch/t589a02/datasets_ext/BOTNet-datasets/dataset_3BPA
+B=/scratch/t510a13/data/datasets_ext/BOTNet-datasets/dataset_3BPA
 for N in r27_soap_ew3_s42 r27_soap_ew10_s42 r27_soap_ew30_s42 r27_soap_ew100_s42; do
   python -m bam_omat24.dump_frame_errors input/input_3bpa_omat24_${N}_cue.json --ckpt runs/${N}_cue/ckpt_${N}_cue.pkl --per-atom --index-key none --batch-size 32 \
     --xyz dataset_3BPA/train_300K.xyz --xyz $B/test_dih.xyz --out runs/diag/wd/$N 2>&1 | grep -E "MAE|Error|Traceback"

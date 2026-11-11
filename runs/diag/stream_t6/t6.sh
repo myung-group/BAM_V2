@@ -9,13 +9,13 @@
 # usage: sbatch -J t6stream -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 01:00:00 runs/diag/stream_t6/t6.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
 python -c "import vesin, lmdb" || { echo "ABORT: run 'pip install --no-deps vesin lmdb' in bam_cue first"; exit 1; }
 echo "python $(which python)  git $(git rev-parse --short HEAD)  node $(hostname)  cpus $(nproc)"
-D=/scratch/t589a02/datasets_ext/oam_subsets_100k
+D=/scratch/t510a13/data/datasets_ext/oam_subsets_100k
 BASE=input/input_3bpa_omat24_sz100k_L5x128amsgrad_omat24_v2_s42_cue.json
 O=runs/stream_t6; mkdir -p $O
 SZ=$O/sizes_omat24_train

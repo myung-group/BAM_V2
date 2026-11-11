@@ -1,6 +1,6 @@
 """LiPS MD observables exactly as in MDsim/observable.ipynb (Fu et al., TMLR 2023, Table 6).
 
-    python -m bam_omat24.md_lips_analysis <md dir with run*/> --ref /scratch/t589a02/datasets_ext/lips_src/lips.xyz
+    python -m bam_omat24.md_lips_analysis <md dir with run*/> --ref /scratch/t510a13/data/datasets_ext/lips_src/lips.xyz
 
 Per run: stability = first 1-ps window (80 saved frames) whose RDF MAE x 6 vs the reference exceeds 1.0
 (else the full 50 ps); RDF error over the stable part; Li diffusivity (if stable > 3200 frames = 40 ps):
@@ -80,8 +80,8 @@ def unwrap_traj(pos, cell):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("md_dir")
-    ap.add_argument("--ref", default="/scratch/t589a02/datasets_ext/lips_src/lips.xyz")
-    ap.add_argument("--ref-cache", default="/scratch/t589a02/datasets_ext/lips/md_reference.npz")
+    ap.add_argument("--ref", default="/scratch/t510a13/data/datasets_ext/lips_src/lips.xyz")
+    ap.add_argument("--ref-cache", default="/scratch/t510a13/data/datasets_ext/lips/md_reference.npz")
     args = ap.parse_args()
     cache = Path(args.ref_cache)
     if cache.exists():

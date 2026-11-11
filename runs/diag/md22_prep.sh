@@ -7,8 +7,8 @@
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
-cd /scratch/t589a02/datasets_ext && python convert_md22.py
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/data/datasets_ext && python convert_md22.py
+cd /scratch/t510a13/race_v2/work
 run4() { i=0; for m in "$@"; do CUDA_VISIBLE_DEVICES=$i bash runs/run_cue.sh md22T_$m & i=$((i+1)); done; wait; }
 run4 ala3 dha stach atat
 run4 atatcgcg bucky dwnt

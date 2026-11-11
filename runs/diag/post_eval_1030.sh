@@ -7,14 +7,14 @@
 #SBATCH -o runs/slurm/%x_%j.out
 # 2026-10-30: (a) dihedral scan of the 1500-ep SOAP 3BPA runs (gauge checkpoints); (b) rMD17 SOAP runs on
 # rest_split01 (all non-training frames), gauge checkpoints
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
-D=/scratch/t589a02/datasets_ext/rmd17_official
-DIH=/scratch/t589a02/datasets_ext/BOTNet-datasets/dataset_3BPA/test_dih.xyz
+D=/scratch/t510a13/data/datasets_ext/rmd17_official
+DIH=/scratch/t510a13/data/datasets_ext/BOTNet-datasets/dataset_3BPA/test_dih.xyz
 ev() { python -m bam_omat24.eval_sets input/input_3bpa_omat24_$1_cue.json --ckpt $2 $3 --tag $4 --xyz $5 2>&1 | grep -E "^set|xyz|written|Error|error"; }
 (
   export CUDA_VISIBLE_DEVICES=0

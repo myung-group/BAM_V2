@@ -6,7 +6,7 @@
 # and continue from the .last.pkl checkpoint (restart: true).  Rule (validation only): min over the last 50
 # epochs < 0.98 x min over epochs 200-250  ->  extend by EXTRA epochs (repeatable: the rule is re-applied).
 # usage: sbatch -J siX --dependency=afterany:<siF jobid> --gres=gpu:3 -t 12:00:00 runs/diag/si_extend.sh
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 EXTRA=${EXTRA:-200}
 PY=~/.conda/envs/bam_cue/bin/python
 todo=()

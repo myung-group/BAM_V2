@@ -6,7 +6,7 @@
 #SBATCH -J dih_r28s44
 #SBATCH -o runs/slurm/%x_%j.out
 # dihedral (beta slice) scan of the r28 seed-44 SOAP runs (same call as runs/diag/r30_job.sh)
-cd /scratch/t589a02/BAM_V2
+cd /scratch/t510a13/race_v2/work
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
@@ -19,7 +19,7 @@ for i in 0 1; do
   N=${RUNS[$i]}; C=runs/${N}_cue/ckpt_${N}_cue.gauge.pkl; [ -f $C ] || C=runs/${N}_cue/ckpt_${N}_cue.pkl
   (CUDA_VISIBLE_DEVICES=$i python -m bam_omat24.eval_sets input/input_3bpa_omat24_${N}_cue.json --ckpt $C \
      --group-key dihedrals --group-index 1 --tag dihbeta_gauge \
-     --xyz /scratch/t589a02/datasets_ext/BOTNet-datasets/dataset_3BPA/test_dih.xyz 2>&1 | grep -E "^set|test_dih|Error" > runs/${N}_cue/dih.txt) &
+     --xyz /scratch/t510a13/data/datasets_ext/BOTNet-datasets/dataset_3BPA/test_dih.xyz 2>&1 | grep -E "^set|test_dih|Error" > runs/${N}_cue/dih.txt) &
 done
 wait
 for N in ${RUNS[@]}; do echo "$N"; grep "dihedrals=all" runs/${N}_cue/dih.txt; done

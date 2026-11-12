@@ -435,6 +435,7 @@ class RACEXReadout(nnx.Module):
         rngs: nnx.Rngs,
         norm: bool = True,
         linear: bool = False,
+        species_rank: Optional[int] = None,
     ):
         # norm=False (review §11.16): no layer norm on the input -> the readout is a genuine
         # function of the magnitude of x (with x = A_i a body-ordered quantity), not a degree-0 one.
@@ -449,6 +450,7 @@ class RACEXReadout(nnx.Module):
             num_indexed_weights=n_species,
             force_irreps_out=True,
             biases=self.linear,
+            index_rank=species_rank,
             rngs=rngs,
         )
         if self.linear:
@@ -524,6 +526,8 @@ class RACEConvolution(nnx.Module):
         sym_target: str = "features",
         radial_scale: Optional[Sequence[float]] = None,
         radial_species_mix: Optional[str] = None,
+        species_rank: Optional[int] = None,
+        species_rank_lpos: Optional[int] = None,
         *,
         rngs: nnx.Rngs,
     ):
@@ -744,13 +748,16 @@ class RACEConvolution(nnx.Module):
             rngs=rngs,
         )
 
-        # Skip connection has per-species weights
+        # Skip connection has per-species weights (species_rank: rank-K factorisation along the species axis,
+        # see linear_nnx.Linear index_rank)
         self.skip = e3nn_nnx_Linear(
             irreps_in=input_irreps,
             irreps_out=update_irreps,
             linear_type="indexed",
             num_indexed_weights=n_species,
             force_irreps_out=True,
+            index_rank=species_rank,
+            index_rank_lpos=species_rank_lpos,
             rngs=rngs,
         )
 
@@ -1057,6 +1064,8 @@ class RACE(nnx.Module):
         force_encoding: bool = False,
         dens: bool = False,
         dens_seed: int = 0,
+        species_rank: Optional[int] = None,
+        species_rank_prune: bool = False,
         *,
         rngs: nnx.Rngs,
     ):
@@ -1393,6 +1402,22 @@ class RACE(nnx.Module):
             self.x_basis_mask = tuple(
                 float(ir.l <= self.x_basis_lmax) for mul, ir in self.hidden_irreps for _ in range(mul * ir.dim))
 
+        # species_rank K (2026-11-12): the species-indexed weight tables (n_species, mul, mul) of the skip
+        # connections, of the first Linear of the x / f readouts and of x_linear are W[Z] = K**-0.5 sum_k c[Z, k] B[k]
+        # (linear_nnx.Linear index_rank) instead of one free matrix per element -- 89 % of the parameters of the
+        # 89-element L5x128 model were these tables.  None: free tables (original).
+        # species_rank_prune: tables that cannot reach the energy get rank 1 -- x_linear when every layer takes its x
+        # from the atomic basis, and the l > 0 skip blocks of the last layer (its l > 0 features are read by nobody;
+        # in the free-table run these four tables were still at their initial values after 10 epochs).  Only valid
+        # without heads that read the final equivariant features (DeNS, noise head).
+        if species_rank is not None and int(species_rank) == int(n_species):
+            raise ValueError("species_rank must differ from n_species (soap_species_adam identifies the element "
+                             "tables by their leading dimension)")
+        self.species_rank = None if species_rank is None else int(species_rank)
+        self.species_rank_prune = bool(species_rank_prune) and self.species_rank is not None
+        if self.species_rank_prune and (dens or noise_head):
+            raise ValueError("species_rank_prune is not valid with dens / noise_head")
+        x_linear_unused = x_mode == "basis" and x_basis_layers is None
         # x_mode == "species": a single per-species scalar (original behaviour)
         self.x_linear = e3nn_nnx_Linear(
             irreps_in=input_irreps,
@@ -1400,6 +1425,7 @@ class RACE(nnx.Module):
             linear_type="indexed",
             num_indexed_weights=n_species,
             force_irreps_out=True,
+            index_rank=(1 if (self.species_rank_prune and x_linear_unused) else self.species_rank),
             rngs=rngs,
         )
 
@@ -1487,6 +1513,8 @@ class RACE(nnx.Module):
                 sym_target=sym_target,
                 radial_scale=radial_scales[i],
                 radial_species_mix=radial_species_mix,
+                species_rank=self.species_rank,
+                species_rank_lpos=(1 if (self.species_rank_prune and i == n_layers - 1) else None),
                 rngs=rngs,
             )
             if sym_method is not None and getattr(layer, "sym_contraction", False):
@@ -1505,6 +1533,7 @@ class RACE(nnx.Module):
                     rngs=rngs,
                     norm=x_readout_norm,
                     linear=(x_readout == "linear"),
+                    species_rank=self.species_rank,
                 ))
 
             if f_readout:
@@ -1515,6 +1544,7 @@ class RACE(nnx.Module):
                     n_species=n_species,
                     avg_n_neighbors=avg_n_neighbors,
                     rngs=rngs,
+                    species_rank=self.species_rank,
                 ))
 
             # x_mode == "node_scalar": project the receiving node's current

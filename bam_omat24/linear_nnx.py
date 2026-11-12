@@ -217,8 +217,22 @@ class Linear(nnx.Module):
         weights_dim: Optional[int] = None,
         input_dtype: jnp.dtype = jnp.float32,
         linear_type: str = "vanilla",
+        index_rank: Optional[int] = None,
+        index_rank_lpos: Optional[int] = None,
         rngs: nnx.Rngs,
     ):
+        # index_rank K (linear_type "indexed" only): the indexed weight blocks W[z] (num_indexed_weights, in, out)
+        # are not free but a rank-K factorisation along the index axis,
+        #     W[z] = K**-0.5 * sum_k coeff[z, k] * basis[k],
+        # with basis (K, in, out) shared by all indices and coeff (num_indexed_weights, K) one row per index (both
+        # unit normal, so every W[z] has the same variance as the free weight).  K = num_indexed_weights with
+        # coeff = identity is the free table.  index_rank_lpos: rank of the blocks whose output has l > 0 (default
+        # index_rank).  Biases stay free tables.  None (default): free table, unchanged behaviour.
+        if index_rank is not None and linear_type != "indexed":
+            raise ValueError("index_rank needs linear_type='indexed'")
+        self.index_rank: Optional[int] = None if index_rank is None else int(index_rank)
+        self.index_rank_lpos: Optional[int] = (self.index_rank if index_rank_lpos is None or index_rank is None
+                                               else int(index_rank_lpos))
         irreps_in_regrouped = e3nn.Irreps(irreps_in).regroup()
         irreps_out = e3nn.Irreps(irreps_out)
 
@@ -287,6 +301,12 @@ class Linear(nnx.Module):
                     )
 
                 weight_shape = (self.num_indexed_weights,) + ins.path_shape
+                rank = self._block_rank(ins)
+                if rank is not None:
+                    weight_shape = (rank,) + ins.path_shape           # the shared basis; coefficients below
+                    coeff = jax.random.normal(jax.random.fold_in(weight_key, 1),
+                                              (self.num_indexed_weights, rank), self._input_dtype)
+                    setattr(self, self._coeff_name(attr_name), nnx.Param(coeff))
 
 
             weight_value = weight_std * jax.random.normal(
@@ -329,11 +349,25 @@ class Linear(nnx.Module):
             mapping[name] = self._sanitize_name(name)
         return mapping
 
+    def _block_rank(self, ins) -> Optional[int]:
+        """Index rank of one weight block (None: free table)."""
+        if self.index_rank is None or ins.i_in == -1:
+            return None
+        return self.index_rank_lpos if self._linear.irreps_out[ins.i_out].ir.l > 0 else self.index_rank
+
+    @staticmethod
+    def _coeff_name(attr_name: str) -> str:
+        return "coeff_" + attr_name[len("weight_"):]
+
     def _get_weight(self, name: str) -> jax.Array:
         """Get weight array by original name."""
         attr_name = self._weight_name_mapping[name]
         param = getattr(self, attr_name)
-        return param.value
+        w = param.value
+        if self.index_rank is not None and not name.startswith("b["):
+            c = getattr(self, self._coeff_name(attr_name)).value        # (num_indexed_weights, K)
+            w = jnp.tensordot(c, w, axes=1) * (w.shape[0] ** -0.5)      # -> (num_indexed_weights, in, out)
+        return w
 
     def __call__(self, weights_or_input, input_or_none=None) -> e3nn.IrrepsArray:
         """Apply the linear operator.

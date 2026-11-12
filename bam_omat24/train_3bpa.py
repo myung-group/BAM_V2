@@ -723,6 +723,8 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
                      sym_init_scale=float(_get(cfg, 'sym_init_scale', 0.1)),
                      sym_method=_get(cfg, 'sym_method', None),
                      sym_target=_get(cfg, 'sym_target', 'features'),
+                     species_rank=_get(cfg, 'species_rank', None),
+                     species_rank_prune=bool(_get(cfg, 'species_rank_prune', False)),
                      shell_sk_gate=bool(_get(cfg, 'shell_sk_gate', False)),
                      strata_resum=_get(cfg, 'strata_resum', None),
                      species_shell_radii=(element_shell_radii(cfg['atomic_numbers'])
@@ -1213,10 +1215,22 @@ def train(cfg: Dict):
         # carried by both)
         cands = [load_checkpoint(p) for p in (last_name, ckpt_name) if Path(p).exists()]
         ckpt = max(cands, key=lambda c: int(c.get('epoch', 0)))
-        params = ckpt['params']
-        ema_params = ckpt['ema_params']
-        opt_state = ckpt['opt_state']
-        schedule_state = ckpt['schedule_state']
+        # leaves take the dtypes of this run's fresh state, so a float64 run can be resumed as float32 model +
+        # float64 SOAP state ("x64": false, "soap_state_dtype": "float64") and the reverse; same tree structure
+        n_cast = [0]
+
+        def _as_run(x, ref):
+            if x.dtype != ref.dtype:
+                n_cast[0] += 1
+                x = np.asarray(x).astype(ref.dtype)
+            return x
+        params, ema_params, opt_state, schedule_state = (
+            jax.tree.map(_as_run, ckpt[k], ref) for k, ref in (
+                ('params', params), ('ema_params', params), ('opt_state', opt_state),
+                ('schedule_state', schedule_state)))
+        if n_cast[0]:
+            print(f"Resume: {n_cast[0]} checkpoint leaves cast to the dtypes of this run "
+                  f"(parameters {jax.tree.leaves(params)[0].dtype})", file=fout)
         best_val_loss = min(c.get('best_val_loss', math.inf) for c in cands)
         start_epoch = int(ckpt.get('epoch', 0))
         del cands
@@ -1359,6 +1373,7 @@ def train(cfg: Dict):
         acc = {k: replicate(np.zeros(()), mesh) for k in
                ('energy', 'force', 'graphs', 'atoms', 'grad', 'applied', 'aux', 'dens_sum', 'dens_count')}
         n_steps = 0
+        _progress_steps = int(os.environ.get('BAM_PROGRESS_STEPS', 0) or 0)
         epoch_start = time.time()
         for batch, _info in train_loader:
             if dynamic_weights:
@@ -1380,6 +1395,22 @@ def train(cfg: Dict):
             acc['dens_count'] = acc['dens_count'] + metrics['dens_count']
             n_steps += 1
             global_step += 1
+            if n_steps == 1 and epoch == start_epoch:
+                # the start-up window (first compile, first multi-process collective) is over: say so, and stop the
+                # periodic stack dumps of BAM_STACK_DUMP_SECS (they are for a hang in that window)
+                jax.block_until_ready(metrics['n_graphs'])
+                if os.environ.get("BAM_STACK_DUMP_SECS"):
+                    import faulthandler
+                    faulthandler.cancel_dump_traceback_later()
+                if rank0:
+                    print(f"first training step done, {time.time() - epoch_start:.0f} s after the epoch start",
+                          flush=True)
+            if _progress_steps and rank0 and n_steps % _progress_steps == 0:
+                # steps dispatched so far (the device may lag by a few steps); stdout only
+                ht = stream_loader.host_times if stream_mode else None      # cumulative since the start of the run
+                print(f"epoch {epoch + 1} step {n_steps} {time.time() - epoch_start:.0f} s"
+                      + (f"  host s: wait {ht['wait']:.1f} collate {ht['collate']:.1f} stack {ht['stack']:.1f}"
+                         if ht else ""), flush=True)
         acc = {k: float(to_host(v)) for k, v in acc.items()}
         acc_graphs, acc_atoms, acc_grad, acc_applied = (acc['graphs'], acc['atoms'],
                                                         acc['grad'], acc['applied'])
@@ -1405,6 +1436,13 @@ def train(cfg: Dict):
              "F_MAE": val_metrics['force_mae'] * 1e3},
             {"lr": lr_now, "wE": weights['energy_weight'], "wF": weights['force_weight']},
         )
+        if use_stress:
+            # the unweighted terms of the validation loss (the row above has only their weighted sum; the training
+            # LOSS column is wE*E + wF*F without the stress term)
+            tlog.message(f"  valid loss terms epoch {epoch + 1}: E {val_metrics['energy_loss']:.4e}  "
+                         f"F {val_metrics['force_loss']:.4e}  S {val_metrics['stress_loss']:.4e}  "
+                         f"S_RMSE {val_metrics['stress_rmse_comp'] * 160.21766:.3f} GPa  "
+                         f"E_MAE {val_metrics['energy_mae'] * 1e3:.2f} meV/atom")
         if dens_cfg and ((epoch + 1) % 10 == 0 or epoch == start_epoch):
             tlog.message(f"  DeNS epoch {epoch+1}: weight {dens_w:.3e} noise L2MAE over the corrupted atoms "
                          f"{acc['dens_sum'] / max(acc['dens_count'], 1.0):.4f} ({acc['dens_count']:.0f} atoms) "

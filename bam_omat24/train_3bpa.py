@@ -646,6 +646,8 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
                      sym_init_scale=float(_get(cfg, 'sym_init_scale', 0.1)),
                      sym_method=_get(cfg, 'sym_method', None),
                      sym_target=_get(cfg, 'sym_target', 'features'),
+                     species_rank=_get(cfg, 'species_rank', None),
+                     species_rank_prune=bool(_get(cfg, 'species_rank_prune', False)),
                      shell_sk_gate=bool(_get(cfg, 'shell_sk_gate', False)),
                      strata_resum=_get(cfg, 'strata_resum', None),
                      species_shell_radii=(element_shell_radii(cfg['atomic_numbers'])

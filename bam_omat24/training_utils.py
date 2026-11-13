@@ -608,6 +608,21 @@ def compute_loss(
         q_loss = masked_charge_loss(results['charges'], batch.nodes['ref_charges'],
                                     jraph.get_node_padding_mask(batch), n_atoms,
                                     weights=batch.nodes.get('ref_charges_w'))
+        if results.get('charge_nbo_t') is not None and 'ref_charges_nbo' in batch.nodes:
+            # RACE_LR charge_nbo_head: the redistribution applied to the charge labels vs the NBO labels (atoms of
+            # structures with both labels; NaN labels = none)
+            from bam_omat24.race_lr_nnx import RACE_LR
+            qdt = results['charges'].dtype
+            rl = batch.nodes['ref_charges'].astype(qdt)
+            has = jnp.isfinite(rl)
+            rl0 = jnp.where(has, rl, 0.0)
+            wq = (jraph.get_node_padding_mask(batch).astype(qdt) * has.astype(qdt)
+                  * batch.nodes['ref_charges_nbo_w'].astype(qdt))
+            if batch.nodes.get('ref_charges_w') is not None:
+                wq = wq * batch.nodes['ref_charges_w'].astype(qdt)
+            pq = RACE_LR.spin_redistribute(rl0, results['charge_nbo_t'].astype(qdt), batch)
+            q_loss = q_loss + jnp.sum(wq * (pq - batch.nodes['ref_charges_nbo'].astype(qdt)) ** 2) / jnp.maximum(
+                jnp.sum(wq), 1.0)
         total_loss = total_loss + charge_weight * q_loss
     d_loss = jnp.zeros(())
     if dipole_weight > 0.0 and 'dipole' in results and isinstance(batch.globals, dict) and 'dipole' in batch.globals:
@@ -633,8 +648,33 @@ def compute_loss(
         # mean, like the dipole term)
         sdt = results['spins'].dtype
         nw = jraph.get_node_padding_mask(batch).astype(sdt) * batch.nodes['ref_spins_w'].astype(sdt)
-        ds = results['spins'] - batch.nodes['ref_spins'].astype(sdt)
-        sp_loss = jnp.sum(nw * ds ** 2) / jnp.maximum(jnp.sum(nw), 1.0)
+        ref = batch.nodes['ref_spins'].astype(sdt)
+        ds = results['spins'] - ref
+        if results.get('spin_moments') is None:
+            sp_loss = jnp.sum(nw * ds ** 2) / jnp.maximum(jnp.sum(nw), 1.0)
+        else:
+            # RACE_LR spin_energy: invariant targets.  (1) local moments mu vs |m_ref|; (2) pair correlations c vs
+            # sign(m_ref,i m_ref,j) on the neighbour pairs with |m_ref| >= 0.1 on both atoms; (3) the signed head only
+            # on graphs with 2S+1 > 1 (a singlet's sign pattern is arbitrary: +m / -m are the same state)
+            n_nodes = ref.shape[0]
+            ng = jnp.repeat(jnp.arange(batch.n_node.shape[0]), batch.n_node, total_repeat_length=n_nodes)
+            S = jnp.asarray(batch.globals['spin'], sdt).reshape(-1) if 'spin' in batch.globals else jnp.ones(
+                (batch.n_node.shape[0],), sdt)
+            mom = jnp.sum(nw * (results['spin_moments'] - jnp.abs(ref)) ** 2) / jnp.maximum(jnp.sum(nw), 1.0)
+            rcv, snd = batch.receivers, batch.senders
+            big = (jnp.abs(ref) >= 0.1).astype(sdt) * nw
+            ew = big[rcv] * big[snd] * (rcv != snd).astype(sdt)
+            cor = jnp.sum(ew * (results['spin_corr'] - jnp.sign(ref[rcv] * ref[snd])) ** 2) / jnp.maximum(jnp.sum(ew), 1.0)
+            nws = nw * (S[ng] > 1.5).astype(sdt)
+            sgn = jnp.sum(nws * ds ** 2) / jnp.maximum(jnp.sum(nws), 1.0)
+            sp_loss = mom + cor + sgn
+        if results.get('spin_nbo_t') is not None and 'ref_spins_nbo' in batch.nodes:
+            # RACE_LR spin_nbo_head: the redistribution applied to the Lowdin labels vs the NBO labels
+            from bam_omat24.race_lr_nnx import RACE_LR
+            nwn = nw * batch.nodes['ref_spins_nbo_w'].astype(sdt)
+            pn = RACE_LR.spin_redistribute(ref, results['spin_nbo_t'].astype(sdt), batch)
+            sp_loss = sp_loss + jnp.sum(nwn * (pn - batch.nodes['ref_spins_nbo'].astype(sdt)) ** 2) / jnp.maximum(
+                jnp.sum(nwn), 1.0)
         total_loss = total_loss + spin_weight * sp_loss
 
     aux = {

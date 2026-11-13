@@ -48,7 +48,53 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
                "cs_encoding": "scalar", "cs_layers": "first", "cs_species_gate": False,
                "cs_max_charge": 6, "cs_max_spin": 11,
                "sigma_bounds": None, "ct_mode": "global", "ct_switch": [3.0, 4.5], "ct_init": 1.15,
-               "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2, "spin_head": False}
+               "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2, "spin_head": False,
+               "spin_energy": False, "spin_w_init": "sdftb", "spin_mu_bias": -4.0, "spin_pair": True,
+               "spin_pair_switch": None, "spin_kappa_init": 0.5, "spin_nbo_head": False, "spin_nbo_switch": None,
+               "charge_nbo_head": False}
+# "charge_nbo_head": true (2026-11-14; needs the Qeq stratum; an output, not in the energy): the charges of a second
+# partition scheme (NBO) from the model charges q (trained against charge_label_key, e.g. lowdin_charges) by the same
+# kind of local redistribution as spin_nbo_head, q^NBO_i = q_i + sum_j t^q_ij (q_j - q_i), on the pairs inside
+# long_range ct_switch (charge moves only where the charge transfer lets it move: the integer charges of separated
+# molecules are kept).  Outputs 'charges_nbo', 'charge_nbo_t'; loss (training_utils, charge_weight): the map applied
+# to the charge LABELS vs the NBO labels (cfg charge_nbo_label_key, default nbo_charges).  OMol25 4M check: Lowdin -> NBO
+# charges differ by RMS 0.44 e, one constant per element pair on bonds explains R^2 0.73.
+# "spin_nbo_head": true (2026-11-14; needs spin_head; an output, not in the energy): the spin populations of a second
+# partition scheme (NBO) from the Lowdin-like ones by a charge-conserving local redistribution on the neighbour pairs
+#     m^NBO_i = m_i + sum_j t_ij (m_j - m_i),   t_ij = MLP(h_i + h_j, h_i h_j, r_ij) (1 - C2 switch over spin_nbo_switch)
+# (t symmetric, zero output layer: m^NBO = m at the start; sum m^NBO = sum m exactly; linear in m, so a global spin
+# flip is consistent).  spin_nbo_switch default: long_range ct_switch, so no spin moves between separated molecules.
+# Outputs 'spins_nbo' (from the predicted m) and 'spin_nbo_t' (edges); the loss (training_utils, spin_weight) applies
+# the map to the Lowdin LABELS and compares with the NBO labels (both from the same SCF solution: consistent signs).
+# OMol25 4M check (md_water/spin_label_check.py): one constant t per element pair on bonds already gives R^2 0.76.
+# "spin_energy": true (2026-11-14; needs spin_head): a spin-polarisation energy in INVARIANT spin variables, so that
+# a symmetric diradical (two equivalent atoms) and the arbitrary sign of a broken-symmetry singlet are representable:
+#   mu_i >= 0   local moment |m_i| of atom i (softplus head on the spin-head hidden layer, bias spin_mu_bias), raised
+#               to sum_i mu_i >= 2S by w_i max(0, 2S - sum mu) (w = the softmax weights of spin_head);
+#               mu = 0 on the graphs of a restricted calculation: globals 'unrestricted' = 0 (singlets only; a graph
+#               without the field counts as restricted when it is a singlet and unrestricted otherwise)
+#   c_ij in [-1, 1]  spin correlation of a neighbour pair (+1 parallel, -1 antiparallel): tanh of an MLP of the
+#               symmetric pair features (h_i + h_j, h_i h_j, S_z), zero output layer (c = 0 at the start)
+#     E_spin = sum_i [ Delta_i mu_i + 1/2 W_Z mu_i^2 ]  +  sum_{i<j} J_ij(r_ij) mu_i mu_j c_ij
+#   Delta_i = delta0_Z + Linear(spin-head hidden)      promotion cost of an unpaired electron on atom i (eV, zero init)
+#   W_Z                                                 on-site exchange (spin constant, eV per electron^2; "sdftb":
+#                                                       atomic DFTB spin constants of the highest occupied shell for
+#                                                       the elements of SDFTB_W, zero for the others; "zero")
+#   J_ij = A_{Zi Zj} exp(-(kappa_Zi + kappa_Zj)(r - r_cov,i - r_cov,j)) (1 - C2 switch over spin_pair_switch, default [cutoff - 2, cutoff])
+#                                                       inter-site exchange coupling (A symmetric, zero init; kappa =
+#                                                       softplus, 1/A, starts at spin_kappa_init); J > 0 favours the
+#                                                       antiparallel (broken-symmetry) arrangement: E_T - E_BS = 2 J mu^2
+# Outputs: 'spin_moments' mu (atoms), 'spin_corr' c (edges of the neighbour list), 'spin_s2' the local-moment estimate
+# <S^2> = S_z (S_z + 1) + 1/2 (sum mu - 2 S_z) per graph (OMol25 Lowdin spins: MAE 0.02 against s_squared).  A
+# restricted singlet gets exactly E_spin = 0.  Delta, A and c start at zero; W starts at zero only with
+# "spin_w_init": "zero" (then the model starts exactly as the model without spin_energy).  Training (spin_weight,
+# training_utils): (mu - |m_ref|)^2, (c - sign(m_ref,i m_ref,j))^2 on pairs with |m_ref| >= 0.1 on both atoms, and
+# the signed head only on graphs with S > 0 (the sign pattern of a singlet is arbitrary).
+# Atomic spin constants W (Hartree) of the highest occupied shell, DFTB (PBE atoms): H 1s-1s, C / N / O 2p-2p.
+# H and C as in the 3ob-3-1 set (H -0.0717, C 2p-2p -0.0227, checked 2026-11-14); N and O from the commonly used table,
+# not checked against a primary source.  The values are only the starting point of the learned W.
+SDFTB_W = {1: -0.0717, 6: -0.0227, 7: -0.026, 8: -0.028}
+HARTREE_EV = 27.211386245988
 # "spin_head": true (2026-11-13): atomic spin populations s_i (out 'spins') from the last-layer scalars, s_raw + w_i
 # (2S - sum s_raw) with w = softmax over the graph (sums exactly to 2S = multiplicity - 1); trained with spin_weight
 # against per-atom spin labels (e.g. lowdin_spins).  An auxiliary output: it does not enter the energy.
@@ -192,6 +238,61 @@ class RACE_LR(RACE):
             n0s = sum(mul for mul, ir in e3nn.Irreps(kw['hidden_irreps']) if ir == e3nn.Irrep('0e'))
             self.sp_head1 = nnx.Linear(n0s, int(lr['head_hidden']), rngs=rngs)
             self.sp_head2 = nnx.Linear(int(lr['head_hidden']), 2, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
+        self.spin_energy = bool(lr['spin_energy'])
+        if self.spin_energy:
+            if not (self.spin_head and self.qeq):
+                raise ValueError("long_range spin_energy needs spin_head true (and the Qeq stratum)")
+            h = int(lr['head_hidden'])
+            self.sp_mu = nnx.Linear(h, 1, rngs=rngs, kernel_init=nnx.initializers.zeros_init(),
+                                    bias_init=nnx.initializers.constant(float(lr['spin_mu_bias'])))
+            self.sp_c1 = nnx.Linear(2 * h + 1, h, rngs=rngs)
+            self.sp_c2 = nnx.Linear(h, 1, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
+            self.sp_delta = nnx.Linear(h, 1, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
+            self.sp_delta0 = nnx.Param(jnp.zeros((n_species,), jnp.float32))
+            winit = str(lr['spin_w_init'])
+            if winit == 'zero':
+                w = jnp.zeros((n_species,), jnp.float32)
+            elif winit == 'sdftb':
+                zs = self.species_z
+                if zs is None or len(zs) != n_species:
+                    raise ValueError("spin_w_init 'sdftb' needs species_z (one atomic number per species)")
+                w = jnp.asarray([SDFTB_W.get(int(z), 0.0) * HARTREE_EV for z in zs], jnp.float32)
+            else:
+                raise ValueError(f"long_range spin_w_init must be 'sdftb' or 'zero', got {winit!r}")
+            self.sp_w = nnx.Param(w)
+            self.spin_pair = bool(lr['spin_pair'])
+            if self.spin_pair:
+                if lr['spin_pair_switch'] is None:          # default: switched off over the last 2 A before the cutoff
+                    lr['spin_pair_switch'] = [max(0.0, float(kw['cutoff']) - 2.0), float(kw['cutoff'])]
+                r_on, r_off = (float(x) for x in lr['spin_pair_switch'])
+                if not 0.0 <= r_on < r_off <= float(kw['cutoff']):
+                    raise ValueError(f"long_range spin_pair_switch must satisfy 0 <= r_on < r_off <= cutoff, got "
+                                     f"{lr['spin_pair_switch']}")
+                self.sp_j = nnx.Param(jnp.zeros((n_species, n_species), jnp.float32))
+                k0 = float(lr['spin_kappa_init'])
+                self.sp_kappa = nnx.Param(jnp.full((n_species,), math.log(math.expm1(k0)), jnp.float32))
+        self.spin_nbo = bool(lr['spin_nbo_head'])
+        if self.spin_nbo:
+            if not (self.spin_head and self.qeq):
+                raise ValueError("long_range spin_nbo_head needs spin_head true (and the Qeq stratum)")
+            if lr['spin_nbo_switch'] is None:
+                lr['spin_nbo_switch'] = [float(x) for x in lr['ct_switch']]
+            r_on, r_off = (float(x) for x in lr['spin_nbo_switch'])
+            if not 0.0 <= r_on < r_off <= float(kw['cutoff']):
+                raise ValueError(f"long_range spin_nbo_switch must satisfy 0 <= r_on < r_off <= cutoff, got "
+                                 f"{lr['spin_nbo_switch']}")
+            h = int(lr['head_hidden'])
+            self.sp_t1 = nnx.Linear(2 * h + 1, h, rngs=rngs)
+            self.sp_t2 = nnx.Linear(h, 1, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
+        self.charge_nbo = bool(lr['charge_nbo_head'])
+        if self.charge_nbo:
+            if not self.qeq:
+                raise ValueError("long_range charge_nbo_head needs the Qeq stratum (qeq true)")
+            n0c = sum(mul for mul, ir in e3nn.Irreps(kw['hidden_irreps']) if ir == e3nn.Irrep('0e'))
+            h = int(lr['head_hidden'])
+            self.cq_h = nnx.Linear(n0c, h, rngs=rngs)
+            self.cq_t1 = nnx.Linear(2 * h + 1, h, rngs=rngs)
+            self.cq_t2 = nnx.Linear(h, 1, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
         if not (self.qeq or self.cs_embed or self.n_tasks or getattr(self, '_allow_plain', False)):
             raise ValueError("long_range: qeq false, charge_spin_embedding false and n_tasks 0 is plain RACE; "
                              "use model RACE")
@@ -316,14 +417,112 @@ class RACE_LR(RACE):
         out = dict(out)
         out['node_energies'] = out['node_energies'] + e.reshape(out['node_energies'].shape).astype(out['node_energies'].dtype)
         out['charges'] = q
+        if self.charge_nbo:
+            hq = jax.nn.silu(self.cq_h(s))
+            tq = self._pair_t(hq, self.cq_t1, self.cq_t2, self.lr['ct_switch'], positions, cell, data, node_graph,
+                              node_mask, n_graphs, dt)
+            out['charge_nbo_t'] = tq
+            out['charges_nbo'] = self.spin_redistribute(q, tq, data)
         if self.spin_head:
-            out['spins'] = self._spins(s, data, node_graph, node_mask, n_graphs, dt)
+            m, hid, w = self._spin_parts(s, data, node_graph, node_mask, n_graphs, dt)
+            out['spins'] = m
+            if self.spin_energy:
+                es, extra = self._spin_energy(hid, w, positions, cell, data, node_graph, node_mask, n_graphs, dt)
+                out['node_energies'] = (out['node_energies']
+                                        + es.reshape(out['node_energies'].shape).astype(out['node_energies'].dtype))
+                out['spin_node_energies'] = es
+                out.update(extra)
+            if self.spin_nbo:
+                t = self._spin_nbo_t(hid, positions, cell, data, node_graph, node_mask, n_graphs, dt)
+                out['spin_nbo_t'] = t
+                out['spins_nbo'] = self.spin_redistribute(m, t, data)
         return out
+
+    @staticmethod
+    def spin_redistribute(m, t, data):
+        """m_i + sum_j t_ij (m_j - m_i) over the directed edges (receiver i, sender j); conserves sum m per graph"""
+        snd, rcv = data.senders, data.receivers
+        return m + jnp.zeros_like(m).at[rcv].add(t * (m[snd] - m[rcv]))
+
+    def _spin_nbo_t(self, hid, positions, cell, data, node_graph, node_mask, n_graphs, dt):
+        """(E,) symmetric redistribution coefficients t_ij of spin_nbo_head (0 beyond spin_nbo_switch[1])"""
+        return self._pair_t(hid, self.sp_t1, self.sp_t2, self.lr['spin_nbo_switch'], positions, cell, data, node_graph,
+                            node_mask, n_graphs, dt)
+
+    def _pair_t(self, hid, l1, l2, switch, positions, cell, data, node_graph, node_mask, n_graphs, dt):
+        """(E,) symmetric pair coefficients MLP(h_i + h_j, h_i h_j, r_ij) (1 - C2 switch), 0 beyond switch[1]"""
+        r_on, r_off = (float(v) for v in switch)
+        snd, rcv = data.senders, data.receivers
+        ok = node_mask[snd] & node_mask[rcv] & (snd != rcv)
+        d = positions[snd] - positions[rcv]
+        if self.periodic and cell is not None and isinstance(data.edges, dict) and 'Sij' in data.edges:
+            cells = self._safe_cells(cell, n_graphs)
+            d = d - jnp.einsum('ei,eij->ej', jnp.asarray(data.edges['Sij'], dt), cells[node_graph[rcv]])
+        d2 = jnp.sum(d * d, axis=-1)
+        good = ok & (d2 > 0)
+        r = jnp.sqrt(jnp.where(good, d2, 1.0))
+        hid = hid.astype(dt)
+        x = jnp.concatenate([hid[rcv] + hid[snd], hid[rcv] * hid[snd], r[:, None]], axis=-1)
+        t = l2(jax.nn.silu(l1(x)))[:, 0].astype(dt)
+        return jnp.where(good, t * (1.0 - sr_switch(r, r_on, r_off)), 0.0)
+
+    def _unrestricted(self, data, S, n_graphs, dt):
+        """1 for the graphs whose spin density may be non-zero: every open shell (2S+1 > 1) and the singlets of an
+        unrestricted calculation (globals 'unrestricted' = 1); 0 for a restricted singlet (spin density zero)."""
+        g = data.globals if isinstance(data.globals, dict) else {}
+        u = g.get('unrestricted')
+        u = jnp.zeros((n_graphs,), dt) if u is None else jnp.asarray(u, dt).reshape(n_graphs)
+        return jnp.where(S > 1.5, 1.0, jnp.clip(u, 0.0, 1.0))
+
+    def _spin_energy(self, hid, w, positions, cell, data, node_graph, node_mask, n_graphs, dt):
+        """per-atom spin-polarisation energy in the invariant variables mu (local moments) and c (pair correlations);
+        formula in the comment above SDFTB_W.  Returns (energies, {'spin_moments', 'spin_corr', 'spin_s2'})."""
+        sp = data.nodes['species']
+        _, S = self._graph_globals(data, dt)
+        two_s = S - 1.0
+        hid = hid.astype(dt)
+        mu = jax.nn.softplus(self.sp_mu(hid)[:, 0].astype(dt))
+        mu = jnp.where(node_mask, mu, 0.0)
+        tot = jax.ops.segment_sum(mu, node_graph, num_segments=n_graphs)
+        mu = mu + w * jnp.maximum(two_s - tot, 0.0)[node_graph]                # sum mu >= 2S
+        mu = jnp.where(node_mask, mu * self._unrestricted(data, S, n_graphs, dt)[node_graph], 0.0)
+        delta = self.sp_delta0[...].astype(dt)[sp] + self.sp_delta(hid)[:, 0].astype(dt)
+        e = delta * mu + 0.5 * self.sp_w[...].astype(dt)[sp] * mu * mu
+        snd, rcv = data.senders, data.receivers
+        ok = node_mask[snd] & node_mask[rcv]
+        sz = 0.5 * two_s
+        x = jnp.concatenate([hid[rcv] + hid[snd], hid[rcv] * hid[snd], sz[node_graph[rcv]][:, None]], axis=-1)
+        c = jnp.tanh(self.sp_c2(jax.nn.silu(self.sp_c1(x)))[:, 0].astype(dt))
+        c = jnp.where(ok, c, 0.0)
+        if self.spin_pair:
+            r_on, r_off = (float(v) for v in self.lr['spin_pair_switch'])
+            d = positions[snd] - positions[rcv]
+            if self.periodic and cell is not None and isinstance(data.edges, dict) and 'Sij' in data.edges:
+                cells = self._safe_cells(cell, n_graphs)
+                d = d - jnp.einsum('ei,eij->ej', jnp.asarray(data.edges['Sij'], dt), cells[node_graph[rcv]])
+            d2 = jnp.sum(d * d, axis=-1)
+            good = ok & (d2 > 0)
+            r = jnp.sqrt(jnp.where(good, d2, 1.0))
+            T = self.sp_j[...].astype(dt)
+            A = (0.5 * (T + T.T))[sp[rcv], sp[snd]]
+            kap = jax.nn.softplus(self.sp_kappa[...].astype(dt))
+            rc = jnp.asarray(self.cov_r, dt)
+            arg = jnp.minimum(-(kap[sp[rcv]] + kap[sp[snd]]) * (r - rc[sp[rcv]] - rc[sp[snd]]), 20.0)
+            J = jnp.where(good, A * jnp.exp(arg) * (1.0 - sr_switch(r, r_on, r_off)), 0.0)
+            # every pair is in the neighbour list twice (both directions): half of J mu_i mu_j c_ij per directed edge
+            e = e + jnp.zeros_like(e).at[rcv].add(0.5 * J * mu[rcv] * mu[snd] * c)
+        s2 = sz * (sz + 1.0) + 0.5 * (jax.ops.segment_sum(mu, node_graph, num_segments=n_graphs) - two_s)
+        return jnp.where(node_mask, e, 0.0), {'spin_moments': mu, 'spin_corr': c, 'spin_s2': s2}
 
     def _spins(self, s, data, node_graph, node_mask, n_graphs, dt):
         """atomic spin populations summing to 2S = multiplicity - 1 of every graph (spin_head)"""
+        return self._spin_parts(s, data, node_graph, node_mask, n_graphs, dt)[0]
+
+    def _spin_parts(self, s, data, node_graph, node_mask, n_graphs, dt):
+        """(spin populations, hidden layer of the spin head, softmax weights w of the graph)"""
         _, S = self._graph_globals(data, dt)
-        z = self.sp_head2(jax.nn.silu(self.sp_head1(s))).astype(dt)
+        hid = jax.nn.silu(self.sp_head1(s))
+        z = self.sp_head2(hid).astype(dt)
         raw, logit = z[:, 0], z[:, 1]
         lg = jnp.where(node_mask, logit, -jnp.inf)
         mx = jax.lax.stop_gradient(jax.ops.segment_max(lg, node_graph, num_segments=n_graphs))
@@ -333,7 +532,7 @@ class RACE_LR(RACE):
         w = un / jnp.where(den > 0, den, 1.0)[node_graph]
         raw = jnp.where(node_mask, raw, 0.0)
         tot = jax.ops.segment_sum(raw, node_graph, num_segments=n_graphs)
-        return jnp.where(node_mask, raw + w * (S - 1.0 - tot)[node_graph], 0.0)
+        return jnp.where(node_mask, raw + w * (S - 1.0 - tot)[node_graph], 0.0), hid, w
 
     def _sigma(self, species, dt):
         """Gaussian widths of the Qeq charges (long_range sigma_bounds: bounded around the covalent radii)."""

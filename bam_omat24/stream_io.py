@@ -261,6 +261,7 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fie
     fc_opts = fields.pop('formal_charges', None)
     want_quad = bool(fields.pop('quadrupole', False))
     spin_opts = fields.pop('spin_labels', None)
+    cq_opts = fields.pop('charge_nbo_labels', None)
     a = _atoms(st)
     src, dst, S = neighbor_pairs(a, cutoff)
     species = np.array([atom_indices[int(z)] for z in st['numbers']], dtype=np.int32)
@@ -314,6 +315,15 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fie
             qd, w = np.array([v[0] - tr, v[1] - tr, v[2] - tr, v[3], v[4], v[5]]), 1.0
         out['g:quad'] = qd.astype(np.float32)[None]
         out['g:quad_w'] = np.array([w], np.float32)
+    if cq_opts:
+        # second partition scheme of the charges (RACE_LR charge_nbo_head): weight 1 only where the row has that label
+        v3 = (st.get('info') or {}).get(cq_opts.get('key', 'nbo_charges'))
+        n_at = len(species)
+        if v3 is not None and len(np.asarray(v3).reshape(-1)) == n_at and np.all(np.isfinite(np.asarray(v3, float))):
+            out['n:ref_charges_nbo'], out['n:ref_charges_nbo_w'] = (np.asarray(v3, np.float32).reshape(-1),
+                                                                    np.ones(n_at, np.float32))
+        else:
+            out['n:ref_charges_nbo'], out['n:ref_charges_nbo_w'] = np.zeros(n_at, np.float32), np.zeros(n_at, np.float32)
     if spin_opts:
         # atomic spin populations: the row's label (spin_opts['key'], e.g. lowdin_spins); a restricted closed-shell row
         # has zero spin density (label 0, weight 1); an open-shell row without labels gets weight 0
@@ -328,6 +338,17 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fie
         else:
             sv, sw = np.zeros(n_at), np.zeros(n_at)
         out['n:ref_spins'], out['n:ref_spins_w'] = sv.astype(np.float32), sw.astype(np.float32)
+        if spin_opts.get('nbo_key'):
+            # second partition scheme (RACE_LR spin_nbo_head): weight 1 only where the row has that label
+            v2 = info.get(spin_opts['nbo_key'])
+            if v2 is not None and len(np.asarray(v2).reshape(-1)) == n_at and np.all(np.isfinite(np.asarray(v2, float))):
+                out['n:ref_spins_nbo'] = np.asarray(v2, np.float32).reshape(-1)
+                out['n:ref_spins_nbo_w'] = np.ones(n_at, np.float32)
+            else:
+                out['n:ref_spins_nbo'], out['n:ref_spins_nbo_w'] = np.zeros(n_at, np.float32), np.zeros(n_at, np.float32)
+        # restricted / unrestricted calculation of the row (RACE_LR spin_energy: mu = 0 on restricted singlets)
+        out['g:unrestricted'] = np.array([1.0 if (mult > 1 or bool(info.get('unrestricted', False))) else 0.0],
+                                         np.float32)
     if fc_opts:
         # per-atom reference charges q0 of the distance-limited charge transfer (RACE_LR long_range ct_mode
         # "conductance"): integer charge per molecule, from the summed charge labels (graph_fields.formal_charges)

@@ -331,6 +331,14 @@ def energy_forces_stress(
                 'dipole': results.get('dipole'),       # RACE_POLAR graph dipoles (n_graphs, 3); None otherwise
                 'quadrupole': results.get('quadrupole'),   # RACE_POLAR traceless graph quadrupoles (n_graphs, 6)
                 'spins': results.get('spins'),         # RACE_LR spin_head: atomic spin populations (n_atoms,)
+                'spin_node_energies': results.get('spin_node_energies'),   # RACE_LR spin_energy: per-atom E_spin
+                'spin_moments': results.get('spin_moments'),   # RACE_LR spin_energy: local moments mu (atoms)
+                'spin_corr': results.get('spin_corr'),         # RACE_LR spin_energy: pair correlations c (edges)
+                'spin_s2': results.get('spin_s2'),             # RACE_LR spin_energy: <S^2> estimate (graphs)
+                'spins_nbo': results.get('spins_nbo'),         # RACE_LR spin_nbo_head: NBO-scheme spins (atoms)
+                'spin_nbo_t': results.get('spin_nbo_t'),       # RACE_LR spin_nbo_head: redistribution t (edges)
+                'charges_nbo': results.get('charges_nbo'),     # RACE_LR charge_nbo_head: NBO-scheme charges
+                'charge_nbo_t': results.get('charge_nbo_t'),   # RACE_LR charge_nbo_head: redistribution t (edges)
                 'dipole_normal': results.get('dipole_normal'),   # RACE_POLAR: (n_graphs,) along the slab normal
                 'slab_normal': results.get('slab_normal'),       # RACE_POLAR: (n_graphs, 3) unit normals
             }
@@ -364,6 +372,14 @@ def energy_forces_stress(
                 'dipole': results.get('dipole'),       # RACE_POLAR graph dipoles (n_graphs, 3); None otherwise
                 'quadrupole': results.get('quadrupole'),   # RACE_POLAR traceless graph quadrupoles (n_graphs, 6)
                 'spins': results.get('spins'),         # RACE_LR spin_head: atomic spin populations (n_atoms,)
+                'spin_node_energies': results.get('spin_node_energies'),   # RACE_LR spin_energy: per-atom E_spin
+                'spin_moments': results.get('spin_moments'),   # RACE_LR spin_energy: local moments mu (atoms)
+                'spin_corr': results.get('spin_corr'),         # RACE_LR spin_energy: pair correlations c (edges)
+                'spin_s2': results.get('spin_s2'),             # RACE_LR spin_energy: <S^2> estimate (graphs)
+                'spins_nbo': results.get('spins_nbo'),         # RACE_LR spin_nbo_head: NBO-scheme spins (atoms)
+                'spin_nbo_t': results.get('spin_nbo_t'),       # RACE_LR spin_nbo_head: redistribution t (edges)
+                'charges_nbo': results.get('charges_nbo'),     # RACE_LR charge_nbo_head: NBO-scheme charges
+                'charge_nbo_t': results.get('charge_nbo_t'),   # RACE_LR charge_nbo_head: redistribution t (edges)
                 'dipole_normal': results.get('dipole_normal'),   # RACE_POLAR: (n_graphs,) along the slab normal
                 'slab_normal': results.get('slab_normal'),       # RACE_POLAR: (n_graphs, 3) unit normals
             }
@@ -461,6 +477,10 @@ def energy_forces_stress(
         out['quadrupole'] = aux['quadrupole']
     if aux.get('spins') is not None:       # RACE_LR spin_head
         out['spins'] = aux['spins']
+    for k in ('spin_node_energies', 'spin_moments', 'spin_corr', 'spin_s2', 'spins_nbo', 'spin_nbo_t', 'charges_nbo',
+              'charge_nbo_t'):
+        if aux.get(k) is not None:
+            out[k] = aux[k]
     if aux.get('dipole') is not None:      # RACE_POLAR
         out['dipole'] = aux['dipole']
         if aux.get('dipole_normal') is not None:

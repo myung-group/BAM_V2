@@ -551,6 +551,11 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
             fields['groups'] = int(pol.get('max_groups', POLAR_DEFAULTS['max_groups']))
         if pol.get('slab_correction'):
             fields['slab'] = True
+    lr_opts = dict(_get(cfg, 'long_range', {}) or {})
+    if lr_opts.get('ct_mode', 'global') == 'conductance':
+        # integer reference charges per molecule for the distance-limited charge transfer (race_lr_nnx, ct_solve)
+        fields['formal_charges'] = {'label_keys': list(lr_opts.get('ct_label_keys', ['nbo_charges', 'lowdin_charges'])),
+                                    'bond_factor': float(lr_opts.get('ct_bond_factor', 1.2))}
     e0_tables = {int(t): S.load_e0_table(v, atomic_numbers).tolist()
                  for t, v in dict(sc.get('atom_energies_by_task') or {}).items()}
     table, tdir = _stream_table(tr, 'train', cutoff, workers, log_dir, rank0)

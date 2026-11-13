@@ -29,13 +29,16 @@ new dataset its own row without changing the parameter tree (docs/HANDOFF_uq_omo
 """
 from __future__ import annotations
 
+import math
+
 import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
 import jraph
 from flax import nnx
 
-from bam_omat24.long_range import coulomb_direct, ewald_matrix, ewald_matrix_rows, qeq_solve, short_range_part
+from bam_omat24.long_range import (coulomb_direct, ct_solve, ewald_matrix, ewald_matrix_rows, qeq_solve,
+                                   short_range_part, sr_switch)
 from bam_omat24.race_nnx import RACE, _dense
 
 LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_hidden": 32, "chi_scale": 1.0,
@@ -43,7 +46,23 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
                "charge_spin_embedding": False, "cs_hidden": 32, "sr_switch": None, "qeq_block": None,
                "n_tasks": 0, "coulomb_energy": True,
                "cs_encoding": "scalar", "cs_layers": "first", "cs_species_gate": False,
-               "cs_max_charge": 6, "cs_max_spin": 11}
+               "cs_max_charge": 6, "cs_max_spin": 11,
+               "sigma_bounds": None, "ct_mode": "global", "ct_switch": [3.0, 4.5], "ct_init": 1.15,
+               "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2}
+# Charge-model options of 2026-11-13 (defaults = the original model and parameter tree; docs: memory note on the
+# diverging Qeq widths of the OMol25 runs):
+#   "sigma_bounds": [lo, hi]   Gaussian width of the Qeq charges sigma_i = r_cov(Z_i) (lo + (hi - lo) sigmoid(u_Z)),
+#                              u stored in log_sigma (initialised so that sigma = r_cov); None: sigma = exp(log_sigma)
+#                              free (in the OMol25 runs it diverged to 1e3 - 1e6 A, i.e. no Coulomb coupling).
+#   "ct_mode": "conductance"   distance-limited charge transfer (long_range.ct_solve): charge flows only between atoms
+#                              closer than ct_switch[1] (conductance exp(g_Zi + g_Zj) times a C2 switch from 1 below
+#                              ct_switch[0] to 0 at ct_switch[1]; g per element, initialised at ct_init: 1.15 gives
+#                              10 e^2/eV, so that atoms in contact share charge almost freely (c A >> 1) and the split
+#                              of q0 inside a contact cluster hardly matters, e.g. Na-O at 2.3 A counts as a bond of
+#                              graph_fields.molecules) starting from
+#                              integer charges per molecule (data nodes 'q0', graph_fields.formal_charges: the summed
+#                              labels ct_label_keys, rounded); separated molecules keep integer charges.  Needs
+#                              qeq_block.  "global" (default): the original Qeq over the whole structure.
 # Charge / spin conditioning beyond the layer-0 embedding (2026-11-13; the defaults are the original model, with the
 # original parameter tree; all three need "charge_spin_embedding": true):
 #   "cs_encoding": "table"   learned rows per total charge (clipped to +-cs_max_charge) and per spin multiplicity
@@ -111,7 +130,27 @@ class RACE_LR(RACE):
             raw = jnp.log(jnp.expm1(jnp.asarray(float(lr['hard_init']))))
             self.hard0 = nnx.Param(jnp.full((n_species,), raw, jnp.float32))
             radii = kw.get('species_radii') or [1.0] * n_species
-            self.log_sigma = nnx.Param(jnp.log(jnp.asarray(radii, jnp.float32)))
+            self.cov_r = tuple(float(x) for x in radii)          # static (not a parameter)
+            sb = lr['sigma_bounds']
+            if sb is None:
+                self.log_sigma = nnx.Param(jnp.log(jnp.asarray(radii, jnp.float32)))
+            else:
+                lo, hi = (float(x) for x in sb)
+                if not 0.0 < lo < 1.0 < hi:
+                    raise ValueError(f"long_range sigma_bounds must be [lo, hi] with 0 < lo < 1 < hi, got {sb}")
+                u0 = math.log((1.0 - lo) / (hi - 1.0))           # sigmoid(u0) = (1 - lo) / (hi - lo): sigma = r_cov
+                self.log_sigma = nnx.Param(jnp.full((n_species,), u0, jnp.float32))
+            ct = str(lr['ct_mode'])
+            if ct not in ('global', 'conductance'):
+                raise ValueError(f"long_range ct_mode must be 'global' or 'conductance', got {ct!r}")
+            self.ct_cond = ct == 'conductance'
+            if self.ct_cond:
+                if not lr['qeq_block']:
+                    raise ValueError("long_range ct_mode 'conductance' needs qeq_block (largest structure, atoms)")
+                r_on, r_off = (float(x) for x in lr['ct_switch'])
+                if not 0.0 <= r_on < r_off <= float(kw['cutoff']):
+                    raise ValueError(f"long_range ct_switch must satisfy 0 <= r_on < r_off <= cutoff, got {lr['ct_switch']}")
+                self.ct_log_g = nnx.Param(jnp.full((n_species,), float(lr['ct_init']), jnp.float32))
         # charge / spin embedding (optional): (Q, 2S+1 - 1) of the graph -> MLP -> added to the layer-0 scalars.
         # Output layer at zero, so the model starts as RACE (also for a later fine-tuning from a RACE checkpoint).
         if self.cs_embed:
@@ -232,7 +271,7 @@ class RACE_LR(RACE):
         z = self.lr_head2(jax.nn.silu(self.lr_head1(s)))
         chi = (self.chi0[...][species] + float(self.lr['chi_scale']) * z[:, 0]).astype(dt)
         hard = jax.nn.softplus(self.hard0[...][species] + z[:, 1]).astype(dt)
-        sigma = jnp.exp(self.log_sigma[...][species]).astype(dt)
+        sigma = self._sigma(species, dt)
         Q, _ = self._graph_globals(data, dt)
         if self.lr['qeq_block']:
             q, e = self._qeq_blocked(positions, cell, chi, hard, sigma, Q, data, node_graph, node_mask, n_graphs, dt)
@@ -270,6 +309,34 @@ class RACE_LR(RACE):
         out['node_energies'] = out['node_energies'] + e.reshape(out['node_energies'].shape).astype(out['node_energies'].dtype)
         out['charges'] = q
         return out
+
+    def _sigma(self, species, dt):
+        """Gaussian widths of the Qeq charges (long_range sigma_bounds: bounded around the covalent radii)."""
+        p = self.log_sigma[...]
+        if self.lr['sigma_bounds'] is None:
+            return jnp.exp(p[species]).astype(dt)
+        lo, hi = (float(x) for x in self.lr['sigma_bounds'])
+        r = jnp.asarray(self.cov_r, dt)
+        return (r * (lo + (hi - lo) * jax.nn.sigmoid(p.astype(dt))))[species]
+
+    def _ct_conductance(self, positions, cell, data, node_graph, node_mask, slot, n_graphs, B, dt):
+        """(G, B, B) pair conductances of the blocks: exp(g_Zi + g_Zj) (1 - C2 switch from ct_switch[0] to [1]) on the
+        edges of the graph (neighbour list), symmetric (both directions of an edge are in the list)."""
+        r_on, r_off = (float(x) for x in self.lr['ct_switch'])
+        snd, rcv = data.senders, data.receivers
+        ok = node_mask[snd] & node_mask[rcv]
+        d = positions[snd] - positions[rcv]
+        if self.periodic and cell is not None and isinstance(data.edges, dict) and 'Sij' in data.edges:
+            cells = self._safe_cells(cell, n_graphs)
+            d = d - jnp.einsum('ei,eij->ej', jnp.asarray(data.edges['Sij'], dt), cells[node_graph[rcv]])
+        d2 = jnp.sum(d * d, axis=-1)
+        r = jnp.sqrt(jnp.where(ok & (d2 > 0), d2, 1.0))
+        g = self.ct_log_g[...].astype(dt)
+        sp = data.nodes['species']
+        c = jnp.exp(g[sp[rcv]] + g[sp[snd]]) * (1.0 - sr_switch(r, r_on, r_off))
+        c = jnp.where(ok & (d2 > 0), c, 0.0)
+        out = jnp.zeros((n_graphs, B + 1, B + 1), dt).at[node_graph[rcv], slot[rcv], slot[snd]].add(c)
+        return out[:, :B, :B]
 
     def _qeq_blocked(self, positions, cell, chi, hard, sigma, Q, data, node_graph, node_mask, n_graphs, dt):
         """Qeq solved per graph (long_range.qeq_block = B, the largest number of atoms of one structure): the atoms are
@@ -310,9 +377,7 @@ class RACE_LR(RACE):
         else:
             gamma = jax.vmap(coulomb_direct)(P, Sg, same_b)
         if not lr['coulomb_energy']:
-            qb, eb = jax.vmap(lambda ch, hd, sg, gm, fb, m, qf: qeq_solve(ch, hd, sg, gm, fb, m, qf, n_frag,
-                                                                          gamma_energy=jnp.zeros_like(gm)))(
-                Ch, Hd, Sg, gamma, Fb, M, fq)
+            ge = jnp.zeros_like(gamma)
         elif lr['sr_switch'] is not None:
             r_on, r_off = (float(x) for x in lr['sr_switch'])
             if periodic:
@@ -321,12 +386,23 @@ class RACE_LR(RACE):
                                                                                                          rows)
             else:
                 sr = jax.vmap(lambda p, sg, sm: short_range_part(p, sg, sm, r_on, r_off))(P, Sg, same_b)
-            qb, eb = jax.vmap(lambda ch, hd, sg, gm, fb, m, qf, ge: qeq_solve(ch, hd, sg, gm, fb, m, qf, n_frag,
-                                                                              gamma_energy=ge))(
-                Ch, Hd, Sg, gamma, Fb, M, fq, gamma - sr)
+            ge = gamma - sr
         else:
-            qb, eb = jax.vmap(lambda ch, hd, sg, gm, fb, m, qf: qeq_solve(ch, hd, sg, gm, fb, m, qf, n_frag))(
-                Ch, Hd, Sg, gamma, Fb, M, fq)
+            ge = gamma
+        if self.ct_cond:
+            if 'fragment' in nodes and 'fragment_charges' in glb:
+                raise ValueError("long_range ct_mode 'conductance' takes the molecule charges from nodes 'q0', not "
+                                 "from fragments")
+            if 'q0' in nodes:
+                q0 = jnp.asarray(nodes['q0'], dt)
+            else:          # no reference charges: the total charge spread evenly (no integer split)
+                q0 = (Q / jnp.maximum(n_node.astype(dt), 1.0))[node_graph]
+            Cb = self._ct_conductance(positions, cell, data, node_graph, node_mask, slot, n_graphs, B, dt)
+            qb, eb = jax.vmap(ct_solve)(Ch, Hd, Sg, gamma, Cb, M, blocks(jnp.where(node_mask, q0, 0.0), 0.0), ge)
+        else:
+            qb, eb = jax.vmap(lambda ch, hd, sg, gm, fb, m, qf, g_e: qeq_solve(ch, hd, sg, gm, fb, m, qf, n_frag,
+                                                                               gamma_energy=g_e))(
+                Ch, Hd, Sg, gamma, Fb, M, fq, ge)
         li = jnp.clip(local, 0, B - 1)
         q = jnp.where(valid, qb[node_graph, li], 0.0)
         e = jnp.where(valid, eb[node_graph, li], 0.0)

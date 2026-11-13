@@ -258,6 +258,7 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fie
     n_groups = int(fields.pop('groups', 0) or 0)
     want_slab = bool(fields.pop('slab', False))
     opt_labels = bool(fields.pop('opt_charge_labels', False))
+    fc_opts = fields.pop('formal_charges', None)
     a = _atoms(st)
     src, dst, S = neighbor_pairs(a, cutoff)
     species = np.array([atom_indices[int(z)] for z in st['numbers']], dtype=np.int32)
@@ -300,6 +301,18 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fie
             out['g:pbc'] = np.array([1.0 if periodic else 0.0], np.float32)
             out['g:stress_w'] = np.array([1.0 if has_stress else 0.0], np.float32)
     label_key = opts.get('charge_label_key')
+    if fc_opts:
+        # per-atom reference charges q0 of the distance-limited charge transfer (RACE_LR long_range ct_mode
+        # "conductance"): integer charge per molecule, from the summed charge labels (graph_fields.formal_charges)
+        from graph_fields import formal_charges as _formal_charges
+        info = st.get('info') or {}
+        q_tot = float(info.get(fields.get('charge_key') or 'charge', 0.0) or 0.0)
+        shifts = None if S is None else np.asarray(S, np.float64) @ np.asarray(st['cell'], np.float64)
+        q0, _ = _formal_charges(st['numbers'], np.asarray(st['positions'], np.float64), src, dst, q_tot, info,
+                                st.get('arrays'), shifts, label_keys=tuple(fc_opts.get('label_keys',
+                                                                                       ('nbo_charges', 'lowdin_charges'))),
+                                bond_factor=float(fc_opts.get('bond_factor', 1.2)))
+        out['n:q0'] = q0.astype(np.float32)
     if fields:
         nx, gx = extra_fields(st.get('info'), st.get('arrays'), len(species), **fields)
         out.update({f'n:{k}': v for k, v in nx.items()})

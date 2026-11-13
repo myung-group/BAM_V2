@@ -329,6 +329,8 @@ def energy_forces_stress(
                 'node_features': results.get('node_features'),
                 'charges': results.get('charges'),     # RACE_LR Qeq charges; None for every other model
                 'dipole': results.get('dipole'),       # RACE_POLAR graph dipoles (n_graphs, 3); None otherwise
+                'quadrupole': results.get('quadrupole'),   # RACE_POLAR traceless graph quadrupoles (n_graphs, 6)
+                'spins': results.get('spins'),         # RACE_LR spin_head: atomic spin populations (n_atoms,)
                 'dipole_normal': results.get('dipole_normal'),   # RACE_POLAR: (n_graphs,) along the slab normal
                 'slab_normal': results.get('slab_normal'),       # RACE_POLAR: (n_graphs, 3) unit normals
             }
@@ -360,6 +362,8 @@ def energy_forces_stress(
                 'node_features': results.get('node_features'),
                 'charges': results.get('charges'),     # RACE_LR Qeq charges; None for every other model
                 'dipole': results.get('dipole'),       # RACE_POLAR graph dipoles (n_graphs, 3); None otherwise
+                'quadrupole': results.get('quadrupole'),   # RACE_POLAR traceless graph quadrupoles (n_graphs, 6)
+                'spins': results.get('spins'),         # RACE_LR spin_head: atomic spin populations (n_atoms,)
                 'dipole_normal': results.get('dipole_normal'),   # RACE_POLAR: (n_graphs,) along the slab normal
                 'slab_normal': results.get('slab_normal'),       # RACE_POLAR: (n_graphs, 3) unit normals
             }
@@ -453,6 +457,10 @@ def energy_forces_stress(
     }
     if aux.get('charges') is not None:     # only models that return charges (RACE_LR) get the key; others unchanged
         out['charges'] = aux['charges']
+    if aux.get('quadrupole') is not None:  # RACE_POLAR
+        out['quadrupole'] = aux['quadrupole']
+    if aux.get('spins') is not None:       # RACE_LR spin_head
+        out['spins'] = aux['spins']
     if aux.get('dipole') is not None:      # RACE_POLAR
         out['dipole'] = aux['dipole']
         if aux.get('dipole_normal') is not None:

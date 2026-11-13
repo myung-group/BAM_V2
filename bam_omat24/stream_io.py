@@ -259,6 +259,8 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fie
     want_slab = bool(fields.pop('slab', False))
     opt_labels = bool(fields.pop('opt_charge_labels', False))
     fc_opts = fields.pop('formal_charges', None)
+    want_quad = bool(fields.pop('quadrupole', False))
+    spin_opts = fields.pop('spin_labels', None)
     a = _atoms(st)
     src, dst, S = neighbor_pairs(a, cutoff)
     species = np.array([atom_indices[int(z)] for z in st['numbers']], dtype=np.int32)
@@ -301,6 +303,31 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fie
             out['g:pbc'] = np.array([1.0 if periodic else 0.0], np.float32)
             out['g:stress_w'] = np.array([1.0 if has_stress else 0.0], np.float32)
     label_key = opts.get('charge_label_key')
+    if want_quad:
+        # traceless quadrupole label (e A^2, about the centre of mass, xx yy zz xy xz yz) from the ORCA multipoles
+        # [origin, dipole, quadrupole (a.u., Cartesian second moment, xx yy zz xy xz yz)] of open-boundary rows
+        m = (st.get('info') or {}).get('multipoles')
+        qd, w = np.zeros(6, np.float64), 0.0
+        if S is None and m is not None and len(m) >= 3 and m[2] is not None and len(m[2]) == 6:
+            v = np.asarray(m[2], np.float64) * BOHR ** 2
+            tr = (v[0] + v[1] + v[2]) / 3.0
+            qd, w = np.array([v[0] - tr, v[1] - tr, v[2] - tr, v[3], v[4], v[5]]), 1.0
+        out['g:quad'] = qd.astype(np.float32)[None]
+        out['g:quad_w'] = np.array([w], np.float32)
+    if spin_opts:
+        # atomic spin populations: the row's label (spin_opts['key'], e.g. lowdin_spins); a restricted closed-shell row
+        # has zero spin density (label 0, weight 1); an open-shell row without labels gets weight 0
+        info = st.get('info') or {}
+        v = info.get(spin_opts.get('key', 'lowdin_spins'))
+        n_at = len(species)
+        mult = int(round(float(info.get('spin') or 1)))
+        if v is not None and len(np.asarray(v).reshape(-1)) == n_at and np.all(np.isfinite(np.asarray(v, float))):
+            sv, sw = np.asarray(v, np.float64).reshape(-1), np.ones(n_at)
+        elif mult == 1 and not bool(info.get('unrestricted', False)):
+            sv, sw = np.zeros(n_at), np.ones(n_at)
+        else:
+            sv, sw = np.zeros(n_at), np.zeros(n_at)
+        out['n:ref_spins'], out['n:ref_spins_w'] = sv.astype(np.float32), sw.astype(np.float32)
     if fc_opts:
         # per-atom reference charges q0 of the distance-limited charge transfer (RACE_LR long_range ct_mode
         # "conductance"): integer charge per molecule, from the summed charge labels (graph_fields.formal_charges)

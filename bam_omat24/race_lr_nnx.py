@@ -48,7 +48,10 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
                "cs_encoding": "scalar", "cs_layers": "first", "cs_species_gate": False,
                "cs_max_charge": 6, "cs_max_spin": 11,
                "sigma_bounds": None, "ct_mode": "global", "ct_switch": [3.0, 4.5], "ct_init": 1.15,
-               "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2}
+               "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2, "spin_head": False}
+# "spin_head": true (2026-11-13): atomic spin populations s_i (out 'spins') from the last-layer scalars, s_raw + w_i
+# (2S - sum s_raw) with w = softmax over the graph (sums exactly to 2S = multiplicity - 1); trained with spin_weight
+# against per-atom spin labels (e.g. lowdin_spins).  An auxiliary output: it does not enter the energy.
 # Charge-model options of 2026-11-13 (defaults = the original model and parameter tree; docs: memory note on the
 # diverging Qeq widths of the OMol25 runs):
 #   "sigma_bounds": [lo, hi]   Gaussian width of the Qeq charges sigma_i = r_cov(Z_i) (lo + (hi - lo) sigmoid(u_Z)),
@@ -184,6 +187,11 @@ class RACE_LR(RACE):
                 # (n_species, n_gate n0): leading species axis (soap_species_adam treats it as an element table)
                 self.cs_n_gate = n_l if self.cs_all else 1
                 self.cs_gate_table = nnx.Param(jnp.zeros((n_species, self.cs_n_gate * n0), jnp.float32))
+        self.spin_head = bool(lr['spin_head'])
+        if self.spin_head:
+            n0s = sum(mul for mul, ir in e3nn.Irreps(kw['hidden_irreps']) if ir == e3nn.Irrep('0e'))
+            self.sp_head1 = nnx.Linear(n0s, int(lr['head_hidden']), rngs=rngs)
+            self.sp_head2 = nnx.Linear(int(lr['head_hidden']), 2, rngs=rngs, kernel_init=nnx.initializers.zeros_init())
         if not (self.qeq or self.cs_embed or self.n_tasks or getattr(self, '_allow_plain', False)):
             raise ValueError("long_range: qeq false, charge_spin_embedding false and n_tasks 0 is plain RACE; "
                              "use model RACE")
@@ -308,7 +316,24 @@ class RACE_LR(RACE):
         out = dict(out)
         out['node_energies'] = out['node_energies'] + e.reshape(out['node_energies'].shape).astype(out['node_energies'].dtype)
         out['charges'] = q
+        if self.spin_head:
+            out['spins'] = self._spins(s, data, node_graph, node_mask, n_graphs, dt)
         return out
+
+    def _spins(self, s, data, node_graph, node_mask, n_graphs, dt):
+        """atomic spin populations summing to 2S = multiplicity - 1 of every graph (spin_head)"""
+        _, S = self._graph_globals(data, dt)
+        z = self.sp_head2(jax.nn.silu(self.sp_head1(s))).astype(dt)
+        raw, logit = z[:, 0], z[:, 1]
+        lg = jnp.where(node_mask, logit, -jnp.inf)
+        mx = jax.lax.stop_gradient(jax.ops.segment_max(lg, node_graph, num_segments=n_graphs))
+        mx = jnp.where(jnp.isfinite(mx), mx, 0.0)
+        un = jnp.where(node_mask, jnp.exp(jnp.where(node_mask, logit, 0.0) - mx[node_graph]), 0.0)
+        den = jax.ops.segment_sum(un, node_graph, num_segments=n_graphs)
+        w = un / jnp.where(den > 0, den, 1.0)[node_graph]
+        raw = jnp.where(node_mask, raw, 0.0)
+        tot = jax.ops.segment_sum(raw, node_graph, num_segments=n_graphs)
+        return jnp.where(node_mask, raw + w * (S - 1.0 - tot)[node_graph], 0.0)
 
     def _sigma(self, species, dt):
         """Gaussian widths of the Qeq charges (long_range sigma_bounds: bounded around the covalent radii)."""

@@ -552,6 +552,12 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
         if pol.get('slab_correction'):
             fields['slab'] = True
     lr_opts = dict(_get(cfg, 'long_range', {}) or {})
+    if float(_get(cfg, 'quadrupole_weight', 0.0)) > 0:
+        fields['quadrupole'] = True             # traceless quadrupole labels (RACE_POLAR graph quadrupoles)
+    if float(_get(cfg, 'spin_weight', 0.0)) > 0:
+        if not lr_opts.get('spin_head'):
+            raise ValueError("spin_weight needs long_range spin_head true")
+        fields['spin_labels'] = {'key': _get(cfg, 'spin_label_key', 'lowdin_spins')}
     if lr_opts.get('ct_mode', 'global') == 'conductance':
         # integer reference charges per molecule for the distance-limited charge transfer (race_lr_nnx, ct_solve)
         fields['formal_charges'] = {'label_keys': list(lr_opts.get('ct_label_keys', ['nbo_charges', 'lowdin_charges'])),
@@ -570,7 +576,8 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
     m = min(n, int(sc.get('stats_sample', 2000)))
     rows = np.sort(np.random.default_rng(seed).choice(n, m, replace=False))
     from bam_omat24.graph_fields import field_keys
-    ik, ak = field_keys(**{k: v for k, v in fields.items() if k not in ('mixed', 'dipole', 'opt_charge_labels', 'groups', 'slab')})
+    ik, ak = field_keys(**{k: v for k, v in fields.items() if k not in ('mixed', 'dipole', 'opt_charge_labels', 'groups',
+                                                                         'slab', 'quadrupole', 'spin_labels')})
     meta = table['meta']
     idx = {int(z): i for i, z in enumerate(atomic_numbers)}
     sample = []
@@ -1189,6 +1196,8 @@ def train(cfg: Dict):
         dens=dens_cfg or None,
         charge_weight=float(_get(cfg, 'charge_weight', 0.0)),
         dipole_weight=float(_get(cfg, 'dipole_weight', 0.0)),
+        quadrupole_weight=float(_get(cfg, 'quadrupole_weight', 0.0)),
+        spin_weight=float(_get(cfg, 'spin_weight', 0.0)),
     )
     if (float(_get(cfg, 'charge_weight', 0.0)) > 0 and not _get(cfg, 'charge_label_key', None)
             and not any(isinstance(x, dict) and x.get('charge_label_key')

@@ -441,6 +441,8 @@ def compute_loss(
     dens_weight: Any = 0.0,
     charge_weight: float = 0.0,
     dipole_weight: float = 0.0,
+    quadrupole_weight: float = 0.0,
+    spin_weight: float = 0.0,
 ) -> Tuple[jnp.ndarray, Dict]:
     """Compute training loss for a single batch (no device dimension).
 
@@ -601,6 +603,27 @@ def compute_loss(
         d_se, d_n = _dipole_sq(results, batch, jraph.get_graph_padding_mask(batch))
         d_loss = d_se / jnp.maximum(d_n, 1.0)
         total_loss = total_loss + dipole_weight * d_loss
+    qd_loss = jnp.zeros(())
+    if (quadrupole_weight > 0.0 and 'quadrupole' in results and isinstance(batch.globals, dict)
+            and 'quad' in batch.globals):
+        # traceless graph quadrupoles (RACE_POLAR, e A^2, about the centre of mass; components xx yy zz xy xz yz):
+        # mean over labelled graphs of the squared Frobenius norm of the 3 x 3 difference / 9 (per-device mean, like
+        # the dipole term: the weight acts times the number of devices)
+        qdt = results['quadrupole'].dtype
+        gw = batch.globals['quad_w'].reshape(-1).astype(qdt) * jraph.get_graph_padding_mask(batch).astype(qdt)
+        dq6 = results['quadrupole'] - batch.globals['quad'].reshape(-1, 6).astype(qdt)
+        cw = jnp.asarray([1.0, 1.0, 1.0, 2.0, 2.0, 2.0], qdt)
+        qd_loss = jnp.sum(gw[:, None] * cw * dq6 ** 2) / jnp.maximum(9.0 * jnp.sum(gw), 1.0)
+        total_loss = total_loss + quadrupole_weight * qd_loss
+    sp_loss = jnp.zeros(())
+    if spin_weight > 0.0 and 'spins' in results and isinstance(batch.nodes, dict) and 'ref_spins' in batch.nodes:
+        # atomic spin populations (RACE_LR long_range spin_head): squared error over the labelled atoms (per-device
+        # mean, like the dipole term)
+        sdt = results['spins'].dtype
+        nw = jraph.get_node_padding_mask(batch).astype(sdt) * batch.nodes['ref_spins_w'].astype(sdt)
+        ds = results['spins'] - batch.nodes['ref_spins'].astype(sdt)
+        sp_loss = jnp.sum(nw * ds ** 2) / jnp.maximum(jnp.sum(nw), 1.0)
+        total_loss = total_loss + spin_weight * sp_loss
 
     aux = {
         'energy_loss': energy_loss,
@@ -609,10 +632,11 @@ def compute_loss(
         'aux_loss': (deep_supervision * ds_loss + stratum_decorrelation * decor_loss + w_dn * denoise_loss
                      + dens_weight * dens_loss
                      + w_tc * tc_loss + radial_l2 * rl2_loss + charge_weight * q_loss
-                     + dipole_weight * d_loss),
+                     + dipole_weight * d_loss + quadrupole_weight * qd_loss + spin_weight * sp_loss),
         'ds_loss': ds_loss, 'decor_loss': decor_loss, 'denoise_loss': denoise_loss, 'dens_loss': dens_loss,
         'dens_sum': dens_sum, 'dens_count': dens_count,
-        'tc_loss': tc_loss, 'rl2_loss': rl2_loss, 'q_loss': q_loss, 'd_loss': d_loss,
+        'tc_loss': tc_loss, 'rl2_loss': rl2_loss, 'q_loss': q_loss, 'd_loss': d_loss, 'qd_loss': qd_loss,
+        'sp_loss': sp_loss,
         'energy_mse': t['energy_se'] / n_graphs,
         'force_mse': t['force_se'] / (3 * n_atoms),       # all atoms (DeNS: incl. the corrupted ones)
         'stress_mse': t['stress_se'] / n_graphs if periodic else 0.0,
@@ -693,6 +717,8 @@ def make_sharded_train_step(
     dens: Optional[Dict] = None,
     charge_weight: float = 0.0,
     dipole_weight: float = 0.0,
+    quadrupole_weight: float = 0.0,
+    spin_weight: float = 0.0,
 ):
     """Create sharded training step with gradient synchronization.
 
@@ -829,6 +855,8 @@ def make_sharded_train_step(
                 dens_weight=dw,
                 charge_weight=charge_weight,
                 dipole_weight=dipole_weight,
+                quadrupole_weight=quadrupole_weight,
+                spin_weight=spin_weight,
             )
 
         # Compute gradients locally

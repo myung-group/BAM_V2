@@ -288,6 +288,20 @@ class RACE_POLAR(RACE_LR):
         out['node_energies'] = out['node_energies'] + res['node_energy'].reshape(out['node_energies'].shape)
         out['charges'] = q * nm
         out['dipole'] = dipole
+        # traceless graph quadrupole about the centre of mass (2026-11-13), the convention of the OMol25 labels:
+        # Cartesian second moment sum_i [q_i r r + mu_i r + r mu_i] + (2/3) Theta_i (Theta: Buckingham, traceless)
+        # with mu the permanent + induced dipoles, minus its trace / 3; components xx yy zz xy xz yz, e A^2.
+        # Open-boundary graphs only (zero for periodic graphs).
+        rc = (positions.astype(dt) - com[node_graph]) * nm[:, None]
+        mu_all = res['dipoles'].astype(dt) * nm[:, None]
+        M = (q * nm)[:, None, None] * rc[:, :, None] * rc[:, None, :] + mu_all[:, :, None] * rc[:, None, :] \
+            + rc[:, :, None] * mu_all[:, None, :]
+        if theta is not None:
+            M = M + (2.0 / 3.0) * theta.astype(dt) * nm[:, None, None]
+        Mg = seg(M)
+        Mg = Mg - jnp.trace(Mg, axis1=1, axis2=2)[:, None, None] / 3.0 * jnp.eye(3, dtype=dt)
+        quad = jnp.stack([Mg[:, 0, 0], Mg[:, 1, 1], Mg[:, 2, 2], Mg[:, 0, 1], Mg[:, 0, 2], Mg[:, 1, 2]], axis=-1)
+        out['quadrupole'] = jnp.where(pbc[:, None], 0.0, quad)
         # along the slab normal (periodic graphs: the label of a dipole-corrected slab calculation)
         normals = res['normal_dipole_axis']
         out['dipole_normal'] = jnp.sum(dipole * normals, axis=-1)

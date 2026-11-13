@@ -42,7 +42,7 @@ def _worker_init(kinds, files, atomic_numbers, atom_energies, cutoff, fields=Non
     _W['fields'] = dict(fields or {})
     _W['keys'] = field_keys(**{k: v for k, v in _W['fields'].items()
                                if k not in ('mixed', 'dipole', 'opt_charge_labels', 'groups', 'slab', 'quadrupole',
-                                            'spin_labels')})
+                                            'spin_labels', 'charge_nbo_labels')})
     _W['meta'] = {}
     _W['opts'] = list(opts) if opts else [{} for _ in files]
     _W['e0_tables'] = {int(k): np.asarray(v, np.float64) for k, v in (e0_tables or {}).items()}

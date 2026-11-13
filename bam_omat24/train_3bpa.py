@@ -26,6 +26,11 @@ Config keys (in addition to the model hyper-parameters, see README):
     noisy_nodes      : {"sigma": A, "weight": w}, denoising auxiliary task (adds noise_head)
     sam_rho          : float, sharpness-aware minimisation radius (default 0)
     lr_schedule      : "plateau" (default) | "cosine" (+ lr_warmup_epochs, lr_cosine_min_scale)
+    lr_cosine_epochs : cosine only: length of the cosine in epochs (default n_epochs).  With lr_cooldown_from_epoch
+                       the run can be continued from a checkpoint of a longer cosine run (2026-11-13).
+    lr_cooldown_from_epoch: cosine only: from this epoch on, the LR factor decays linearly from its cosine value at
+                       that epoch to lr_cosine_min_scale at n_epochs (warmup-stable-decay style cool-down of a
+                       resumed run; e.g. a 70-epoch cosine run resumed at epoch 40 with n_epochs 50)  (default none)
     swa_start_epoch  : int, average raw params from this epoch on; final eval/summary = SWA
     boltzmann_tilt   : {"T_prime": K, "w_max": x}, per-frame weight exp((E-Emin)/kT') capped
     layer_lmax       : [l_0..l_{L-1}] per-layer max l of new stratum information
@@ -803,15 +808,30 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         steps_per_epoch = int(stats.get('steps_per_epoch') or
                               max(int(stats['n_graphs']) // (int(_get(cfg, 'batch_size', 5)) * n_devices), 1))
         total_steps = int(_get(cfg, 'n_epochs', 1000)) * steps_per_epoch
+        cos_steps = int(_get(cfg, 'lr_cosine_epochs', None) or _get(cfg, 'n_epochs', 1000)) * steps_per_epoch
         warmup_steps = int(_get(cfg, 'lr_warmup_epochs', 10)) * steps_per_epoch
         min_scale = float(_get(cfg, 'lr_cosine_min_scale', 0.01))
         # relative factor (the lr itself is inside the Adam transform above)
         cosine_fn = optax.warmup_cosine_decay_schedule(
             init_value=min_scale, peak_value=1.0, warmup_steps=warmup_steps,
-            decay_steps=total_steps, end_value=min_scale)
+            decay_steps=cos_steps, end_value=min_scale)
+        cd_epoch = _get(cfg, 'lr_cooldown_from_epoch', None)
+        if cd_epoch is not None:
+            s0 = int(cd_epoch) * steps_per_epoch
+            if not 0 < s0 < total_steps:
+                raise ValueError(f"lr_cooldown_from_epoch {cd_epoch} must lie inside the run (n_epochs "
+                                 f"{_get(cfg, 'n_epochs', 1000)})")
+            base_fn, v0 = cosine_fn, float(cosine_fn(s0))
+
+            def cosine_fn(step, base_fn=base_fn, s0=s0, v0=v0):
+                frac = jnp.clip((step - s0) / float(total_steps - s0), 0.0, 1.0)
+                return jnp.where(step < s0, base_fn(step), v0 + (min_scale - v0) * frac)
         chain.append(optax.scale_by_schedule(cosine_fn))
         print(f"LR schedule: cosine, warmup {warmup_steps} steps, total {total_steps} steps, "
-              f"min scale {min_scale} (plateau scaling disabled)", file=fout)
+              f"min scale {min_scale} (plateau scaling disabled)"
+              + (f"; cosine length {cos_steps} steps" if cos_steps != total_steps else "")
+              + (f"; linear cool-down from step {s0} (factor {v0:.4f}) to {min_scale} at step {total_steps}"
+                 if cd_epoch is not None else ""), file=fout)
     elif lr_mode != 'plateau':
         raise ValueError(f"unknown lr_schedule {lr_mode!r}")
     optimizer = optax.chain(*chain)
@@ -1257,6 +1277,9 @@ def train(cfg: Dict):
     )
     tlog.print_head()
     global_step = int(to_host(step))
+    if getattr(build_model, 'cosine_fn', None) is not None:
+        print(f"LR at the start: step {global_step}, factor {float(build_model.cosine_fn(global_step)):.5f}, "
+              f"lr {cfg['learning_rate'] * float(build_model.cosine_fn(global_step)):.6g}", file=fout)
     t_train_start = time.time()
     swa_start = _get(cfg, 'swa_start_epoch', None)
     swa_start = int(swa_start) if swa_start is not None else None

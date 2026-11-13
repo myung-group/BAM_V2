@@ -528,6 +528,8 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
                                     charge_label_key=_get(cfg, 'charge_label_key', None),
                                     charge_label_optional=bool(_get(cfg, 'charge_label_optional', False)),
                                     fragments=fragments_of(cfg)).items() if v}
+    if float(_get(cfg, 'charge_label_scale', 1.0)) != 1.0:
+        fields['charge_label_scale'] = float(_get(cfg, 'charge_label_scale', 1.0))   # labels scaled about their mean
     if 'train' not in sc or 'valid' not in sc:
         raise ValueError("data_format stream needs stream.train and stream.valid")
     tr = _stream_split(sc['train'])

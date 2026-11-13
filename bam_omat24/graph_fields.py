@@ -28,7 +28,7 @@ def _per_atom(info, arrays, key):
 
 def extra_fields(info, arrays, n_atoms: int, charge_key: Optional[str] = None, spin_key: Optional[str] = None,
                  charge_label_key: Optional[str] = None, fragments: Optional[Sequence] = None, task=None,
-                 charge_label_optional: bool = False):
+                 charge_label_optional: bool = False, charge_label_scale: float = 1.0):
     """charge_label_optional: a structure without the labels gets NaN labels instead of an error; the charge loss
     skips NaN labels (training_utils.masked_charge_loss), so such a structure still trains energy and forces."""
     info = info or {}
@@ -71,11 +71,17 @@ def extra_fields(info, arrays, n_atoms: int, charge_key: Optional[str] = None, s
         nodes["ref_charges"] = np.asarray(v, dtype=np.float32).reshape(-1)
         if len(nodes["ref_charges"]) != n_atoms:
             raise ValueError(f"{charge_label_key!r}: {len(nodes['ref_charges'])} values for {n_atoms} atoms")
+        sc = float(charge_label_scale)
+        if sc != 1.0 and np.all(np.isfinite(nodes["ref_charges"])):
+            # scaled about the mean, so the total charge is kept (e.g. NBO x 0.75: NBO point-charge dipoles are
+            # about 1 / 0.79 of the DFT dipoles on the OMol25 validation molecules)
+            r = nodes["ref_charges"].astype(np.float64)
+            nodes["ref_charges"] = (sc * r + (1.0 - sc) * r.mean()).astype(np.float32)
     return nodes, glob
 
 
 def field_keys(charge_key=None, spin_key=None, charge_label_key=None, fragments=None, task=None,
-               charge_label_optional=False, formal_charges=None):
+               charge_label_optional=False, formal_charges=None, charge_label_scale=1.0):
     """(info keys, per-atom keys) a structure must carry for these fields."""
     info_k, arr_k = [], []
     if formal_charges:      # labels that set the molecule charges (formal_charges()), and charges given per atom

@@ -110,3 +110,12 @@ def test_quadrupole_and_spin_loss_terms(x64):
     assert qw[0] == 1.0 and qw[1] == 1.0 and qw[2] == 0.0
     assert abs(float(a1['qd_loss']) - qd) < 1e-9 and abs(float(a1['sp_loss']) - sp) < 1e-9 and qd > 0
     assert abs(float(a1['aux_loss']) - float(a0['aux_loss']) - qd - sp) < 1e-9
+
+
+def test_charge_label_scale_keeps_the_total():
+    from bam_omat24.graph_fields import extra_fields
+    info = {'charge': -1, 'nbo_charges': [-0.9, 0.45, -1.0, 0.45]}
+    n, _ = extra_fields(info, {}, 4, charge_key='charge', charge_label_key='nbo_charges', charge_label_scale=0.75)
+    q = np.asarray(n['ref_charges'], np.float64)
+    ref = 0.75 * np.array([-0.9, 0.45, -1.0, 0.45]) + 0.25 * (-1.0 / 4)
+    assert np.allclose(q, ref, atol=1e-6) and abs(q.sum() + 1.0) < 1e-6

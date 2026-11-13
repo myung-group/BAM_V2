@@ -935,6 +935,14 @@ def train(cfg: Dict):
     cov_mode = _get(cfg, 'cov_mode', 'scalar6')
     beta_nll = float(_get(cfg, 'beta_nll', 0.0))
     huber_delta = float(_get(cfg, 'huber_delta', 0.1))
+    # per-term deltas (2026-11-13): huber_delta_energy / _force / _stress override huber_delta for loss_type 'huber'
+    _hd = [_get(cfg, f'huber_delta_{k}', None) for k in ('energy', 'force', 'stress')]
+    if any(v is not None for v in _hd):
+        if loss_type != 'huber' or _get(cfg, 'deep_supervision', 0.0):
+            raise ValueError("huber_delta_energy / _force / _stress need loss_type 'huber' and no deep_supervision")
+        huber_delta = tuple(float(v) if v is not None else huber_delta for v in _hd)
+        print(f"Huber deltas: energy {huber_delta[0]} (eV/atom), force {huber_delta[1]} (eV/A per component), "
+              f"stress {huber_delta[2]} (eV/A^3 per Voigt component)", flush=True)
     ema_decay = float(_get(cfg, 'ema_decay', 0.99))
     # batch_size = graphs per device; global_batch_size (optional) = graphs per optimizer step, split
     # over the devices (the single-device run with batch_size = global_batch_size is the same

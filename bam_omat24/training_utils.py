@@ -348,10 +348,11 @@ def _loss_terms(
         out['energy_loss'] = e_fit + e_logdet + e_const
         out['force_loss'] = f_fit + f_logdet + f_const
         out['stress_loss'] = s_fit + s_logdet + s_const
-    else:  # 'huber'
-        out['energy_loss'] = jnp.sum(huber_loss(energy_diff, delta=huber_delta) * gw)
-        out['force_loss'] = jnp.sum(huber_loss(force_diff, delta=huber_delta) * nw[:, None])
-        out['stress_loss'] = (jnp.sum(huber_loss(stress_diff, delta=huber_delta))
+    else:  # 'huber'; huber_delta: one value, or (energy, force, stress) deltas (2026-11-13, V1-matched runs)
+        d_e, d_f, d_s = huber_delta if isinstance(huber_delta, (tuple, list)) else (huber_delta,) * 3
+        out['energy_loss'] = jnp.sum(huber_loss(energy_diff, delta=d_e) * gw)
+        out['force_loss'] = jnp.sum(huber_loss(force_diff, delta=d_f) * nw[:, None])
+        out['stress_loss'] = (jnp.sum(huber_loss(stress_diff, delta=d_s))
                               if periodic else 0.0)
 
     # ---- raw metrics (never clipped) ----

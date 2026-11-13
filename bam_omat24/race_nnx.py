@@ -1926,10 +1926,16 @@ class RACE(nnx.Module):
                     x_feats=x_feats, x_species=x_species, atomic_basis=atomic_basis, outputs=outputs,
                     layer_parts=layer_parts, dens_force=dens_force, bo_q=bo_q)
 
+    def _condition(self, ctx: Dict, i: int, features):
+        """Hook: the node features entering interaction layer i (subclasses add per-structure conditioning, e.g.
+        RACE_LR long_range.cs_layers "all").  Identity here."""
+        return features
+
     def _layer_step(self, ctx: Dict, i: int, features, prev_features):
         """Interaction layer i of node_energies (moved verbatim, 2026-11-06): returns the new node features and the
         energy stratum of the layer (gain applied, before scale / shift).  prev_features: features of layer i-2
         (residual "chebyshev", i >= 2) or of layer 1 ("neumann"), else None."""
+        features = self._condition(ctx, i, features)
         layer = self.layers[i]
         data, species, sh, radial_basis = ctx["data"], ctx["species"], ctx["sh"], ctx["radial_basis"]
         r_norm, r_c, shell_env, keep = ctx["r_norm"], ctx["r_c"], ctx["shell_env"], ctx["keep"]

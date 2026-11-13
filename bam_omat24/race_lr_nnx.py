@@ -41,7 +41,18 @@ from bam_omat24.race_nnx import RACE, _dense
 LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_hidden": 32, "chi_scale": 1.0,
                "hard_init": 5.0, "chi_init": "pauling", "chi_init_scale": 3.0, "chi_init_missing": "mean", "qeq": True,
                "charge_spin_embedding": False, "cs_hidden": 32, "sr_switch": None, "qeq_block": None,
-               "n_tasks": 0, "coulomb_energy": True}
+               "n_tasks": 0, "coulomb_energy": True,
+               "cs_encoding": "scalar", "cs_layers": "first", "cs_species_gate": False,
+               "cs_max_charge": 6, "cs_max_spin": 11}
+# Charge / spin conditioning beyond the layer-0 embedding (2026-11-13; the defaults are the original model, with the
+# original parameter tree; all three need "charge_spin_embedding": true):
+#   "cs_encoding": "table"   learned rows per total charge (clipped to +-cs_max_charge) and per spin multiplicity
+#                            (clipped to cs_max_spin) are added to the hidden layer of the (Q, 2S+1 - 1) MLP;
+#   "cs_layers": "all"       that hidden vector is also projected onto the scalar (0e) features entering every later
+#                            interaction layer (one zero-initialised projection per layer), not only onto layer 0;
+#   "cs_species_gate": true  every projection is multiplied per atom by 1 + G[Z] (G zero-initialised), so that the
+#                            elements can respond differently to the charge / spin state (e.g. a metal centre).
+# All new parameters start at zero, so a model with these options starts as the model without them.
 # "coulomb_energy": false (2026-11-11): the Qeq charges are solved as usual, but the energy keeps only the on-site
 # part chi_i q_i + 1/2 (J_i + K / (sqrt(pi) sigma_i)) q_i^2; the pair Coulomb energy is left to another stratum
 # (RACE_POLAR with polar.charges "qeq": the Thole block computes the electrostatics of these charges once).
@@ -113,6 +124,27 @@ class RACE_LR(RACE):
             raise ValueError(f"long_range n_tasks must be >= 0, got {self.n_tasks}")
         if self.n_tasks:
             self.task_table = nnx.Param(jnp.zeros((self.n_tasks, self.embed_irreps.dim), jnp.float32))
+        # charge / spin conditioning options (created last and at zero: the other parameters keep their initial values)
+        enc, lay = str(lr['cs_encoding']), str(lr['cs_layers'])
+        if enc not in ('scalar', 'table') or lay not in ('first', 'all'):
+            raise ValueError(f"long_range cs_encoding must be 'scalar' or 'table' and cs_layers 'first' or 'all', "
+                             f"got {enc!r}, {lay!r}")
+        self.cs_table, self.cs_all, self.cs_gate = enc == 'table', lay == 'all', bool(lr['cs_species_gate'])
+        if (self.cs_table or self.cs_all or self.cs_gate) and not self.cs_embed:
+            raise ValueError("long_range cs_encoding / cs_layers / cs_species_gate need charge_spin_embedding true")
+        if self.cs_embed:
+            h, n0, n_l = int(lr['cs_hidden']), self.embed_irreps.dim, len(self.layers)
+            if self.cs_table:
+                self.cs_qmax, self.cs_smax = int(lr['cs_max_charge']), int(lr['cs_max_spin'])
+                self.cs_q_table = nnx.Param(jnp.zeros((2 * self.cs_qmax + 1, h), jnp.float32))
+                self.cs_s_table = nnx.Param(jnp.zeros((self.cs_smax, h), jnp.float32))
+            if self.cs_all and n_l > 1:
+                # (h, (n_l - 1) n0): the projections of layers 1 .. n_l - 1 side by side (one 2-D matrix)
+                self.cs_layer_w = nnx.Param(jnp.zeros((h, (n_l - 1) * n0), jnp.float32))
+            if self.cs_gate:
+                # (n_species, n_gate n0): leading species axis (soap_species_adam treats it as an element table)
+                self.cs_n_gate = n_l if self.cs_all else 1
+                self.cs_gate_table = nnx.Param(jnp.zeros((n_species, self.cs_n_gate * n0), jnp.float32))
         if not (self.qeq or self.cs_embed or self.n_tasks or getattr(self, '_allow_plain', False)):
             raise ValueError("long_range: qeq false, charge_spin_embedding false and n_tasks 0 is plain RACE; "
                              "use model RACE")
@@ -132,21 +164,59 @@ class RACE_LR(RACE):
             f = ctx['features']
             dt = f.array.dtype
             n_graphs = data.n_node.shape[0]
-            z = 0.0
+            z, z_cs = 0.0, None
+            n_nodes = f.shape[0]
+            node_graph = jnp.repeat(jnp.arange(n_graphs), data.n_node, total_repeat_length=n_nodes)
+            gate0 = None
             if self.cs_embed:
                 Q, S = self._graph_globals(data, dt)
-                z = self.cs_mlp2(jax.nn.silu(self.cs_mlp1(jnp.stack([Q, S - 1.0], axis=-1)))).astype(dt)   # (G, n_e)
+                pre = self.cs_mlp1(jnp.stack([Q, S - 1.0], axis=-1))
+                if self.cs_table:
+                    qi = jnp.clip(jnp.round(Q).astype(jnp.int32), -self.cs_qmax, self.cs_qmax) + self.cs_qmax
+                    si = jnp.clip(jnp.round(S).astype(jnp.int32) - 1, 0, self.cs_smax - 1)
+                    pre = pre + self.cs_q_table[...][qi].astype(pre.dtype) + self.cs_s_table[...][si].astype(pre.dtype)
+                hid = jax.nn.silu(pre)                                                  # (G, cs_hidden)
+                z = z_cs = self.cs_mlp2(hid).astype(dt)                                 # (G, n_e)
+                ctx['cs_hidden'], ctx['cs_node_graph'] = hid.astype(dt), node_graph
+                if self.cs_gate:
+                    n0 = self.embed_irreps.dim
+                    gate0 = 1.0 + self.cs_gate_table[...].astype(dt)[:, :n0][data.nodes['species']]   # (N, n0)
             if self.n_tasks:
                 g = data.globals if isinstance(data.globals, dict) else {}
                 t = g.get('task')
                 t = (jnp.zeros((n_graphs,), jnp.int32) if t is None
                      else jnp.clip(jnp.round(jnp.asarray(t)).astype(jnp.int32).reshape(n_graphs), 0, self.n_tasks - 1))
                 z = z + self.task_table[...][t].astype(dt)
-            n_nodes = f.shape[0]
-            node_graph = jnp.repeat(jnp.arange(n_graphs), data.n_node, total_repeat_length=n_nodes)
-            add = jnp.zeros_like(f.array).at[:, :z.shape[1]].set(z[node_graph])
+            zn = z[node_graph]
+            if gate0 is not None:
+                # only the charge / spin part is gated; the task row (added to z above) is left as it is
+                zn = zn + z_cs[node_graph] * (gate0 - 1.0)
+            add = jnp.zeros_like(f.array).at[:, :z.shape[1]].set(zn)
             ctx['features'] = e3nn.IrrepsArray(f.irreps, f.array + add)
         return ctx
+
+    def _condition(self, ctx, i, features):
+        """long_range.cs_layers "all": the charge / spin hidden vector projected onto the scalars entering layer i >= 1
+        (layer 0 gets it in _prelude)."""
+        if i == 0 or not (self.cs_embed and self.cs_all) or 'cs_hidden' not in ctx:
+            return features
+        n0 = self.embed_irreps.dim
+        sl = None
+        for (mul, ir), s in zip(features.irreps, features.irreps.slices()):
+            if ir.l == 0 and ir.p == 1 and mul == n0:
+                sl = s
+                break
+        if sl is None:
+            raise ValueError(f"cs_layers 'all': no {n0}x0e block in the features of layer {i} ({features.irreps})")
+        dt = features.array.dtype
+        hid, ng = ctx['cs_hidden'].astype(dt), ctx['cs_node_graph']
+        n_rows = features.array.shape[0]
+        z = (hid @ self.cs_layer_w[...].astype(dt)).reshape(hid.shape[0], -1, n0)[:, i - 1]        # (G, n0)
+        zi = z[ng[:n_rows]]
+        if self.cs_gate:
+            g = self.cs_gate_table[...].astype(dt).reshape(-1, self.cs_n_gate, n0)[:, i]            # (n_species, n0)
+            zi = zi * (1.0 + g[ctx['data'].nodes['species'][:n_rows]])
+        return e3nn.IrrepsArray(features.irreps, features.array.at[:, sl].add(zi))
 
     def node_energies(self, positions, cell, cutoff, data, *args, **kw):
         out = super().node_energies(positions, cell, cutoff, data, *args, **kw)

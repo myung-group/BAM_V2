@@ -78,6 +78,26 @@ def test_ct_solve_conserves_components_and_tends_to_qeq(x64):
     assert np.allclose(np.asarray(q), np.asarray(qref), atol=1e-5)
 
 
+def test_ct_solve_float32_inputs_keep_the_charge(x64):
+    """a large, strongly coupled structure with float32 inputs (a float32 model under jax_enable_x64): the total
+    charge is kept to float32 rounding (the float32 LU of I + L A lost it completely before the float64 solve)"""
+    import jax.numpy as jnp
+    from bam_omat24.long_range import coulomb_direct, ct_solve
+    rng = np.random.default_rng(3)
+    N = 300
+    pos = rng.uniform(0, 14, (N, 3))
+    d = np.linalg.norm(pos[:, None] - pos[None], axis=-1)
+    C = np.where((d < 3.0) & (d > 0), 10.0, 0.0)
+    sig = rng.uniform(0.15, 1.0, N)
+    mask = jnp.ones(N, bool)
+    gam = coulomb_direct(jnp.asarray(pos), jnp.asarray(sig), mask[:, None] & mask[None, :])
+    q0 = np.zeros(N); q0[:7] = 1.0
+    f32 = lambda x: jnp.asarray(x, jnp.float32)
+    q, e = ct_solve(f32(rng.normal(0, 8, N)), f32(rng.uniform(0, 8, N)), f32(sig), f32(gam), f32(C), mask, f32(q0))
+    assert q.dtype == jnp.float32
+    assert abs(float(jnp.sum(q)) - 7.0) < 1e-3 and float(jnp.max(jnp.abs(q))) < 20.0
+
+
 # ------------------------------------------------------------------------------------------------------- the model
 CT = {'qeq_block': 8, 'ct_mode': 'conductance', 'sigma_bounds': [0.5, 2.0], 'ct_init': 0.0}
 

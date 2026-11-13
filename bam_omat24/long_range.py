@@ -146,7 +146,15 @@ def ct_solve(chi, hard, sigma, gamma, cond, node_mask, q0, gamma_energy=None):
 
     Every connected component of cond keeps the total of q0 exactly (1^T L = 0); atoms without conductance keep q0;
     for cond -> infinity inside a component the charges tend to the Qeq charges of that component.  Returns
-    (q (N,), per-atom energy e_i = chi_i q_i + 1/2 q_i (A_e q)_i with A_e from gamma_energy (default gamma))."""
+    (q (N,), per-atom energy e_i = chi_i q_i + 1/2 q_i (A_e q)_i with A_e from gamma_energy (default gamma)).
+    Computed in float64 whenever jax_enable_x64 is on (a float32 model: I + L A has entries of 1e3 - 1e4 and is not
+    symmetric, and a float32 LU loses the charge conservation completely on large charged structures, 2026-11-13);
+    q and e are returned in the input dtype."""
+    in_dt = chi.dtype
+    if jax.config.jax_enable_x64 and in_dt != jnp.float64:
+        c64 = (lambda x: None if x is None else x.astype(jnp.float64))
+        q, e = ct_solve(c64(chi), c64(hard), c64(sigma), c64(gamma), c64(cond), node_mask, c64(q0), c64(gamma_energy))
+        return q.astype(in_dt), e.astype(in_dt)
     N = chi.shape[0]
     m = node_mask
     mm = m[:, None] & m[None, :]

@@ -1013,6 +1013,10 @@ def train(cfg: Dict):
     cov_mode = _get(cfg, 'cov_mode', 'scalar6')
     beta_nll = float(_get(cfg, 'beta_nll', 0.0))
     huber_delta = float(_get(cfg, 'huber_delta', 0.1))
+    # per-term deltas (2026-11-13): huber_delta_energy / _force / _stress, each defaulting to huber_delta
+    _hd = tuple(float(_get(cfg, f'huber_delta_{k}', huber_delta)) for k in ('energy', 'force', 'stress'))
+    if len(set(_hd)) > 1:
+        huber_delta = _hd
     ema_decay = float(_get(cfg, 'ema_decay', 0.99))
     # batch_size = graphs per device; global_batch_size (optional) = graphs per optimizer step, split
     # over the devices (the single-device run with batch_size = global_batch_size is the same

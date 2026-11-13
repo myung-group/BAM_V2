@@ -60,6 +60,17 @@ def huber_loss(x: jnp.ndarray, delta: float = 1.0) -> jnp.ndarray:
     return jnp.where(abs_x <= delta, 0.5 * x ** 2, delta * (abs_x - 0.5 * delta))
 
 
+def huber_deltas(delta):
+    """(energy, force, stress) Huber deltas from one number (the same delta for every term, the original
+    behaviour) or a 3-sequence (config keys huber_delta_energy / _force / _stress, 2026-11-13)."""
+    if isinstance(delta, (tuple, list)):
+        if len(delta) != 3:
+            raise ValueError(f"huber_delta: one number or (energy, force, stress), got {delta!r}")
+        return float(delta[0]), float(delta[1]), float(delta[2])
+    d = float(delta)
+    return d, d, d
+
+
 def _build_force_L(frc_var: jnp.ndarray) -> jnp.ndarray:
     """Build 3x3 lower triangular Cholesky L from 6 parameters per atom.
 
@@ -263,6 +274,7 @@ def _loss_terms(
     node_mask = jraph.get_node_padding_mask(batch).astype(jnp.float32)
     n_graphs = jnp.maximum(graph_mask.sum(), 1)
     n_atoms = jnp.maximum(node_mask.sum(), 1)
+    dE, dF, dS = huber_deltas(huber_delta)
 
     energy = results['energy']
     forces = results['forces']
@@ -335,7 +347,7 @@ def _loss_terms(
             energy_sigma = energy_var.squeeze(-1) * graph_mask + (1.0 - graph_mask)
             energy_z = energy_diff / energy_sigma
             if loss_type == 'nll':
-                e_fit = jnp.sum(huber_loss(energy_z, delta=huber_delta))
+                e_fit = jnp.sum(huber_loss(energy_z, delta=dE))
                 e_logdet = 2.0 * jnp.sum(jnp.log(energy_sigma) * graph_mask)
                 e_const = -2.0 * log_min_var * n_graphs
             else:
@@ -344,7 +356,7 @@ def _loss_terms(
                 e_logdet = jnp.sum(w * jnp.log(energy_sigma) * graph_mask)
                 e_const = -log_min_var * n_graphs
         else:
-            e_fit = jnp.sum(huber_loss(energy_diff, delta=huber_delta))
+            e_fit = jnp.sum(huber_loss(energy_diff, delta=dE))
             e_logdet = 0.0
             e_const = 0.0
 
@@ -352,10 +364,10 @@ def _loss_terms(
         frc_z, log_det_L = force_whiten(frc_var, force_diff, cov_mode)   # (n,3), (n,)
         if loss_type == 'nll':
             if cov_mode == 'scalar6':
-                f_fit = jnp.sum(huber_loss(frc_z, delta=huber_delta))
+                f_fit = jnp.sum(huber_loss(frc_z, delta=dF))
             else:  # rotation-invariant: Huber on the Mahalanobis norm
                 z_norm = jnp.sqrt(jnp.sum(frc_z ** 2, axis=-1) + 1e-12)
-                f_fit = jnp.sum(huber_loss(z_norm, delta=huber_delta) * node_mask)
+                f_fit = jnp.sum(huber_loss(z_norm, delta=dF) * node_mask)
             f_logdet = 2.0 * jnp.sum(log_det_L * node_mask)
             f_const = -2.0 * log_min_var * (3 * n_atoms)
         else:
@@ -374,7 +386,7 @@ def _loss_terms(
                 stress_sigma = stress_var * graph_mask[:, None] + (1.0 - graph_mask[:, None])
                 stress_z = stress_diff / stress_sigma
                 if loss_type == 'nll':
-                    s_fit = jnp.sum(huber_loss(stress_z, delta=huber_delta))
+                    s_fit = jnp.sum(huber_loss(stress_z, delta=dS))
                     s_logdet = 2.0 * jnp.sum(jnp.log(stress_sigma) * graph_mask[:, None])
                     s_const = -12.0 * log_min_var * n_graphs
                 else:
@@ -382,7 +394,7 @@ def _loss_terms(
                     s_logdet = jnp.sum(jnp.log(stress_sigma) * graph_mask[:, None])
                     s_const = -6.0 * log_min_var * n_graphs
             else:
-                s_fit = jnp.sum(huber_loss(stress_diff, delta=huber_delta))
+                s_fit = jnp.sum(huber_loss(stress_diff, delta=dS))
                 s_logdet = s_const = 0.0
         else:
             s_fit = s_logdet = s_const = 0.0
@@ -391,9 +403,9 @@ def _loss_terms(
         out['force_loss'] = f_fit + f_logdet + f_const
         out['stress_loss'] = s_fit + s_logdet + s_const
     else:  # 'huber'
-        out['energy_loss'] = jnp.sum(huber_loss(energy_diff, delta=huber_delta) * gw)
-        out['force_loss'] = jnp.sum(huber_loss(force_diff, delta=huber_delta) * nw[:, None])
-        out['stress_loss'] = (jnp.sum(huber_loss(stress_diff, delta=huber_delta))
+        out['energy_loss'] = jnp.sum(huber_loss(energy_diff, delta=dE) * gw)
+        out['force_loss'] = jnp.sum(huber_loss(force_diff, delta=dF) * nw[:, None])
+        out['stress_loss'] = (jnp.sum(huber_loss(stress_diff, delta=dS))
                               if periodic else 0.0)
 
     # ---- raw metrics (never clipped) ----
@@ -532,7 +544,7 @@ def compute_loss(
         for tt in range(e_partial.shape[0] - 1):                    # last partial sum = full energy
             d = (e_partial[tt] - target) * graph_mask / n_node
             d = 5.0 * jnp.tanh(d / 5.0)
-            ds_loss = ds_loss + jnp.sum(huber_loss(d, delta=huber_delta)) / n_graphs
+            ds_loss = ds_loss + jnp.sum(huber_loss(d, delta=huber_deltas(huber_delta)[0])) / n_graphs
         total_loss = total_loss + deep_supervision * ds_loss
     if stratum_decorrelation > 0.0:
         m = node_mask

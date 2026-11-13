@@ -21,6 +21,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument('--relaxed', required=True); ap.add_argument('--output', required=True)
 ap.add_argument('--model-name', default='racev2'); ap.add_argument('--refs', required=True)
 ap.add_argument('--mp2020-cse', required=True); ap.add_argument('--details'); ap.add_argument('--write-relaxed-json')
+ap.add_argument('--species-refit', help='<ckpt>.species_refit.json: per-element energy correction (training-split refit)')
 ap.add_argument('--scripts', default='/scratch/t510a13/probabilistic_symmetrization/BAM-GAMP-jax/scripts')
 a = ap.parse_args()
 sys.path.insert(0, a.scripts)
@@ -37,6 +38,14 @@ for p in sorted(Path(a.relaxed).glob('relaxed_*.jsonl')):
                 continue                           # a line cut by a kill
             res[str(r['material_id'])] = r         # a structure relaxed twice (resume): the last result
 print(f'[csv] {len(res)} relaxed structures from {a.relaxed}')
+if a.species_refit:
+    # the refit changes total energies only (a constant per element): forces and relaxed structures are unchanged,
+    # so it is applied to the final energies of the existing relaxation results
+    rf = json.load(open(a.species_refit))
+    dz = {int(z): float(d) for z, d in zip(rf['atomic_numbers'], rf['delta_eV'])}
+    for r in res.values():
+        r['final_energy'] = float(r['final_energy']) + sum(dz[int(z)] for z in r['numbers'])
+    print(f'[csv] species refit applied: {a.species_refit}')
 e_form_fn = M._build_e_form_from_npz(a.refs)
 t0 = time.time()
 cses = M._load_wbm_cses(a.mp2020_cse, set(res))

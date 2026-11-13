@@ -868,9 +868,13 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         # plateau transform kept for the state/plumbing but made inert (never fires)
         schedule = optax.contrib.reduce_on_plateau(factor=0.5, patience=10**8, min_scale=1.0)
     else:
+        # lr_schedule_rtol / lr_schedule_cooldown (2026-11-13): torch ReduceLROnPlateau threshold (relative mode) and
+        # cooldown, for runs that copy a PyTorch recipe; defaults = optax defaults (unchanged behaviour)
         schedule = optax.contrib.reduce_on_plateau(
             factor=float(_get(cfg, "lr_schedule_factor", 0.8)),
             patience=int(_get(cfg, "lr_schedule_patience", 10)),
+            rtol=float(_get(cfg, "lr_schedule_rtol", 1e-4)),
+            cooldown=int(_get(cfg, "lr_schedule_cooldown", 0)),
             min_scale=float(_get(cfg, "lr_schedule_min_scale", 0.001)),
         )
     build_model.cosine_fn = cosine_fn

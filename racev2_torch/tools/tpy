@@ -1,0 +1,8 @@
+#!/bin/bash
+# Python of the PyTorch environment (KISTI pytorch-25.03 container + venv /scratch/t510a13/envs/racev2_torch with ase, e3nn).
+#   racev2_torch/tools/tpy script.py ...      (login node: small CPU checks only, single thread)
+export PATH=/apps/common/apptainer/1.4.5/aarch64/bin:$PATH APPTAINER_CACHEDIR=/scratch/t510a13/apptainer/cache
+export APPTAINER_TMPDIR=/tmp/apptainer-$USER/tmp OMP_NUM_THREADS=${OMP_NUM_THREADS:-1} OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1}
+mkdir -p $APPTAINER_TMPDIR
+exec apptainer -s exec ${TPY_NV:+--nv} /apps/common/kisti-container/images/slingshot/kisti-pytorch-25.03-gh200-r1-aarch64.sif \
+  /scratch/t510a13/envs/racev2_torch/bin/python "$@"

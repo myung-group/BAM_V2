@@ -107,3 +107,35 @@ def test_dispersion_tail_beyond_the_cutoff(x64):
     e15, e30 = e_disp(15.0) - ea - eb, e_disp(30.0) - ea - eb
     assert e15 < 0.0 and e30 < 0.0
     assert 0.8 < (e15 / e30) / 64.0 < 1.25, e15 / e30
+
+
+def test_dispersion_float32_gradients_finite():
+    """float32 (the training dtype) with padding slots in the blocks: energy, forces and parameter gradients finite
+    (pre-flight 2026-11-15: a 0 / (0 + 1e-30) on the padding gave NaN parameter gradients in float32)"""
+    import jax
+    import jax.numpy as jnp
+    from bam_omat24.race_polar_nnx import RACE_POLAR
+    sts = [_molecule(1), _molecule(2, n=6)]
+    res = {}
+    for disp in (False, True):
+        # the CG settings of the training configs (the test POLAR ones, 1e-12 / 200, are float64-only)
+        m = RACE_POLAR(**KW, rngs=nnx.Rngs(0), long_range={**LR, 'qeq_block': 12},
+                       polar={**POLAR, 'cg_tolerance': 1e-4, 'cg_max_iterations': 25, 'dispersion': disp})
+        res[disp] = _f32_grads(m, sts)
+    assert not res[False] and not res[True], ('without dispersion', res[False][:8], 'with', res[True][:8])
+
+
+def _f32_grads(m, sts):
+    import jax
+    import jax.numpy as jnp
+    b = jax.tree.map(lambda x: x.astype(jnp.float32) if hasattr(x, 'dtype') and x.dtype == np.float64 else x,
+                     _batch(sts, extra_nodes=5, extra_edges=9))
+    gd, st = nnx.split(m, nnx.Param)
+
+    def loss(st):
+        out = nnx.merge(gd, st)(b)
+        return jnp.sum(out['energy'][:2] ** 2) + jnp.sum(out['forces'] ** 2)
+    val, grads = jax.value_and_grad(loss)(st)
+    bad = [jax.tree_util.keystr(k) for k, v in jax.tree_util.tree_leaves_with_path(grads)
+           if not bool(jnp.all(jnp.isfinite(v)))]
+    return bad if np.isfinite(float(val)) else ['loss'] + bad

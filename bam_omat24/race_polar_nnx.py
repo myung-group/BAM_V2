@@ -207,9 +207,12 @@ class RACE_POLAR(RACE_LR):
         a = jnp.where(node_mask, alpha, 1.0)
         c6 = jax.nn.softplus(self.disp_kappa[...].astype(dt))[species] * a * a              # eV A^6
         rv = 0.529177 * 2.54 * (a / 0.148185) ** (1.0 / 7.0)                                 # A
-        P, A, C, Rv, M = blocks(positions, 0.0), blocks(a, 1.0), blocks(c6, 0.0), blocks(rv, 1.0), blocks(valid, False)
+        # padding slots get C = alpha = 1 (never 0): a 0 / (0 + tiny) there gave NaN gradients in float32 (the tiny
+        # squared underflows; NaN * 0 survives the mask) -- pre-flight 2026-11-15
+        c6 = jnp.where(valid, c6, 1.0)
+        P, A, C, Rv, M = blocks(positions, 0.0), blocks(a, 1.0), blocks(c6, 1.0), blocks(rv, 1.0), blocks(valid, False)
         cij = 2.0 * C[:, :, None] * C[:, None, :] / (
-            A[:, None, :] / A[:, :, None] * C[:, :, None] + A[:, :, None] / A[:, None, :] * C[:, None, :] + 1e-30)
+            A[:, None, :] / A[:, :, None] * C[:, :, None] + A[:, :, None] / A[:, None, :] * C[:, None, :])
         r0 = jax.nn.softplus(self.disp_a1[...].astype(dt)) * (Rv[:, :, None] + Rv[:, None, :]) + float(p['disp_a2'])
         r06 = r0 ** 6
         mm = M[:, :, None] & M[:, None, :]

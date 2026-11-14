@@ -26,6 +26,8 @@ Config keys (in addition to the model hyper-parameters, see README):
     noisy_nodes      : {"sigma": A, "weight": w}, denoising auxiliary task (adds noise_head)
     sam_rho          : float, sharpness-aware minimisation radius (default 0)
     lr_schedule      : "plateau" (default) | "cosine" (+ lr_warmup_epochs, lr_cosine_min_scale)
+                       | "wsd" (+ lr_warmup_epochs, lr_decay_start_epoch, lr_cosine_min_scale: warmup, constant,
+                         linear decay from lr_decay_start_epoch to n_epochs; 2026-11-15)
     swa_start_epoch  : int, average raw params from this epoch on; final eval/summary = SWA
     boltzmann_tilt   : {"T_prime": K, "w_max": x}, per-frame weight exp((E-Emin)/kT') capped
     layer_lmax       : [l_0..l_{L-1}] per-layer max l of new stratum information
@@ -659,6 +661,19 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
 # Model / optimizer
 # =============================================================================
 
+def wsd_schedule(warmup_steps: int, decay_start: int, total_steps: int, min_scale: float):
+    """LR factor of lr_schedule "wsd": linear min_scale -> 1 over warmup_steps, 1 until decay_start, linear to
+    min_scale at total_steps (and min_scale after)."""
+    if not 0 <= warmup_steps <= decay_start < total_steps:
+        raise ValueError(f"lr_schedule wsd: need 0 <= warmup <= decay start < total steps, got {warmup_steps}, "
+                         f"{decay_start}, {total_steps}")
+    return optax.join_schedules(
+        [optax.linear_schedule(min_scale, 1.0, max(warmup_steps, 1)),
+         optax.constant_schedule(1.0),
+         optax.linear_schedule(1.0, min_scale, total_steps - decay_start)],
+        boundaries=[warmup_steps, decay_start])
+
+
 def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Dict, fout, n_devices: int = 1):
     seed = int(_get(cfg, 'seed', 42))
     model_rngs = nnx.Rngs(seed)
@@ -923,6 +938,21 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         chain.append(optax.scale_by_schedule(cosine_fn))
         print(f"LR schedule: cosine, warmup {warmup_steps} steps, total {total_steps} steps, "
               f"min scale {min_scale} (plateau scaling disabled)", file=fout)
+    elif lr_mode == 'wsd':
+        # warmup - stable - decay (2026-11-15): linear warmup from min scale to 1 over lr_warmup_epochs, constant 1
+        # until lr_decay_start_epoch, then linear decay to lr_cosine_min_scale at n_epochs.  The factor depends on the
+        # global step only, so a resumed run can move the decay start (e.g. to fit a deadline) through the config.
+        steps_per_epoch = int(stats.get('steps_per_epoch') or
+                              max(int(stats['n_graphs']) // (int(_get(cfg, 'batch_size', 5)) * n_devices), 1))
+        total_steps = int(_get(cfg, 'n_epochs', 1000)) * steps_per_epoch
+        warmup_steps = int(_get(cfg, 'lr_warmup_epochs', 10)) * steps_per_epoch
+        decay_start = int(float(_get(cfg, 'lr_decay_start_epoch', 0.8 * int(_get(cfg, 'n_epochs', 1000))))
+                          * steps_per_epoch)
+        min_scale = float(_get(cfg, 'lr_cosine_min_scale', 0.01))
+        cosine_fn = wsd_schedule(warmup_steps, decay_start, total_steps, min_scale)
+        chain.append(optax.scale_by_schedule(cosine_fn))
+        print(f"LR schedule: wsd, warmup {warmup_steps} steps, constant to step {decay_start}, linear decay to "
+              f"{min_scale} at step {total_steps} (plateau scaling disabled)", file=fout)
     elif lr_mode != 'plateau':
         raise ValueError(f"unknown lr_schedule {lr_mode!r}")
     optimizer = optax.chain(*chain)
@@ -955,7 +985,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
               f"({sum(s for _, s in free):,} of {sum(s for _, s in named):,} parameters): "
               f"{[nm for nm, _ in free]}", file=fout)
 
-    if lr_mode == 'cosine':
+    if lr_mode in ('cosine', 'wsd'):
         # plateau transform kept for the state/plumbing but made inert (never fires)
         schedule = optax.contrib.reduce_on_plateau(factor=0.5, patience=10**8, min_scale=1.0)
     else:

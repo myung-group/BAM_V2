@@ -53,7 +53,8 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
                "spin_pair_switch": None, "spin_kappa_init": 0.5, "spin_nbo_head": False, "spin_nbo_switch": None,
                "charge_nbo_head": False, "cs_local": None, "nbo_t_max": 0.5, "ct_cond_max": None, "ct_decay": None}
 # "ct_decay": [beta, r0] (2026-11-15; ct_mode "conductance"): the pair conductance decays exponentially with the
-# distance, s = g_Zi + g_Zj - beta (r - r0) (before ct_cond_max and the ct_switch), as the overlap behind a real
+# distance, s = cap(g_Zi + g_Zj) - beta (r - r0) (AFTER ct_cond_max: v2local's g sums sit far above the cap, where
+# their gradient is zero, and a decay inside the cap had no effect at all; then the ct_switch), as the overlap behind a real
 # charge transfer does.  The transferred charge goes as cond A / (1 + cond A), a sigmoid in ln(cond): without the decay
 # ln(cond) only falls in the last ~0.15 A before ct_switch[1] (1 - C2 switch ~ 10 (1 - x)^3), so a saturated
 # conductance dropped the charge transfer as a STEP there (v2local e90: F- ... H2O jumped 8 kcal/mol, force 10 eV/A,
@@ -657,12 +658,12 @@ class RACE_LR(RACE):
         g = self.ct_log_g[...].astype(dt)
         sp = data.nodes['species']
         s = g[sp[rcv]] + g[sp[snd]]
-        if self.lr['ct_decay'] is not None:               # exponential decay with distance (ct_decay [beta, r0])
-            beta, r0 = (float(x) for x in self.lr['ct_decay'])
-            s = s - beta * (r - r0)
         if self.lr['ct_cond_max'] is not None:            # smooth upper cap of the conductance (ct_cond_max)
             lc = math.log(float(self.lr['ct_cond_max']))
             s = lc - jax.nn.softplus(lc - s)
+        if self.lr['ct_decay'] is not None:               # exponential decay with distance (ct_decay [beta, r0])
+            beta, r0 = (float(x) for x in self.lr['ct_decay'])
+            s = s - beta * (r - r0)                       # AFTER the cap: a capped (drifted) g cannot absorb it
         c = jnp.exp(s) * (1.0 - sr_switch(r, r_on, r_off))
         c = jnp.where(ok & (d2 > 0), c, 0.0)
         out = jnp.zeros((n_graphs, B + 1, B + 1), dt).at[node_graph[rcv], slot[rcv], slot[snd]].add(c)

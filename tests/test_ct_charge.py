@@ -236,12 +236,13 @@ def test_ct_decay_fades_the_charge_transfer(x64):
     on = c0[:4, :4] > 1e-12
     assert on.sum() > 0
     assert np.allclose(c1[:4, :4][on], (c0[:4, :4] * np.exp(-3.0 * (d - 2.0)))[on], rtol=1e-6)
-    # 2) saturated conductance under the cap (the v2local case): charge of the ion along the approach line
+    # 2) saturated conductance far above the cap (the v2local case; the decay must act after the cap): charge of the
+    #    ion along the approach line
     base = {**CT, 'ct_cond_max': 100.0}
     m0, m1 = _f64(_model(base)), _f64(_model({**base, 'ct_decay': [3.0, 2.0]}))
     for m in (m0, m1):
         m.chi0.value = jnp.asarray([0.3, -2.0, 0.1, 1.5])
-        m.ct_log_g.value = jnp.full((4,), 3.0)
+        m.ct_log_g.value = jnp.full((4,), 12.0)                        # the drifted g of v2local, far above the cap
     Rs = np.round(np.arange(3.6, 4.61, 0.04), 3)
     q = {k: np.array([float(np.asarray(_run(m, _graph(R))['charges'])[3]) for R in Rs]) for k, m in (('0', m0), ('1', m1))}
     assert abs(q['0'][0] - 1.0) > 0.02                          # a real charge transfer inside the switch

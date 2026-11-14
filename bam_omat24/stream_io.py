@@ -361,6 +361,15 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fie
                                                                                        ('nbo_charges', 'lowdin_charges'))),
                                 bond_factor=float(fc_opts.get('bond_factor', 1.2)))
         out['n:q0'] = q0.astype(np.float32)
+        if fc_opts.get('spins'):
+            # per-atom reference spins s0 of the local charge / spin conditioning (RACE_LR long_range cs_local):
+            # integer 2S per molecule (graph_fields.formal_spins, from the summed spin labels)
+            from graph_fields import formal_spins as _formal_spins
+            mult = float(info.get(fields.get('spin_key') or 'spin', 1) or 1)
+            s0, _ = _formal_spins(st['numbers'], np.asarray(st['positions'], np.float64), src, dst, mult, q0, info,
+                                  st.get('arrays'), shifts, label_key=str(fc_opts['spins'].get('label_key', 'lowdin_spins')),
+                                  bond_factor=float(fc_opts.get('bond_factor', 1.2)))
+            out['n:s0'] = s0.astype(np.float32)
     if fields:
         nx, gx = extra_fields(st.get('info'), st.get('arrays'), len(species), **fields)
         out.update({f'n:{k}': v for k, v in nx.items()})

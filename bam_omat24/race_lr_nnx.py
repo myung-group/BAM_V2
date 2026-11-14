@@ -51,7 +51,19 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
                "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2, "spin_head": False,
                "spin_energy": False, "spin_w_init": "sdftb", "spin_mu_bias": -4.0, "spin_pair": True,
                "spin_pair_switch": None, "spin_kappa_init": 0.5, "spin_nbo_head": False, "spin_nbo_switch": None,
-               "charge_nbo_head": False}
+               "charge_nbo_head": False, "cs_local": None}
+# "cs_local": [r_on, r_off] (2026-11-14; needs charge_spin_embedding): the charge / spin conditioning of every atom
+# comes from the LOCAL charge and spin around it instead of the graph totals Q and 2S+1, so that a structure made of
+# separated fragments is the sum of the fragments (size consistency; the graph totals made a separated Li+ ... I- pair
+# 22-41 kcal/mol off the sum of the ions, every RACE_LR / UMA model checked, md_water/bench/size_consistency.py):
+#     Qbar_i = sum_j s(r_ij) q0_j,   2Sbar_i = sum_j s(r_ij) s0_j      (j over i itself and its neighbours)
+# s = 1 below r_on and a C2 switch to 0 at r_off (<= cutoff); q0 / s0 are the integer charge / 2S of every molecule
+# spread evenly over its atoms (nodes 'q0' / 's0', graph_fields.formal_charges / formal_spins; without them Q / N and
+# 2S / N).  A molecule splits (bond_factor x covalent radii, < r_on) while its parts are still inside r_on of each
+# other, so Qbar and Sbar are continuous through the split and switch smoothly between r_on and r_off.  For a
+# structure whose atoms are all closer than r_on to each other Qbar = Q and 2Sbar = 2S: the model is exactly the model
+# without cs_local (fine-tuning from such a checkpoint starts unchanged).  The charge / spin rows of cs_encoding
+# "table" are interpolated linearly between the integers.  The spin_energy pair features use the local S_z as well.
 # "charge_nbo_head": true (2026-11-14; needs the Qeq stratum; an output, not in the energy): the charges of a second
 # partition scheme (NBO) from the model charges q (trained against charge_label_key, e.g. lowdin_charges) by the same
 # kind of local redistribution as spin_nbo_head, q^NBO_i = q_i + sum_j t^q_ij (q_j - q_i), on the pairs inside
@@ -233,6 +245,14 @@ class RACE_LR(RACE):
                 # (n_species, n_gate n0): leading species axis (soap_species_adam treats it as an element table)
                 self.cs_n_gate = n_l if self.cs_all else 1
                 self.cs_gate_table = nnx.Param(jnp.zeros((n_species, self.cs_n_gate * n0), jnp.float32))
+        self.cs_local = lr['cs_local'] is not None
+        if self.cs_local:
+            if not self.cs_embed:
+                raise ValueError("long_range cs_local needs charge_spin_embedding true")
+            r_on, r_off = (float(x) for x in lr['cs_local'])
+            if not 0.0 <= r_on < r_off <= float(kw['cutoff']):
+                raise ValueError(f"long_range cs_local must be [r_on, r_off] with 0 <= r_on < r_off <= cutoff, got "
+                                 f"{lr['cs_local']}")
         self.spin_head = bool(lr['spin_head'])
         if self.spin_head:
             n0s = sum(mul for mul, ir in e3nn.Irreps(kw['hidden_irreps']) if ir == e3nn.Irrep('0e'))
@@ -306,6 +326,46 @@ class RACE_LR(RACE):
         S = jnp.ones((n_graphs,), dt) if S is None else jnp.asarray(S, dt).reshape(n_graphs)
         return Q, S
 
+    @staticmethod
+    def _table_rows(table, x):
+        """rows of a table at the (clipped, >= 0) positions x, linearly interpolated between the integer rows (at an
+        integer x exactly that row, as the former lookup of the rounded value)"""
+        n = table.shape[0]
+        x = jnp.clip(x, 0.0, n - 1.0)
+        i0 = jnp.clip(jnp.floor(x).astype(jnp.int32), 0, n - 1)
+        i1 = jnp.minimum(i0 + 1, n - 1)
+        f = (x - i0.astype(x.dtype))[:, None]
+        return (1.0 - f) * table[i0].astype(x.dtype) + f * table[i1].astype(x.dtype)
+
+    def _edge_r(self, positions, cell, data, node_graph, node_mask, n_graphs, dt):
+        """(r (E,), good (E,)) distances of the directed edges (receiver, sender) and the mask of real pairs (r > 0)"""
+        snd, rcv = data.senders, data.receivers
+        ok = node_mask[snd] & node_mask[rcv]
+        d = positions[snd] - positions[rcv]
+        if self.periodic and cell is not None and isinstance(data.edges, dict) and 'Sij' in data.edges:
+            cells = self._safe_cells(cell, n_graphs)
+            d = d - jnp.einsum('ei,eij->ej', jnp.asarray(data.edges['Sij'], dt), cells[node_graph[rcv]])
+        d2 = jnp.sum(d * d, axis=-1)
+        good = ok & (d2 > 0)
+        return jnp.sqrt(jnp.where(good, d2, 1.0)).astype(dt), good
+
+    def _local_cs(self, positions, cell, data, node_graph, node_mask, n_graphs, dt):
+        """(Qbar (N,), 2Sbar (N,)) of long_range cs_local: the reference charges q0 and spins s0 (nodes 'q0' / 's0';
+        else the graph totals spread evenly) summed over the atom itself and its neighbours with the switch s(r)"""
+        nodes = data.nodes if isinstance(data.nodes, dict) else {}
+        Q, S = self._graph_globals(data, dt)
+        cnt = jnp.maximum(jnp.asarray(data.n_node).astype(dt), 1.0)
+        q0 = jnp.asarray(nodes['q0'], dt) if 'q0' in nodes else (Q / cnt)[node_graph]
+        s0 = jnp.asarray(nodes['s0'], dt) if 's0' in nodes else ((S - 1.0) / cnt)[node_graph]
+        q0, s0 = jnp.where(node_mask, q0, 0.0), jnp.where(node_mask, s0, 0.0)
+        r_on, r_off = (float(x) for x in self.lr['cs_local'])
+        r, good = self._edge_r(positions, cell, data, node_graph, node_mask, n_graphs, dt)
+        w = jnp.where(good, 1.0 - sr_switch(r, r_on, r_off), 0.0).astype(dt)
+        snd, rcv = data.senders, data.receivers
+        qb = q0 + jnp.zeros_like(q0).at[rcv].add(w * q0[snd])
+        sb = s0 + jnp.zeros_like(s0).at[rcv].add(w * s0[snd])
+        return qb, sb
+
     def _prelude(self, positions, cell, cutoff, data, *args, **kw):
         ctx = super()._prelude(positions, cell, cutoff, data, *args, **kw)
         if self.cs_embed or self.n_tasks:
@@ -317,15 +377,21 @@ class RACE_LR(RACE):
             node_graph = jnp.repeat(jnp.arange(n_graphs), data.n_node, total_repeat_length=n_nodes)
             gate0 = None
             if self.cs_embed:
-                Q, S = self._graph_globals(data, dt)
+                if self.cs_local:          # per atom: local charge and 2S (cs_local), rows (N, .)
+                    node_mask = (jraph.get_node_padding_mask(data) if n_graphs > 1 else jnp.ones((n_nodes,), bool))
+                    Q, two_s = self._local_cs(positions, cell, data, node_graph, node_mask, n_graphs, dt)
+                    S = two_s + 1.0
+                else:                      # per graph: the totals, rows (G, .)
+                    Q, S = self._graph_globals(data, dt)
                 pre = self.cs_mlp1(jnp.stack([Q, S - 1.0], axis=-1))
                 if self.cs_table:
-                    qi = jnp.clip(jnp.round(Q).astype(jnp.int32), -self.cs_qmax, self.cs_qmax) + self.cs_qmax
-                    si = jnp.clip(jnp.round(S).astype(jnp.int32) - 1, 0, self.cs_smax - 1)
-                    pre = pre + self.cs_q_table[...][qi].astype(pre.dtype) + self.cs_s_table[...][si].astype(pre.dtype)
-                hid = jax.nn.silu(pre)                                                  # (G, cs_hidden)
-                z = z_cs = self.cs_mlp2(hid).astype(dt)                                 # (G, n_e)
+                    q_row = self._table_rows(self.cs_q_table[...], jnp.clip(Q, -self.cs_qmax, self.cs_qmax) + self.cs_qmax)
+                    s_row = self._table_rows(self.cs_s_table[...], jnp.clip(S - 1.0, 0.0, self.cs_smax - 1.0))
+                    pre = pre + q_row.astype(pre.dtype) + s_row.astype(pre.dtype)
+                hid = jax.nn.silu(pre)                                                  # (G or N, cs_hidden)
+                z_cs = self.cs_mlp2(hid).astype(dt)                                     # (G or N, n_e)
                 ctx['cs_hidden'], ctx['cs_node_graph'] = hid.astype(dt), node_graph
+                ctx['cs_per_node'] = self.cs_local
                 if self.cs_gate:
                     n0 = self.embed_irreps.dim
                     gate0 = 1.0 + self.cs_gate_table[...].astype(dt)[:, :n0][data.nodes['species']]   # (N, n0)
@@ -335,11 +401,14 @@ class RACE_LR(RACE):
                 t = (jnp.zeros((n_graphs,), jnp.int32) if t is None
                      else jnp.clip(jnp.round(jnp.asarray(t)).astype(jnp.int32).reshape(n_graphs), 0, self.n_tasks - 1))
                 z = z + self.task_table[...][t].astype(dt)
-            zn = z[node_graph]
-            if gate0 is not None:
-                # only the charge / spin part is gated; the task row (added to z above) is left as it is
-                zn = zn + z_cs[node_graph] * (gate0 - 1.0)
-            add = jnp.zeros_like(f.array).at[:, :z.shape[1]].set(zn)
+            zn = z[node_graph] if self.n_tasks else None                                # (N, n_e) task rows
+            if self.cs_embed:
+                zc = z_cs if self.cs_local else z_cs[node_graph]                       # (N, n_e)
+                zn = zc if zn is None else zn + zc
+                if gate0 is not None:
+                    # only the charge / spin part is gated; the task row is left as it is
+                    zn = zn + zc * (gate0 - 1.0)
+            add = jnp.zeros_like(f.array).at[:, :zn.shape[1]].set(zn)
             ctx['features'] = e3nn.IrrepsArray(f.irreps, f.array + add)
         return ctx
 
@@ -359,8 +428,12 @@ class RACE_LR(RACE):
         dt = features.array.dtype
         hid, ng = ctx['cs_hidden'].astype(dt), ctx['cs_node_graph']
         n_rows = features.array.shape[0]
-        z = (hid @ self.cs_layer_w[...].astype(dt)).reshape(hid.shape[0], -1, n0)[:, i - 1]        # (G, n0)
-        zi = z[ng[:n_rows]]
+        if ctx.get('cs_per_node'):        # cs_local: one hidden vector per atom
+            hid = hid[:n_rows]
+            zi = (hid @ self.cs_layer_w[...].astype(dt)).reshape(hid.shape[0], -1, n0)[:, i - 1]   # (n_rows, n0)
+        else:
+            z = (hid @ self.cs_layer_w[...].astype(dt)).reshape(hid.shape[0], -1, n0)[:, i - 1]    # (G, n0)
+            zi = z[ng[:n_rows]]
         if self.cs_gate:
             g = self.cs_gate_table[...].astype(dt).reshape(-1, self.cs_n_gate, n0)[:, i]            # (n_species, n0)
             zi = zi * (1.0 + g[ctx['data'].nodes['species'][:n_rows]])
@@ -491,7 +564,11 @@ class RACE_LR(RACE):
         snd, rcv = data.senders, data.receivers
         ok = node_mask[snd] & node_mask[rcv]
         sz = 0.5 * two_s
-        x = jnp.concatenate([hid[rcv] + hid[snd], hid[rcv] * hid[snd], sz[node_graph[rcv]][:, None]], axis=-1)
+        if self.cs_local:          # the local S_z of the receiver (size consistent), else that of the graph
+            sz_e = 0.5 * self._local_cs(positions, cell, data, node_graph, node_mask, n_graphs, dt)[1][rcv]
+        else:
+            sz_e = sz[node_graph[rcv]]
+        x = jnp.concatenate([hid[rcv] + hid[snd], hid[rcv] * hid[snd], sz_e[:, None]], axis=-1)
         c = jnp.tanh(self.sp_c2(jax.nn.silu(self.sp_c1(x)))[:, 0].astype(dt))
         c = jnp.where(ok, c, 0.0)
         if self.spin_pair:

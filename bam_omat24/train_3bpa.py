@@ -570,6 +570,12 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
         # integer reference charges per molecule for the distance-limited charge transfer (race_lr_nnx, ct_solve)
         fields['formal_charges'] = {'label_keys': list(lr_opts.get('ct_label_keys', ['nbo_charges', 'lowdin_charges'])),
                                     'bond_factor': float(lr_opts.get('ct_bond_factor', 1.2))}
+    if lr_opts.get('cs_local') is not None:
+        # local charge / spin conditioning: molecule charges q0 (as for ct) and molecule spins s0 per atom
+        fields.setdefault('formal_charges', {'label_keys': list(lr_opts.get('ct_label_keys',
+                                                                            ['nbo_charges', 'lowdin_charges'])),
+                                             'bond_factor': float(lr_opts.get('ct_bond_factor', 1.2))})
+        fields['formal_charges']['spins'] = {'label_key': _get(cfg, 'spin_label_key', 'lowdin_spins')}
     e0_tables = {int(t): S.load_e0_table(v, atomic_numbers).tolist()
                  for t, v in dict(sc.get('atom_energies_by_task') or {}).items()}
     table, tdir = _stream_table(tr, 'train', cutoff, workers, log_dir, rank0)

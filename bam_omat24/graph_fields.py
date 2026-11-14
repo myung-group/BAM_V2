@@ -86,6 +86,8 @@ def field_keys(charge_key=None, spin_key=None, charge_label_key=None, fragments=
     info_k, arr_k = [], []
     if formal_charges:      # labels that set the molecule charges (formal_charges()), and charges given per atom
         arr_k += list(formal_charges.get('label_keys', ('nbo_charges', 'lowdin_charges'))) + ['formal_charges']
+        if formal_charges.get('spins'):     # long_range cs_local: molecule spins (formal_spins())
+            arr_k += [formal_charges['spins'].get('label_key', 'lowdin_spins'), 'formal_spins']
     if isinstance(task, str):
         info_k.append(task)
     if charge_key:
@@ -176,3 +178,45 @@ def formal_charges(numbers, positions, src, dst, total_charge: float, info=None,
                 qm[j] += np.sign(diff)
     cnt = np.bincount(lab, minlength=k).astype(np.float64)
     return (qm / np.maximum(cnt, 1.0))[lab], source
+
+
+def formal_spins(numbers, positions, src, dst, multiplicity: float, q0, info=None, arrays=None, shift_vectors=None,
+                 label_key='lowdin_spins', bond_factor: float = 1.2, given_key='formal_spins'):
+    """Per-atom reference spins s0 for the local charge / spin conditioning of RACE_LR (long_range cs_local): every
+    molecule (molecules(), the same as formal_charges) carries an integer 2S_m >= 0, spread evenly over its atoms.
+      one molecule                                     -> 2S_m = multiplicity - 1;
+      arrays[given_key] (per atom, e.g. of the user)   -> summed per molecule;
+      else the per-atom spin label label_key           -> |sum per molecule|, rounded to the parity of the molecule's
+                                                          electron count (sum Z - Q_m, Q_m from q0);
+      else                                             -> the lowest 2S_m of that parity (0 or 1), the rest of 2S
+                                                          (2S - sum of those, if > 0) on the largest molecule.
+    Two separated radicals of an overall singlet keep 2S_m = 1 each (the sum of 2S_m need not be 2S).
+    Returns (s0 (N,), source)."""
+    n = len(numbers)
+    two_s = int(round(float(multiplicity))) - 1
+    lab, k = molecules(numbers, positions, src, dst, shift_vectors, bond_factor)
+    if k <= 1:
+        return np.full(n, two_s / max(n, 1), np.float64), 'single molecule'
+    z = np.asarray(numbers, np.float64)
+    qm = np.round(np.bincount(lab, weights=np.asarray(q0, np.float64).reshape(-1), minlength=k))
+    par = np.mod(np.round(np.bincount(lab, weights=z, minlength=k) - qm).astype(np.int64), 2)
+    v, source = None, None
+    if arrays is not None and given_key in arrays:
+        sm, source = np.round(np.bincount(lab, weights=np.asarray(arrays[given_key], np.float64).reshape(-1),
+                                          minlength=k)), 'given'
+    else:
+        x = _per_atom(info, arrays, label_key)
+        if x is not None and len(np.asarray(x).reshape(-1)) == n and np.all(np.isfinite(np.asarray(x, float))):
+            v, source = np.asarray(x, np.float64).reshape(-1), label_key
+        if v is not None:
+            t = np.abs(np.bincount(lab, weights=v, minlength=k))
+            sm = 2.0 * np.floor((t - par) / 2.0 + 0.5) + par        # nearest value of the right parity
+            sm = np.maximum(sm, par)
+        else:
+            sm, source = par.astype(np.float64), 'parity'
+            rest = two_s - int(sm.sum())
+            if rest > 0:
+                cnt0 = np.bincount(lab, minlength=k)
+                sm[int(np.argmax(cnt0))] += rest
+    cnt = np.bincount(lab, minlength=k).astype(np.float64)
+    return (np.asarray(sm, np.float64) / np.maximum(cnt, 1.0))[lab], source

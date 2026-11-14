@@ -51,7 +51,12 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
                "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2, "spin_head": False,
                "spin_energy": False, "spin_w_init": "sdftb", "spin_mu_bias": -4.0, "spin_pair": True,
                "spin_pair_switch": None, "spin_kappa_init": 0.5, "spin_nbo_head": False, "spin_nbo_switch": None,
-               "charge_nbo_head": False, "cs_local": None, "nbo_t_max": 0.5}
+               "charge_nbo_head": False, "cs_local": None, "nbo_t_max": 0.5, "ct_cond_max": None}
+# "ct_cond_max": C (2026-11-14; ct_mode "conductance"): the pair conductance exp(s), s = g_Zi + g_Zj, is capped
+# smoothly at C (e^2/eV): s_eff = ln C - softplus(ln C - s) (= s well below ln C, -> ln C above).  Without the cap the
+# v2local run drove g to 6 - 12 (conductances up to 3e10: in the free-flow limit cond A >> 1 the gradient on g
+# vanishes and Adam's normalised steps let g drift), and I + L A lost ~11 digits (batched and single-structure
+# energies differed by 1-2 meV).  C = 100 keeps cond A ~ 500 >> 1 (free flow between atoms in contact).  None: no cap.
 # "nbo_t_max" (2026-11-14): the pair coefficients t_ij of spin_nbo_head / charge_nbo_head are t_max tanh(raw / t_max)
 # (|t| <= t_max; None: unbounded as before).  Unbounded t gave single batches with an NBO loss 1e5 - 1e6 times the
 # usual value in the v2spin run (epochs 34, 39, 42: aux loss up to 420, gradient norm 2e4 before clipping).
@@ -640,7 +645,11 @@ class RACE_LR(RACE):
         r = jnp.sqrt(jnp.where(ok & (d2 > 0), d2, 1.0))
         g = self.ct_log_g[...].astype(dt)
         sp = data.nodes['species']
-        c = jnp.exp(g[sp[rcv]] + g[sp[snd]]) * (1.0 - sr_switch(r, r_on, r_off))
+        s = g[sp[rcv]] + g[sp[snd]]
+        if self.lr['ct_cond_max'] is not None:            # smooth upper cap of the conductance (ct_cond_max)
+            lc = math.log(float(self.lr['ct_cond_max']))
+            s = lc - jax.nn.softplus(lc - s)
+        c = jnp.exp(s) * (1.0 - sr_switch(r, r_on, r_off))
         c = jnp.where(ok & (d2 > 0), c, 0.0)
         out = jnp.zeros((n_graphs, B + 1, B + 1), dt).at[node_graph[rcv], slot[rcv], slot[snd]].add(c)
         return out[:, :B, :B]

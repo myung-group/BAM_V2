@@ -185,3 +185,38 @@ def test_ct_options_need_qeq_block():
         _model({'ct_mode': 'conductance'})
     with pytest.raises(ValueError):
         _model({'sigma_bounds': [1.2, 2.0]})
+
+
+def test_ct_cond_max_caps_the_conductance(x64):
+    """long_range ct_cond_max: conductances <= C; below the cap almost unchanged; with huge g (no cap: 1e10) the
+    capped model gives the free-flow charges and a well-conditioned solve"""
+    import jax.numpy as jnp
+    m0 = _f64(_model(CT))
+    m1 = _f64(_model({**CT, 'ct_cond_max': 100.0}))
+    for m in (m0, m1):
+        m.chi0.value = jnp.asarray([0.3, -2.0, 0.1, 1.5])
+    g = _graph(2.2)
+    B = 8
+    data = jax_tree(g)
+    n = int(np.asarray(g.n_node).sum())
+    mask = np.zeros(int(np.asarray(g.nodes['species']).shape[0]), bool); mask[:n] = True
+    node_graph = jnp.repeat(jnp.arange(g.n_node.shape[0]), jnp.asarray(g.n_node), total_repeat_length=mask.size)
+    slot = jnp.where(jnp.asarray(mask), jnp.arange(mask.size), B)
+    args = (jnp.asarray(g.nodes['positions']), None, data, node_graph, jnp.asarray(mask), slot, g.n_node.shape[0], B,
+            jnp.float64)
+    c0, c1 = np.asarray(m0._ct_conductance(*args)), np.asarray(m1._ct_conductance(*args))
+    assert c1.max() <= 100.0 + 1e-9 and np.abs(c1 - c0).max() / max(c0.max(), 1e-12) < 0.02   # g = 0: cond ~1
+    for m in (m0, m1):
+        m.ct_log_g.value = jnp.full((4,), 12.0)                         # the v2local drift
+    c0, c1 = np.asarray(m0._ct_conductance(*args)), np.asarray(m1._ct_conductance(*args))
+    assert c0.max() > 1e9 and c1.max() <= 100.0 + 1e-9 and c1.max() > 90.0
+    q1 = np.asarray(_run(m1, g)['charges'])[:4]
+    m1.ct_log_g.value = jnp.full((4,), 3.0)                            # still capped at ~100: the same charges
+    q2 = np.asarray(_run(m1, g)['charges'])[:4]
+    assert abs(q1.sum() - 1.0) < 1e-10 and np.abs(q1 - q2).max() < 0.02
+
+
+def jax_tree(g):
+    import jax
+    import jax.numpy as jnp
+    return jax.tree.map(jnp.asarray, g)

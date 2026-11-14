@@ -216,6 +216,40 @@ def test_ct_cond_max_caps_the_conductance(x64):
     assert abs(q1.sum() - 1.0) < 1e-10 and np.abs(q1 - q2).max() < 0.02
 
 
+def test_ct_decay_fades_the_charge_transfer(x64):
+    """long_range ct_decay [beta, r0]: cond = exp(g_i + g_j - beta (r - r0)) (1 - switch); with a saturated
+    conductance the charge of the ion no longer drops as a step just before ct_switch[1] but fades over ~1 A"""
+    import jax.numpy as jnp
+    # 1) the conductance formula (g = 0, no cap): c1 = c0 exp(-beta (r - r0))
+    m0, m1 = _f64(_model(CT)), _f64(_model({**CT, 'ct_decay': [3.0, 2.0]}))
+    g = _graph(3.2)
+    B = 8
+    data = jax_tree(g)
+    n = int(np.asarray(g.n_node).sum())
+    mask = np.zeros(int(np.asarray(g.nodes['species']).shape[0]), bool); mask[:n] = True
+    node_graph = jnp.repeat(jnp.arange(g.n_node.shape[0]), jnp.asarray(g.n_node), total_repeat_length=mask.size)
+    slot = jnp.where(jnp.asarray(mask), jnp.arange(mask.size), B)
+    pos = np.asarray(g.nodes['positions'])
+    args = (jnp.asarray(pos), None, data, node_graph, jnp.asarray(mask), slot, g.n_node.shape[0], B, jnp.float64)
+    c0, c1 = np.asarray(m0._ct_conductance(*args))[0], np.asarray(m1._ct_conductance(*args))[0]
+    d = np.linalg.norm(pos[:4, None] - pos[None, :4], axis=-1)
+    on = c0[:4, :4] > 1e-12
+    assert on.sum() > 0
+    assert np.allclose(c1[:4, :4][on], (c0[:4, :4] * np.exp(-3.0 * (d - 2.0)))[on], rtol=1e-6)
+    # 2) saturated conductance under the cap (the v2local case): charge of the ion along the approach line
+    base = {**CT, 'ct_cond_max': 100.0}
+    m0, m1 = _f64(_model(base)), _f64(_model({**base, 'ct_decay': [3.0, 2.0]}))
+    for m in (m0, m1):
+        m.chi0.value = jnp.asarray([0.3, -2.0, 0.1, 1.5])
+        m.ct_log_g.value = jnp.full((4,), 3.0)
+    Rs = np.round(np.arange(3.6, 4.61, 0.04), 3)
+    q = {k: np.array([float(np.asarray(_run(m, _graph(R))['charges'])[3]) for R in Rs]) for k, m in (('0', m0), ('1', m1))}
+    assert abs(q['0'][0] - 1.0) > 0.02                          # a real charge transfer inside the switch
+    assert np.allclose(q['0'][Rs >= 4.5], 1.0, atol=1e-9) and np.allclose(q['1'][Rs >= 4.5], 1.0, atol=1e-9)
+    j0, j1 = np.abs(np.diff(q['0'])).max(), np.abs(np.diff(q['1'])).max()
+    assert j1 < 0.5 * j0, (j0, j1)
+
+
 def jax_tree(g):
     import jax
     import jax.numpy as jnp

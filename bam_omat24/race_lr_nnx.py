@@ -51,7 +51,14 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
                "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2, "spin_head": False,
                "spin_energy": False, "spin_w_init": "sdftb", "spin_mu_bias": -4.0, "spin_pair": True,
                "spin_pair_switch": None, "spin_kappa_init": 0.5, "spin_nbo_head": False, "spin_nbo_switch": None,
-               "charge_nbo_head": False, "cs_local": None, "nbo_t_max": 0.5, "ct_cond_max": None}
+               "charge_nbo_head": False, "cs_local": None, "nbo_t_max": 0.5, "ct_cond_max": None, "ct_decay": None}
+# "ct_decay": [beta, r0] (2026-11-15; ct_mode "conductance"): the pair conductance decays exponentially with the
+# distance, s = g_Zi + g_Zj - beta (r - r0) (before ct_cond_max and the ct_switch), as the overlap behind a real
+# charge transfer does.  The transferred charge goes as cond A / (1 + cond A), a sigmoid in ln(cond): without the decay
+# ln(cond) only falls in the last ~0.15 A before ct_switch[1] (1 - C2 switch ~ 10 (1 - x)^3), so a saturated
+# conductance dropped the charge transfer as a STEP there (v2local e90: F- ... H2O jumped 8 kcal/mol, force 10 eV/A,
+# at F...H = 4.45 A; a lower ct_cond_max only shrank it).  With the decay the charge fades over ~4.4 / beta A.
+# None: no decay.  No parameters: a checkpoint resumes with it.
 # "ct_cond_max": C (2026-11-14; ct_mode "conductance"): the pair conductance exp(s), s = g_Zi + g_Zj, is capped
 # smoothly at C (e^2/eV): s_eff = ln C - softplus(ln C - s) (= s well below ln C, -> ln C above).  Without the cap the
 # v2local run drove g to 6 - 12 (conductances up to 3e10: in the free-flow limit cond A >> 1 the gradient on g
@@ -219,6 +226,10 @@ class RACE_LR(RACE):
                 r_on, r_off = (float(x) for x in lr['ct_switch'])
                 if not 0.0 <= r_on < r_off <= float(kw['cutoff']):
                     raise ValueError(f"long_range ct_switch must satisfy 0 <= r_on < r_off <= cutoff, got {lr['ct_switch']}")
+                if lr['ct_decay'] is not None:
+                    beta, _ = (float(x) for x in lr['ct_decay'])
+                    if beta < 0.0:
+                        raise ValueError(f"long_range ct_decay must be [beta >= 0 (1/A), r0 (A)], got {lr['ct_decay']}")
                 self.ct_log_g = nnx.Param(jnp.full((n_species,), float(lr['ct_init']), jnp.float32))
         # charge / spin embedding (optional): (Q, 2S+1 - 1) of the graph -> MLP -> added to the layer-0 scalars.
         # Output layer at zero, so the model starts as RACE (also for a later fine-tuning from a RACE checkpoint).
@@ -646,6 +657,9 @@ class RACE_LR(RACE):
         g = self.ct_log_g[...].astype(dt)
         sp = data.nodes['species']
         s = g[sp[rcv]] + g[sp[snd]]
+        if self.lr['ct_decay'] is not None:               # exponential decay with distance (ct_decay [beta, r0])
+            beta, r0 = (float(x) for x in self.lr['ct_decay'])
+            s = s - beta * (r - r0)
         if self.lr['ct_cond_max'] is not None:            # smooth upper cap of the conductance (ct_cond_max)
             lc = math.log(float(self.lr['ct_cond_max']))
             s = lc - jax.nn.softplus(lc - s)

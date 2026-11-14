@@ -51,7 +51,10 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
                "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2, "spin_head": False,
                "spin_energy": False, "spin_w_init": "sdftb", "spin_mu_bias": -4.0, "spin_pair": True,
                "spin_pair_switch": None, "spin_kappa_init": 0.5, "spin_nbo_head": False, "spin_nbo_switch": None,
-               "charge_nbo_head": False, "cs_local": None}
+               "charge_nbo_head": False, "cs_local": None, "nbo_t_max": 0.5}
+# "nbo_t_max" (2026-11-14): the pair coefficients t_ij of spin_nbo_head / charge_nbo_head are t_max tanh(raw / t_max)
+# (|t| <= t_max; None: unbounded as before).  Unbounded t gave single batches with an NBO loss 1e5 - 1e6 times the
+# usual value in the v2spin run (epochs 34, 39, 42: aux loss up to 420, gradient norm 2e4 before clipping).
 # "cs_local": [r_on, r_off] (2026-11-14; needs charge_spin_embedding): the charge / spin conditioning of every atom
 # comes from the LOCAL charge and spin around it instead of the graph totals Q and 2S+1, so that a structure made of
 # separated fragments is the sum of the fragments (size consistency; the graph totals made a separated Li+ ... I- pair
@@ -537,6 +540,9 @@ class RACE_LR(RACE):
         hid = hid.astype(dt)
         x = jnp.concatenate([hid[rcv] + hid[snd], hid[rcv] * hid[snd], r[:, None]], axis=-1)
         t = l2(jax.nn.silu(l1(x)))[:, 0].astype(dt)
+        tm = self.lr['nbo_t_max']
+        if tm is not None:         # bounded |t| <= nbo_t_max (t_max tanh(raw / t_max) ~ raw for small raw)
+            t = float(tm) * jnp.tanh(t / float(tm))
         return jnp.where(good, t * (1.0 - sr_switch(r, r_on, r_off)), 0.0)
 
     def _unrestricted(self, data, S, n_graphs, dt):

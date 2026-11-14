@@ -342,3 +342,18 @@ def test_charge_nbo_head(x64):
     nb = np.sum(wq * (pq - np.asarray(b.nodes['ref_charges_nbo'])) ** 2) / wq.sum()
     assert wq.sum() > 5 and wq.sum() < mask.sum() and nb > 0
     assert abs(float(a1['q_loss']) - (base + nb)) < 1e-9
+
+
+def test_nbo_t_bounded(x64):
+    """long_range nbo_t_max: |t| <= t_max for any raw output (spin and charge NBO heads); None: unbounded"""
+    sts = _mols((3, 1, 2))
+    b = _jt(_batch(sts))
+    for tm, bound in ((0.5, True), (None, False)):
+        m = _polar_model(9, lr={**NB, 'charge_nbo_head': True, 'nbo_t_max': tm})
+        m = _noisy(m, ['sp_head2.kernel', 'sp_t2.kernel', 'sp_t2.bias', 'cq_t2.kernel', 'cq_t2.bias'], scale=50.0, seed=4)
+        o = m(b)
+        tmax = max(np.abs(np.asarray(o['spin_nbo_t'])).max(), np.abs(np.asarray(o['charge_nbo_t'])).max())
+        if bound:
+            assert tmax <= 0.5 + 1e-12 and tmax > 0.1
+        else:
+            assert tmax > 1.0

@@ -90,6 +90,7 @@ Config keys (in addition to the model hyper-parameters, see README):
                        <ckpt>.gauge.pkl (review §13, literature sweep 2)                        (default false)
     x_readout        : "mlp" (default) | "off" | "layer0" | "linear"  per-layer x readout energy (review §11.16)
     x_readout_norm   : bool, layer norm on the x readout input                                 (default true)
+    x_readout_norm_eps: float e0, soft readout norm x / sqrt(ms + e0^2) (2026-11-15)          (default none: 1e-6)
     f_readout        : bool, per-layer readout of the layer input features                      (default true)
     radial_prior     : {"type": "algebraic"|"exponential"|"gaussian", "sigma": s, "p": p} regularity prior:
                        Bessel channel n rescaled by 1/gamma(n) (review §11.15)                (default null)
@@ -724,6 +725,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
                      dens=bool(_get(cfg, 'dens', None)),
                      dens_seed=seed + 7919,
                      x_readout_norm=bool(_get(cfg, 'x_readout_norm', True)),
+                     x_readout_norm_eps=_get(cfg, 'x_readout_norm_eps', None),
                      f_readout=bool(_get(cfg, 'f_readout', True)),
                      cov_mode=_get(cfg, 'cov_mode', 'scalar6'),
                      tp_backend=_get(cfg, 'tp_backend', 'e3nn'),
@@ -1031,6 +1033,7 @@ def train(cfg: Dict):
     if len(set(_hd)) > 1:
         huber_delta = _hd
     ema_decay = float(_get(cfg, 'ema_decay', 0.99))
+    ema_warmup = bool(_get(cfg, 'ema_warmup', False))
     # batch_size = graphs per device; global_batch_size (optional) = graphs per optimizer step, split
     # over the devices (the single-device run with batch_size = global_batch_size is the same
     # algorithm, training_utils.make_sharded_train_step)
@@ -1197,7 +1200,7 @@ def train(cfg: Dict):
         energy_weight=float(_get(cfg, 'energy_weight', 1.0)),
         force_weight=float(_get(cfg, 'force_weight', 1.0)),
         stress_weight=float(_get(cfg, 'stress_weight', 1.0)) if use_stress else 0.0,
-        huber_delta=huber_delta, ema_decay=ema_decay,
+        huber_delta=huber_delta, ema_decay=ema_decay, ema_warmup=ema_warmup,
         loss_type=loss_type, periodic=use_stress, cov_mode=cov_mode, beta_nll=beta_nll,
         grad_clip=float(grad_clip) if grad_clip else 1.0,
         dynamic_loss_weights=dynamic_weights,

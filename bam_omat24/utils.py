@@ -58,11 +58,14 @@ def polynomial_cutoff(x: jax.Array, r_max: jax.Array, p: float) -> jax.Array:
     return out * jnp.where(x < 1.0, 1.0, 0.0)
 
 
-def separated_layer_norm(input: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
+def separated_layer_norm(input: e3nn.IrrepsArray, eps: float = 1e-6) -> e3nn.IrrepsArray:
     """Apply separated layer normalization to IrrepsArray.
 
     Scalars are normalized with mean centering and RMS.
     Non-scalars share a common RMS normalization.
+    eps (added to the mean squares; default 1e-6 as before): eps = e0^2 with e0 of the order of a small but real
+    feature magnitude makes the normalisation soft, x / sqrt(ms + e0^2): unchanged for |x| >> e0, linear (x / e0)
+    for |x| << e0 (2026-11-15: RACE x_readout_norm_eps).
 
     Args:
         input: Input IrrepsArray
@@ -70,7 +73,6 @@ def separated_layer_norm(input: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
     Returns:
         Normalized IrrepsArray
     """
-    eps = 1e-6
 
     # Compute RMS for non-scalar features
     xi_s = jnp.zeros((input.shape[0], 1), dtype=input.array.dtype)
@@ -332,6 +334,7 @@ def energy_forces_stress(
                 'quadrupole': results.get('quadrupole'),   # RACE_POLAR traceless graph quadrupoles (n_graphs, 6)
                 'spins': results.get('spins'),         # RACE_LR spin_head: atomic spin populations (n_atoms,)
                 'spin_node_energies': results.get('spin_node_energies'),   # RACE_LR spin_energy: per-atom E_spin
+                'dispersion_node_energies': results.get('dispersion_node_energies'),   # RACE_POLAR dispersion
                 'spin_moments': results.get('spin_moments'),   # RACE_LR spin_energy: local moments mu (atoms)
                 'spin_corr': results.get('spin_corr'),         # RACE_LR spin_energy: pair correlations c (edges)
                 'spin_s2': results.get('spin_s2'),             # RACE_LR spin_energy: <S^2> estimate (graphs)
@@ -373,6 +376,7 @@ def energy_forces_stress(
                 'quadrupole': results.get('quadrupole'),   # RACE_POLAR traceless graph quadrupoles (n_graphs, 6)
                 'spins': results.get('spins'),         # RACE_LR spin_head: atomic spin populations (n_atoms,)
                 'spin_node_energies': results.get('spin_node_energies'),   # RACE_LR spin_energy: per-atom E_spin
+                'dispersion_node_energies': results.get('dispersion_node_energies'),   # RACE_POLAR dispersion
                 'spin_moments': results.get('spin_moments'),   # RACE_LR spin_energy: local moments mu (atoms)
                 'spin_corr': results.get('spin_corr'),         # RACE_LR spin_energy: pair correlations c (edges)
                 'spin_s2': results.get('spin_s2'),             # RACE_LR spin_energy: <S^2> estimate (graphs)
@@ -477,7 +481,7 @@ def energy_forces_stress(
         out['quadrupole'] = aux['quadrupole']
     if aux.get('spins') is not None:       # RACE_LR spin_head
         out['spins'] = aux['spins']
-    for k in ('spin_node_energies', 'spin_moments', 'spin_corr', 'spin_s2', 'spins_nbo', 'spin_nbo_t', 'charges_nbo',
+    for k in ('dispersion_node_energies', 'spin_node_energies', 'spin_moments', 'spin_corr', 'spin_s2', 'spins_nbo', 'spin_nbo_t', 'charges_nbo',
               'charge_nbo_t'):
         if aux.get(k) is not None:
             out[k] = aux[k]

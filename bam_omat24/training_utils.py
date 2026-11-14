@@ -749,6 +749,7 @@ def make_sharded_train_step(
     stress_weight: float = 1.0,
     huber_delta: float = 0.1,
     ema_decay: float = 0.99,
+    ema_warmup: bool = False,
     freeze_mask: Any = None,
     loss_type: str = 'huber',
     periodic: bool = True,
@@ -933,16 +934,23 @@ def make_sharded_train_step(
         updates, new_opt_state = optimizer.update(grads, opt_state, params)
         updates = optax.tree_utils.tree_scale(schedule_state.scale, updates)
         new_params = optax.apply_updates(params, updates)
+        # ema_warmup (2026-11-15): decay min(ema_decay, (1 + t) / (10 + t)) at optimiser step t, so the EMA does not
+        # keep ~0.999^t of the random initial weights early on (v2local: 27 % after the first epoch); unchanged once
+        # (1 + t) / (10 + t) > ema_decay (t > ~9000 for 0.999), so a resumed run is not affected
+        d = ema_decay
+        if ema_warmup:
+            t = jnp.asarray(step, jnp.float32)
+            d = jnp.minimum(ema_decay, (1.0 + t) / (10.0 + t))
         if freeze_mask is not None:
             # Only apply EMA to trainable params; frozen params keep current values
             new_ema_params = jax.tree.map(
                 lambda ema, p, m: jnp.where(
-                    m, ema, ema_decay * ema + (1 - ema_decay) * p),
+                    m, ema, d * ema + (1 - d) * p),
                 ema_params, new_params, freeze_mask
             )
         else:
             new_ema_params = jax.tree.map(
-                lambda ema, p: ema_decay * ema + (1 - ema_decay) * p,
+                lambda ema, p: d * ema + (1 - d) * p,
                 ema_params, new_params
             )
 

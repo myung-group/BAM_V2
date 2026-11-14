@@ -35,6 +35,17 @@ Phase 2 options of "polar" (2026-11-11), as in the BAM-torch input.json:
     "slab_correction": true            slab dipole correction on the graphs with data.globals['slab'] (stream
                                        sources "slab": true), slab_axis; neutral cells only
 
+"dispersion": true (2026-11-15): pairwise C6 dispersion from the atom-in-molecule polarizabilities alpha_i of this
+block, the long-range van der Waals attraction the 6 A network cutoff leaves out (OMol25 wB97M-V has VV10):
+    C6_ii = kappa_Z alpha_i^2   (London: C6 ~ 3/4 I alpha^2; kappa per element, softplus, init disp_kappa_init eV)
+    C6_ij = 2 C6_ii C6_jj / (alpha_j / alpha_i C6_ii + alpha_i / alpha_j C6_jj)            (Tkatchenko-Scheffler)
+    E     = - sum_{i<j} C6_ij / (r^6 + R0_ij^6),  R0_ij = a1 (R_i + R_j) + disp_a2,  R_i = 2.54 alpha_i^(1/7) bohr
+            (Becke-Johnson damping, vdW radius from alpha as Fedorov-Tkatchenko 2018; a1 learned, init disp_a1)
+Open-boundary graphs: all pairs of the structure (blocks of long_range.qeq_block atoms, no cutoff).  Periodic
+graphs: lattice images |n_k| <= disp_n_img, smoothly cut between disp_cutoff - 2 A and disp_cutoff, plus the
+uniform-density tail -2 pi / (3 V) sum_ij C6_ij / (disp_cutoff - 1)^3.  alpha keeps its full gradient: alpha depends on
+the positions, and cutting it (a stop_gradient tried first) made the forces non-conservative (finite differences
+off by 6e-4 eV/A).  The dispersion therefore also trains alpha.  Output 'dispersion_node_energies'.
 Outputs next to the RACE ones: 'charges' (N,), 'dipole' (G, 3): open-boundary graphs about their centre of mass
 (ORCA convention, the OMol25 / OPoly26 labels), periodic graphs sum_i q_i r_i + mu_i (fragments unwrapped with the
 slab correction); 'dipole_normal' (G,) its component along 'slab_normal' (G, 3), the label of slab sources (OC25).
@@ -168,7 +179,67 @@ class RACE_POLAR(RACE_LR):
         # the per-graph flag globals['pbc']); true / false force it
         ob = p['open_boundary']
         self.pol_open = None if ob == 'auto' else bool(ob)
+        if p['dispersion']:
+            if not self.lr.get('qeq_block'):
+                raise ValueError("polar.dispersion needs long_range.qeq_block (largest structure, atoms)")
+            k0, a10 = float(p['disp_kappa_init']), float(p['disp_a1'])
+            if k0 <= 0.0 or a10 <= 0.0 or float(p['disp_cutoff']) <= 2.0:
+                raise ValueError("polar.dispersion: disp_kappa_init > 0, disp_a1 > 0, disp_cutoff > 2 A")
+            self.disp_kappa = nnx.Param(jnp.full((n_species,), math.log(math.expm1(k0)), jnp.float32))
+            self.disp_a1 = nnx.Param(jnp.asarray(math.log(math.expm1(a10)), jnp.float32))
         self.polar = p
+
+    # ---------------------------------------------------------------------------------------------- dispersion
+    def _dispersion(self, positions, cells, alpha, species, data, node_graph, node_mask, n_graphs, pbc, dt):
+        """(N,) per-atom C6 dispersion energies (polar.dispersion; half of every pair on each atom)."""
+        from bam_omat24.long_range import sr_switch
+        p = self.polar
+        B = int(self.lr['qeq_block'])
+        N = positions.shape[0]
+        n_node = jnp.asarray(data.n_node)
+        local = jnp.arange(N) - (jnp.cumsum(n_node) - n_node)[node_graph]
+        valid = node_mask & (local < B)
+        slot = jnp.where(valid, local, B)
+
+        def blocks(x, fill):
+            out = jnp.full((n_graphs, B + 1) + x.shape[1:], fill, x.dtype).at[node_graph, slot].set(x)
+            return out[:, :B]
+        a = jnp.where(node_mask, alpha, 1.0)
+        c6 = jax.nn.softplus(self.disp_kappa[...].astype(dt))[species] * a * a              # eV A^6
+        rv = 0.529177 * 2.54 * (a / 0.148185) ** (1.0 / 7.0)                                 # A
+        P, A, C, Rv, M = blocks(positions, 0.0), blocks(a, 1.0), blocks(c6, 0.0), blocks(rv, 1.0), blocks(valid, False)
+        cij = 2.0 * C[:, :, None] * C[:, None, :] / (
+            A[:, None, :] / A[:, :, None] * C[:, :, None] + A[:, :, None] / A[:, None, :] * C[:, None, :] + 1e-30)
+        r0 = jax.nn.softplus(self.disp_a1[...].astype(dt)) * (Rv[:, :, None] + Rv[:, None, :]) + float(p['disp_a2'])
+        r06 = r0 ** 6
+        mm = M[:, :, None] & M[:, None, :]
+        off = mm & ~jnp.eye(B, dtype=bool)[None]
+
+        def pair_e(d, keep):                                    # d (G, B, B, 3): -C6 / (r^6 + R0^6) on the kept pairs
+            r2 = jnp.sum(d * d, axis=-1)
+            return jnp.where(keep, -cij / (r2 ** 3 + r06), 0.0), r2
+        e_open, _ = pair_e(P[:, :, None, :] - P[:, None, :, :], off)
+        e_open = 0.5 * jnp.sum(e_open, axis=2)                                               # (G, B)
+        e_blk = e_open
+        if cells is not None:                                   # periodic graphs: images, smooth cutoff, tail
+            rc = float(p['disp_cutoff'])
+            n = int(p['disp_n_img'])
+            e_per = jnp.zeros_like(e_open)
+            for i in range(-n, n + 1):
+                for j in range(-n, n + 1):
+                    for k in range(-n, n + 1):
+                        shift = jnp.einsum('c,gcd->gd', jnp.asarray([i, j, k], dt), cells)            # (G, 3)
+                        d = P[:, :, None, :] - P[:, None, :, :] - shift[:, None, None, :]
+                        keep = off if (i, j, k) == (0, 0, 0) else mm
+                        e, r2 = pair_e(d, keep)
+                        r = jnp.sqrt(jnp.maximum(r2, 1e-12))
+                        e_per = e_per + 0.5 * jnp.sum(e * (1.0 - sr_switch(r, rc - 2.0, rc)), axis=2)
+            vol = jnp.abs(jnp.linalg.det(cells))                                                     # (G,)
+            tail = -2.0 * math.pi / (3.0 * (rc - 1.0) ** 3) * jnp.sum(jnp.where(mm, cij, 0.0), axis=2) / vol[:, None]
+            e_per = e_per + tail                  # per atom i: -2 pi / (3 V rc^3) sum_j C6_ij (half of every pair)
+            e_blk = jnp.where(pbc[:, None], e_per, e_open)
+        e = e_blk[node_graph, jnp.minimum(slot, B - 1)]
+        return jnp.where(valid, e, 0.0)
 
     # ---------------------------------------------------------------------------------------------- heads
     def _polar_features(self, feats: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
@@ -286,6 +357,11 @@ class RACE_POLAR(RACE_LR):
         dipole = res['total_dipole'] - jnp.where(pbc[:, None], 0.0, net[:, None] * com)
         out = dict(out)
         out['node_energies'] = out['node_energies'] + res['node_energy'].reshape(out['node_energies'].shape)
+        if self.polar['dispersion']:
+            e_d = self._dispersion(positions.astype(dt), cells, alpha.astype(dt), species, data, node_graph, node_mask,
+                                   n_graphs, pbc, dt)
+            out['node_energies'] = out['node_energies'] + e_d.reshape(out['node_energies'].shape)
+            out['dispersion_node_energies'] = e_d
         out['charges'] = q * nm
         out['dipole'] = dipole
         # traceless graph quadrupole about the centre of mass (2026-11-13), the convention of the OMol25 labels:

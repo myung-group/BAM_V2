@@ -66,6 +66,9 @@ POLAR_DEFAULTS = {
     # the missing total charge (the torch block).  "qeq": the charge-equilibration charges of RACE_LR
     # (long_range chi / hardness heads; the pair Coulomb energy is then counted here only, see race_polar_nnx.py).
     "charges": "fukui",
+    # 2026-11-15: pairwise C6 dispersion from the Thole polarizabilities (race_polar_nnx.RACE_POLAR._dispersion)
+    "dispersion": False, "disp_kappa_init": 7.5, "disp_a1": 0.8, "disp_a2": 0.0,
+    "disp_cutoff": 12.0, "disp_n_img": 1,
 }
 
 

@@ -251,6 +251,42 @@ def test_ct_decay_fades_the_charge_transfer(x64):
     assert j1 < 0.5 * j0, (j0, j1)
 
 
+def test_ct_decay_learn_starts_at_the_fixed_beta_and_stays_above_the_minimum(x64):
+    """long_range ct_decay_learn: beta_ij = ct_decay_min + softplus(b_i + b_j) starts equal to the fixed ct_decay
+    beta, the b get gradients, and beta never drops below ct_decay_min however far b drifts"""
+    import jax
+    import jax.numpy as jnp
+    from flax import nnx
+    base = {**CT, 'ct_cond_max': 100.0, 'ct_decay': [3.0, 2.0]}
+    mf, ml = _f64(_model(base)), _f64(_model({**base, 'ct_decay_learn': True}))
+    ml.ct_log_g.value = mf.ct_log_g.value
+    g = _graph(3.2)
+    B = 8
+    data = jax_tree(g)
+    n = int(np.asarray(g.n_node).sum())
+    mask = np.zeros(int(np.asarray(g.nodes['species']).shape[0]), bool); mask[:n] = True
+    node_graph = jnp.repeat(jnp.arange(g.n_node.shape[0]), jnp.asarray(g.n_node), total_repeat_length=mask.size)
+    slot = jnp.where(jnp.asarray(mask), jnp.arange(mask.size), B)
+    pos = np.asarray(g.nodes['positions'])
+    args = (jnp.asarray(pos), None, data, node_graph, jnp.asarray(mask), slot, g.n_node.shape[0], B, jnp.float64)
+    cf, cl = np.asarray(mf._ct_conductance(*args)), np.asarray(ml._ct_conductance(*args))
+    assert np.allclose(cl, cf, rtol=1e-6, atol=1e-12)
+    # gradient reaches b
+    gd, st = nnx.split(ml)
+
+    def f(st):
+        return jnp.sum(nnx.merge(gd, st)._ct_conductance(*args))
+    grads = jax.grad(f)(st)
+    gb = [v for k, v in jax.tree_util.tree_leaves_with_path(grads) if 'ct_decay_b' in jax.tree_util.keystr(k)]
+    assert gb and float(jnp.abs(gb[0]).max()) > 0
+    # b drifted to -inf: beta -> ct_decay_min (1.5), never below
+    ml.ct_decay_b.value = jnp.full((4,), -50.0)
+    c_lo = np.asarray(ml._ct_conductance(*args))[0]
+    m15 = _f64(_model({**CT, 'ct_cond_max': 100.0, 'ct_decay': [1.5, 2.0]}))
+    m15.ct_log_g.value = mf.ct_log_g.value
+    assert np.allclose(c_lo, np.asarray(m15._ct_conductance(*args))[0], rtol=1e-6, atol=1e-12)
+
+
 def jax_tree(g):
     import jax
     import jax.numpy as jnp

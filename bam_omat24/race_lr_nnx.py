@@ -51,7 +51,8 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
                "ct_label_keys": ["nbo_charges", "lowdin_charges"], "ct_bond_factor": 1.2, "spin_head": False,
                "spin_energy": False, "spin_w_init": "sdftb", "spin_mu_bias": -4.0, "spin_pair": True,
                "spin_pair_switch": None, "spin_kappa_init": 0.5, "spin_nbo_head": False, "spin_nbo_switch": None,
-               "charge_nbo_head": False, "cs_local": None, "nbo_t_max": 0.5, "ct_cond_max": None, "ct_decay": None}
+               "charge_nbo_head": False, "cs_local": None, "nbo_t_max": 0.5, "ct_cond_max": None, "ct_decay": None,
+               "ct_decay_learn": False, "ct_decay_min": 1.5}
 # "ct_decay": [beta, r0] (2026-11-15; ct_mode "conductance"): the pair conductance decays exponentially with the
 # distance, s = cap(g_Zi + g_Zj) - beta (r - r0) (AFTER ct_cond_max: v2local's g sums sit far above the cap, where
 # their gradient is zero, and a decay inside the cap had no effect at all; then the ct_switch), as the overlap behind a real
@@ -60,6 +61,10 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
 # conductance dropped the charge transfer as a STEP there (v2local e90: F- ... H2O jumped 8 kcal/mol, force 10 eV/A,
 # at F...H = 4.45 A; a lower ct_cond_max only shrank it).  With the decay the charge fades over ~4.4 / beta A.
 # None: no decay.  No parameters: a checkpoint resumes with it.
+# "ct_decay_learn": true (2026-11-15): beta per element pair, beta_ij = ct_decay_min + softplus(b_Zi + b_Zj), b per
+# element (parameter ct_decay_b) initialised so that beta_ij = ct_decay[0] everywhere.  ct_decay_min (default 1.5
+# 1/A) keeps the decay from drifting to 0, which would bring the step at ct_switch[1] back (the g of the
+# conductance drifted freely in the saturated region, 2026-11-14).
 # "ct_cond_max": C (2026-11-14; ct_mode "conductance"): the pair conductance exp(s), s = g_Zi + g_Zj, is capped
 # smoothly at C (e^2/eV): s_eff = ln C - softplus(ln C - s) (= s well below ln C, -> ln C above).  Without the cap the
 # v2local run drove g to 6 - 12 (conductances up to 3e10: in the free-flow limit cond A >> 1 the gradient on g
@@ -231,6 +236,15 @@ class RACE_LR(RACE):
                     beta, _ = (float(x) for x in lr['ct_decay'])
                     if beta < 0.0:
                         raise ValueError(f"long_range ct_decay must be [beta >= 0 (1/A), r0 (A)], got {lr['ct_decay']}")
+                    if lr['ct_decay_learn']:
+                        bmin = float(lr['ct_decay_min'])
+                        if not 0.0 <= bmin < beta:
+                            raise ValueError(f"long_range ct_decay_learn needs 0 <= ct_decay_min < ct_decay[0], got "
+                                             f"{bmin} and {beta}")
+                        b0 = 0.5 * math.log(math.expm1(beta - bmin))     # softplus(2 b0) = beta - bmin
+                        self.ct_decay_b = nnx.Param(jnp.full((n_species,), b0, jnp.float32))
+                elif lr['ct_decay_learn']:
+                    raise ValueError("long_range ct_decay_learn needs ct_decay [beta, r0] (the initial beta)")
                 self.ct_log_g = nnx.Param(jnp.full((n_species,), float(lr['ct_init']), jnp.float32))
         # charge / spin embedding (optional): (Q, 2S+1 - 1) of the graph -> MLP -> added to the layer-0 scalars.
         # Output layer at zero, so the model starts as RACE (also for a later fine-tuning from a RACE checkpoint).
@@ -663,6 +677,9 @@ class RACE_LR(RACE):
             s = lc - jax.nn.softplus(lc - s)
         if self.lr['ct_decay'] is not None:               # exponential decay with distance (ct_decay [beta, r0])
             beta, r0 = (float(x) for x in self.lr['ct_decay'])
+            if self.lr['ct_decay_learn']:                 # per element pair, bounded below (ct_decay_min)
+                b = self.ct_decay_b[...].astype(dt)
+                beta = float(self.lr['ct_decay_min']) + jax.nn.softplus(b[sp[rcv]] + b[sp[snd]])
             s = s - beta * (r - r0)                       # AFTER the cap: a capped (drifted) g cannot absorb it
         c = jnp.exp(s) * (1.0 - sr_switch(r, r_on, r_off))
         c = jnp.where(ok & (d2 > 0), c, 0.0)

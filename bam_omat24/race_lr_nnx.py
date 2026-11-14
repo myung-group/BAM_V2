@@ -618,10 +618,13 @@ class RACE_LR(RACE):
             good = ok & (d2 > 0)
             r = jnp.sqrt(jnp.where(good, d2, 1.0))
             T = self.sp_j[...].astype(dt)
-            A = (0.5 * (T + T.T))[sp[rcv], sp[snd]]
+            A = (0.5 * (T + T.T))[sp][rcv, sp[snd]]       # rows per atom first (see the gathers below)
             kap = jax.nn.softplus(self.sp_kappa[...].astype(dt))
             rc = jnp.asarray(self.cov_r, dt)
-            arg = jnp.minimum(-(kap[sp[rcv]] + kap[sp[snd]]) * (r - rc[sp[rcv]] - rc[sp[snd]]), 20.0)
+            # per-atom gathers first, then per edge (2026-11-15): a direct per-edge gather from the per-element
+            # table scatters millions of edge gradients into ~100 slots (atomic contention)
+            kap_n, rc_n = kap[sp], rc[sp]
+            arg = jnp.minimum(-(kap_n[rcv] + kap_n[snd]) * (r - rc_n[rcv] - rc_n[snd]), 20.0)
             J = jnp.where(good, A * jnp.exp(arg) * (1.0 - sr_switch(r, r_on, r_off)), 0.0)
             # every pair is in the neighbour list twice (both directions): half of J mu_i mu_j c_ij per directed edge
             e = e + jnp.zeros_like(e).at[rcv].add(0.5 * J * mu[rcv] * mu[snd] * c)
@@ -671,7 +674,10 @@ class RACE_LR(RACE):
         r = jnp.sqrt(jnp.where(ok & (d2 > 0), d2, 1.0))
         g = self.ct_log_g[...].astype(dt)
         sp = data.nodes['species']
-        s = g[sp[rcv]] + g[sp[snd]]
+        # per-atom gather first, then per edge (2026-11-15): g[sp[rcv]] scattered every edge gradient into the
+        # per-element table directly (atomic contention on ~100 slots; the learned ct_decay b doubled the step time)
+        g_n = g[sp]
+        s = g_n[rcv] + g_n[snd]
         if self.lr['ct_cond_max'] is not None:            # smooth upper cap of the conductance (ct_cond_max)
             lc = math.log(float(self.lr['ct_cond_max']))
             s = lc - jax.nn.softplus(lc - s)
@@ -679,7 +685,8 @@ class RACE_LR(RACE):
             beta, r0 = (float(x) for x in self.lr['ct_decay'])
             if self.lr['ct_decay_learn']:                 # per element pair, bounded below (ct_decay_min)
                 b = self.ct_decay_b[...].astype(dt)
-                beta = float(self.lr['ct_decay_min']) + jax.nn.softplus(b[sp[rcv]] + b[sp[snd]])
+                b_n = b[sp]
+                beta = float(self.lr['ct_decay_min']) + jax.nn.softplus(b_n[rcv] + b_n[snd])
             s = s - beta * (r - r0)                       # AFTER the cap: a capped (drifted) g cannot absorb it
         c = jnp.exp(s) * (1.0 - sr_switch(r, r_on, r_off))
         c = jnp.where(ok & (d2 > 0), c, 0.0)

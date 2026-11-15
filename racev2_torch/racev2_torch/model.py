@@ -46,6 +46,7 @@ _FIXED_OPTIONS = [
     ('embed_mode', 'onehot', ('onehot',)),
     ('x_readout', 'mlp', ('mlp',)),
     ('x_readout_norm', True, (True,)),
+    ('x_readout_norm_eps', None, (None,)),     # soft readout norm (2026-11-15): the port has eps 1e-6 only
     ('f_readout', True, (True,)),
     ('readout_species', False, (False,)),
     ('stratum_gain', 'uniform', ('uniform',)),

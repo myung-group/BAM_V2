@@ -513,7 +513,7 @@ def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool
     into one training table in which every row of part i appears repeat_i times per data epoch (e.g. MPtrj x8 +
     sAlex x1 for fine-tuning).  File indices of later parts are offset; the duplicates are distinct rows."""
     cols = {'n_atoms': [], 'n_edges': [], 'file': [], 'key': [], 'cell': []}
-    files, kinds, sources, src_meta, file_source, dirs = [], [], [], [], [], []
+    files, kinds, sources, src_meta, file_source, dirs, part_meta = [], [], [], [], [], [], []
     for i, p in enumerate(parts):
         spec = _stream_split(p)
         rep = int(spec.get('repeat', 1))
@@ -521,6 +521,7 @@ def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool
             raise ValueError(f"stream.train.parts[{i}]: repeat must be >= 1, got {rep}")
         t, d = _stream_table(spec, f'train{i}', cutoff, workers, log_dir, rank0)
         m = t['meta']
+        part_meta.append((m, rep))
         off, soff = len(files), len(src_meta)
         for k in ('n_atoms', 'n_edges', 'key'):
             cols[k].append(np.tile(t[k], rep))
@@ -538,6 +539,12 @@ def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool
     table['cell'] = None if any(c is None for c in cells) else np.concatenate(cells)
     table['meta'] = {'files': files, 'kinds': kinds, 'sources': src_meta, 'file_source': file_source,
                      'n': int(len(table['n_atoms'])), 'sum_atoms': int(table['n_atoms'].sum()), 'cutoff': cutoff}
+    # largest cell over the parts (RACE_POLAR reciprocal budget, build_stream_datasets reads these keys)
+    if all('max_cell_volume' in m for m, _ in part_meta):
+        table['meta'].update(
+            max_cell_volume=max(float(m['max_cell_volume']) for m, _ in part_meta),
+            max_cell_length=[max(float(m['max_cell_length'][k]) for m, _ in part_meta) for k in range(3)],
+            n_periodic=int(sum(int(m['n_periodic']) * r for m, r in part_meta)))
     return table, ' + '.join(dirs), {'sources': sources}
 
 
@@ -1313,9 +1320,11 @@ def train(cfg: Dict):
         quadrupole_weight=float(_get(cfg, 'quadrupole_weight', 0.0)),
         spin_weight=float(_get(cfg, 'spin_weight', 0.0)),
     )
+    _tr = (_get(cfg, 'stream', {}) or {}).get('train', [])
+    _tr_sources = ([s for p in _tr['parts'] for s in _stream_split(p)['sources']]
+                   if isinstance(_tr, dict) and 'parts' in _tr else _stream_split(_tr).get('sources', []))
     if (float(_get(cfg, 'charge_weight', 0.0)) > 0 and not _get(cfg, 'charge_label_key', None)
-            and not any(isinstance(x, dict) and x.get('charge_label_key')
-                        for x in _stream_split((_get(cfg, 'stream', {}) or {}).get('train', []))['sources'])):
+            and not any(isinstance(x, dict) and x.get('charge_label_key') for x in _tr_sources)):
         raise ValueError("charge_weight needs charge_label_key")
     if float(_get(cfg, 'stochastic_depth', 0.0)) > 0 and _get(cfg, 'residual', 'none') == 'none':
         raise ValueError("stochastic_depth needs residual='identity' or 'identity_cum'")

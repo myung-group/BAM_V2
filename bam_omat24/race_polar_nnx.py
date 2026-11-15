@@ -241,8 +241,20 @@ class RACE_POLAR(RACE_LR):
             tail = -2.0 * math.pi / (3.0 * (rc - 1.0) ** 3) * jnp.sum(jnp.where(mm, cij, 0.0), axis=2) / vol[:, None]
             e_per = e_per + tail                  # per atom i: -2 pi / (3 V rc^3) sum_j C6_ij (half of every pair)
             e_blk = jnp.where(pbc[:, None], e_per, e_open)
+            # images |n| <= disp_n_img reach every pair inside rc only when n_img x (smallest cell height) >= rc
+            # (wrapped positions); otherwise pairs inside the cutoff are missing: NaN, as a Qeq overflow (2026-11-15)
+            vol_h = jnp.abs(jnp.linalg.det(cells))
+            areas = jnp.stack([jnp.linalg.norm(jnp.cross(cells[:, 1], cells[:, 2]), axis=-1),
+                               jnp.linalg.norm(jnp.cross(cells[:, 2], cells[:, 0]), axis=-1),
+                               jnp.linalg.norm(jnp.cross(cells[:, 0], cells[:, 1]), axis=-1)], axis=-1)
+            h_min = jnp.min(vol_h[:, None] / jnp.maximum(areas, 1e-12), axis=-1)
+            real = jax.ops.segment_sum(node_mask.astype(dt), node_graph, num_segments=n_graphs) > 0   # not padding
+            short = pbc & (n * h_min < rc) & real
+            e_blk = jnp.where(short[:, None], jnp.nan, e_blk)
         e = e_blk[node_graph, jnp.minimum(slot, B - 1)]
-        return jnp.where(valid, e, 0.0)
+        e = jnp.where(valid, e, 0.0)
+        # atoms beyond qeq_block get no dispersion: a NaN energy instead of a silent omission (as the Qeq solve)
+        return jnp.where(jnp.any(node_mask & (local >= B)), jnp.nan, e)
 
     # ---------------------------------------------------------------------------------------------- heads
     def _polar_features(self, feats: e3nn.IrrepsArray) -> e3nn.IrrepsArray:

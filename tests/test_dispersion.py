@@ -93,6 +93,14 @@ def test_dispersion_energy_batch_forces(x64):
         assert abs(fd - f[off[g] + i, k]) < 2e-6 * max(1.0, abs(fd)), (g, i, k, fd, f[off[g] + i, k])
 
 
+def test_dispersion_overflow_is_nan(x64):
+    """a structure larger than qeq_block (12 atoms here) gets NaN, not a silent omission of the extra atoms"""
+    model = _model()
+    ok = np.asarray(_ne(model, _batch([_molecule(6, n=8)]))['dispersion_node_energies'])
+    big = np.asarray(_ne(model, _batch([_molecule(6, n=14)]))['dispersion_node_energies'])
+    assert np.all(np.isfinite(ok)) and np.isnan(big).any()
+
+
 def test_dispersion_tail_beyond_the_cutoff(x64):
     """two molecules far outside the 5 A network cutoff: their dispersion interaction is there and falls as r^-6"""
     a, b = _molecule(4, n=5), _molecule(5, n=5)

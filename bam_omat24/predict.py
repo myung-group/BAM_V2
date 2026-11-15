@@ -88,6 +88,31 @@ class Predictor:
                   fragments=T.fragments_of(cfg), task=T._get(cfg, 'task', None))
         graphs = [preprocess_graph(a, ai, list(self.atom_energies), float(T._get(cfg, 'cutoff', 5.0)),
                                    targets=False, **kw) for a in frames]
+        m = self.model
+        if getattr(m, 'ct_cond', False) or getattr(m, 'cs_local', False) or getattr(m, 'spin_energy', False):
+            # RACE_LR inputs that training builds in stream_io (2026-11-15, as md_water/race_jax_calc.py): integer
+            # charges q0 / spins s0 per molecule (atoms.arrays['formal_charges'] / ['formal_spins'], else labels,
+            # else graph_fields.formal_charges(auto): rules from the bonds), and the restricted / unrestricted flag.
+            # Without them the model falls back to Q / N and (2S) / N on every atom.
+            from bam_omat24.graph_fields import formal_charges, formal_spins
+            ck, sk = kw['charge_key'], kw['spin_key']
+            for a, g in zip(frames, graphs):
+                S = None
+                if np.all(a.pbc) and isinstance(g.edges, dict) and 'Sij' in g.edges:
+                    S = -np.asarray(g.edges['Sij'], np.float64) @ np.asarray(a.cell.array, np.float64)
+                Q = float(a.info.get(ck, 0.0)) if ck else 0.0
+                mult = float(a.info.get(sk, 1.0)) if sk else 1.0
+                rcv, snd = np.asarray(g.receivers), np.asarray(g.senders)
+                if getattr(m, 'ct_cond', False) or getattr(m, 'cs_local', False):
+                    q0, _ = formal_charges(a.numbers, a.get_positions(), rcv, snd, Q, a.info, a.arrays, S, auto=True,
+                                           multiplicity=mult)
+                    g.nodes['q0'] = q0.astype(np.float32)
+                    if getattr(m, 'cs_local', False):
+                        s0, _ = formal_spins(a.numbers, a.get_positions(), rcv, snd, mult, q0, None, a.arrays, S)
+                        g.nodes['s0'] = s0.astype(np.float32)
+                if getattr(m, 'spin_energy', False) and isinstance(g.globals, dict):
+                    u = bool(a.info.get('unrestricted', mult > 1))
+                    g.globals['unrestricted'] = np.array([1.0 if (u or mult > 1) else 0.0], np.float32)
         if cfg.get('x64'):
             graphs = T._cast_graphs(graphs, np.float64)
         return _tag_frames(graphs)

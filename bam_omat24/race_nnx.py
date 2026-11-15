@@ -436,12 +436,14 @@ class RACEXReadout(nnx.Module):
         norm: bool = True,
         linear: bool = False,
         species_rank: Optional[int] = None,
+        norm_eps: float = 1e-6,
     ):
         # norm=False (review §11.16): no layer norm on the input -> the readout is a genuine
         # function of the magnitude of x (with x = A_i a body-ordered quantity), not a degree-0 one.
         # linear=True: species-indexed Linear(0e part of x) -> 0e, i.e. an exactly linear function of
         # x; with x = Linear(A_i) this is a learned 2-body (pair) stratum sum_j R_Z(r_ij).
         self.norm = bool(norm)
+        self.norm_eps = float(norm_eps)
         self.linear = bool(linear)
         self.x_readout1 = e3nn_nnx_Linear(
             irreps_in=x_irreps,
@@ -478,7 +480,7 @@ class RACEXReadout(nnx.Module):
         x_feats: e3nn.IrrepsArray,
     ) -> e3nn.IrrepsArray:
         if x_feats.irreps.dim > 1 and self.norm and not self.linear:
-            x_feats_norm = separated_layer_norm(_dense(x_feats)) / jnp.sqrt(self.avg_n_neighbors)
+            x_feats_norm = separated_layer_norm(_dense(x_feats), eps=self.norm_eps) / jnp.sqrt(self.avg_n_neighbors)
         else:
             x_feats_norm = _dense(x_feats) / jnp.sqrt(self.avg_n_neighbors)
         if self.linear:
@@ -1060,6 +1062,7 @@ class RACE(nnx.Module):
         angular_prior: Optional[Dict] = None,
         x_readout: str = "mlp",
         x_readout_norm: bool = True,
+        x_readout_norm_eps: Optional[float] = None,
         f_readout: bool = True,
         force_encoding: bool = False,
         dens: bool = False,
@@ -1163,6 +1166,12 @@ class RACE(nnx.Module):
                         linear readout of the 0e part of x_feats; with x_mode "basis" an exact 2-body
                         stratum) — review §11.16.
         x_readout_norm : layer norm on the x readout input (original True); False keeps the magnitude.
+        x_readout_norm_eps : e0 (2026-11-15): soft layer norm x / sqrt(ms + e0^2) on the x readout input instead of
+                        eps = 1e-6.  The plain norm lifted the tiny neighbour density of an atom whose only
+                        neighbour sits near the cutoff (|x| ~ 1e-4 - 1e-3) to O(1): Ar2 +3 to +5 kcal/mol at
+                        3.8-5.5 A, Li+ ... Xe -10 at 5 A, both dropping to 0 where |x|^2 fell below 1e-6 (v2local e99,
+                        md_water/debug_ar2_trace.py).  Switching the norm off cost 9 % of the 1200 K 3BPA forces
+                        (round 21), so the norm stays for |x| >> e0.  None: 1e-6 as before.
         f_readout : per-layer MLP readout of the layer *input* features added to the stratum (original
                         True; redundant with the previous layer's readout, constant for layer 0).
         force_encoding : DeNS (Liao et al., TMLR 2024): layer-0 input gets a 1o block Linear(F_ref) in
@@ -1534,6 +1543,7 @@ class RACE(nnx.Module):
                     norm=x_readout_norm,
                     linear=(x_readout == "linear"),
                     species_rank=self.species_rank,
+                    norm_eps=(1e-6 if x_readout_norm_eps is None else float(x_readout_norm_eps) ** 2),
                 ))
 
             if f_readout:
@@ -1926,10 +1936,16 @@ class RACE(nnx.Module):
                     x_feats=x_feats, x_species=x_species, atomic_basis=atomic_basis, outputs=outputs,
                     layer_parts=layer_parts, dens_force=dens_force, bo_q=bo_q)
 
+    def _condition(self, ctx: Dict, i: int, features):
+        """Hook: the node features entering interaction layer i (subclasses add per-structure conditioning, e.g.
+        RACE_LR long_range.cs_layers "all").  Identity here."""
+        return features
+
     def _layer_step(self, ctx: Dict, i: int, features, prev_features):
         """Interaction layer i of node_energies (moved verbatim, 2026-11-06): returns the new node features and the
         energy stratum of the layer (gain applied, before scale / shift).  prev_features: features of layer i-2
         (residual "chebyshev", i >= 2) or of layer 1 ("neumann"), else None."""
+        features = self._condition(ctx, i, features)
         layer = self.layers[i]
         data, species, sh, radial_basis = ctx["data"], ctx["species"], ctx["sh"], ctx["radial_basis"]
         r_norm, r_c, shell_env, keep = ctx["r_norm"], ctx["r_c"], ctx["shell_env"], ctx["keep"]

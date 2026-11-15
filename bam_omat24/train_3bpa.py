@@ -26,6 +26,8 @@ Config keys (in addition to the model hyper-parameters, see README):
     noisy_nodes      : {"sigma": A, "weight": w}, denoising auxiliary task (adds noise_head)
     sam_rho          : float, sharpness-aware minimisation radius (default 0)
     lr_schedule      : "plateau" (default) | "cosine" (+ lr_warmup_epochs, lr_cosine_min_scale)
+                       | "wsd" (+ lr_warmup_epochs, lr_decay_start_epoch, lr_cosine_min_scale: warmup, constant,
+                         linear decay from lr_decay_start_epoch to n_epochs; 2026-11-15)
     lr_cosine_epochs : cosine only: length of the cosine in epochs (default n_epochs).  With lr_cooldown_from_epoch
                        the run can be continued from a checkpoint of a longer cosine run (2026-11-13).
     lr_cooldown_from_epoch: cosine only: from this epoch on, the LR factor decays linearly from its cosine value at
@@ -87,12 +89,15 @@ Config keys (in addition to the model hyper-parameters, see README):
                        b1 / b2 / eps) instead of SOAP                                          (default false)
     soap_state_dtype : null | "float64" (grouped only): SOAP moments / factors / eigenbases in float64 while the
                        model runs in float32 (turns on jax_enable_x64; params and data stay float32)  (default null)
+    soap_distributed_refresh : bool (grouped only, several devices): the QRs of the basis refresh are split over
+                       the devices and all-gathered (same maths; every device otherwise repeats all of them) (default false)
     gauge_refit      : bool, after training refit the per-atom energy shift in closed form on the training
                        split (least squares of the energy residuals; forces are unchanged: the force-null
                        gauge direction, VarPro), report test metrics as summary 'gauge' and write
                        <ckpt>.gauge.pkl (review §13, literature sweep 2)                        (default false)
     x_readout        : "mlp" (default) | "off" | "layer0" | "linear"  per-layer x readout energy (review §11.16)
     x_readout_norm   : bool, layer norm on the x readout input                                 (default true)
+    x_readout_norm_eps: float e0, soft readout norm x / sqrt(ms + e0^2) (2026-11-15)          (default none: 1e-6)
     f_readout        : bool, per-layer readout of the layer input features                      (default true)
     radial_prior     : {"type": "algebraic"|"exponential"|"gaussian", "sigma": s, "p": p} regularity prior:
                        Bessel channel n rescaled by 1/gamma(n) (review §11.15)                (default null)
@@ -135,6 +140,10 @@ Config keys (in addition to the model hyper-parameters, see README):
                        (every structure of this config, test sets included) or a str (info key with the index per
                        structure, for mixed datasets; missing = 0).  Default none = task 0.
     charge_label_key : extxyz per-atom array of reference charges, e.g. "hirshfeld_charges" (RACE_LR; default none)
+    dipole_weight    : weight of the graph-dipole loss (RACE_POLAR; stream option "dipole": true; (e A)^2; default 0)
+    polar            : options of "model": "RACE_POLAR" (Thole-type polarizable electrostatics; bam_omat24/thole.py
+                       POLAR_DEFAULTS, race_polar_nnx.py).  For periodic stream data the reciprocal-space budget
+                       (max_cell_length, max_cell_volume) is taken from the size tables.
     charge_weight    : weight of the charge loss mean_i (q_i - q_ref_i)^2 in e^2 (needs charge_label_key; default 0 =
                        latent charges, no charge labels used)
     charge_label_optional : bool, data_format "stream" only: a structure without charge_label_key gets NaN labels and
@@ -159,6 +168,13 @@ Config keys (in addition to the model hyper-parameters, see README):
                        boltzmann_tilt, node_weight, taylor_aug, e0_mode "regression", train_path (gauge_refit
                        uses a seeded training subset of stream.gauge_structures, default 20000).
                        Neighbour list: BAM_NEIGHBORS=vesin (environment) is much faster for periodic cells.
+                       Multi-dataset training (2026-11-11; docs/HANDOFF_multidataset_thole.md): a source may be a
+                       dict {"path": "aselmdb:<dir>", "name", "max_frames_per_shard", "subset_seed", "meta_dir",
+                       "task", "task_rules", "energy_key", "charge_label_key", "charge_label_scale", "dipole"}
+                       (bam_omat24/stream_io.py module docstring), with the stream options
+                         mixed (false): periodic and open-boundary structures in one batch (globals 'pbc',
+                                  'stress_w'; needs "periodic": true), dipole (false): dipole labels,
+                         atom_energies_by_task: {task: E0 file | list | {Z: E0}} (default: atom_energies)
     pad_mode         : "bucket" (default) | "fixed" (one padded shape; pad_nodes, pad_edges, pack_max_graphs);
                        fixed also writes sizes_<split>.tsv (index, n_atoms, n_edges) next to log_file
     use_dataset_stats: init shift/scale/avg_n_neighbors from the training set
@@ -441,6 +457,33 @@ def build_datasets(cfg: Dict, fout):
             GraphListDataset(valid_graphs), test_sets, stats)
 
 
+def _polar_config(cfg: Dict, stats: Dict) -> Dict:
+    """cfg "polar" for RACE_POLAR, completed from the data: the largest cell (stream size tables) sizes the
+    reciprocal sums, and a mixed stream switches the open-boundary pair sums on.  The values taken from the data are
+    written to <ckpt_name>.polar.json, which the tools that rebuild the model without the training data
+    (predict.py, eval_sets.py, dump_frame_errors.py) read back."""
+    polar = dict(_get(cfg, 'polar', {}) or {})
+    side = Path(str(_get(cfg, 'ckpt_name', 'ckpt.pkl')) + '.polar.json')
+    periodic = bool(_get(cfg, 'periodic', False))
+    derived = {}
+    if periodic and not (polar.get('k_grid') and polar.get('n_k')):
+        for k in ('max_cell_length', 'max_cell_volume'):
+            if not polar.get(k) and stats.get(k):
+                derived[k] = stats[k]
+    if polar.get('open_boundary', 'auto') == 'auto' and stats.get('has_open_boundary') is not None:
+        derived['open_boundary'] = bool(stats['has_open_boundary']) or not periodic
+    if polar.get('charge_transfer', 'none') == 'contact' and 'contact_eps' not in polar:
+        # conductance of a full contact = 1 / eps: float32 loses that many digits in the group solve
+        polar['contact_eps'] = 1e-6 if _get(cfg, 'x64', False) else 1e-3
+    if derived:
+        polar.update(derived)
+        if jax.process_index() == 0 and side.parent.is_dir():
+            json.dump(derived, open(side, 'w'), indent=1)
+    elif side.exists():
+        polar.update({k: v for k, v in json.load(open(side)).items() if not polar.get(k) or k == 'open_boundary'})
+    return polar
+
+
 def _stream_split(v) -> Dict:
     if isinstance(v, str):
         return {'sources': [v]}
@@ -469,23 +512,31 @@ def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool
     """stream.train = {"parts": [{"sources": [...], "sizes": dir, "repeat": r}, ...]}: one size table per part, merged
     into one training table in which every row of part i appears repeat_i times per data epoch (e.g. MPtrj x8 +
     sAlex x1 for fine-tuning).  File indices of later parts are offset; the duplicates are distinct rows."""
-    cols = {'n_atoms': [], 'n_edges': [], 'file': [], 'key': []}
-    files, kinds, sources, dirs = [], [], [], []
+    cols = {'n_atoms': [], 'n_edges': [], 'file': [], 'key': [], 'cell': []}
+    files, kinds, sources, src_meta, file_source, dirs = [], [], [], [], [], []
     for i, p in enumerate(parts):
         spec = _stream_split(p)
         rep = int(spec.get('repeat', 1))
         if rep < 1:
             raise ValueError(f"stream.train.parts[{i}]: repeat must be >= 1, got {rep}")
         t, d = _stream_table(spec, f'train{i}', cutoff, workers, log_dir, rank0)
-        off = len(files)
+        m = t['meta']
+        off, soff = len(files), len(src_meta)
         for k in ('n_atoms', 'n_edges', 'key'):
             cols[k].append(np.tile(t[k], rep))
         cols['file'].append(np.tile(t['file'] + off, rep))
-        files += list(t['meta']['files']); kinds += list(t['meta']['kinds'])
+        cols['cell'].append(None if t.get('cell') is None else np.tile(t['cell'], (rep,) + (1,) * (t['cell'].ndim - 1)))
+        files += list(m['files']); kinds += list(m['kinds'])
+        # per-file source options (stream_io.file_opts): keep each part's sources and point its files at them
+        fs = m.get('file_source')
+        file_source += [soff + int(s) for s in fs] if fs is not None else [soff] * len(m['files'])
+        src_meta += list(m['sources']) if fs is not None else [{'spec': s} for s in spec['sources']][:1]
         sources += list(spec['sources']); dirs.append(str(d))
         print(f"stream train part {i}: {len(t['n_atoms'])} structures x {rep} from {spec['sources']} ({d})", file=fout)
+    cells = cols.pop('cell')
     table = {k: np.concatenate(v) for k, v in cols.items()}
-    table['meta'] = {'files': files, 'kinds': kinds, 'sources': [{'spec': s} for s in sources],
+    table['cell'] = None if any(c is None for c in cells) else np.concatenate(cells)
+    table['meta'] = {'files': files, 'kinds': kinds, 'sources': src_meta, 'file_source': file_source,
                      'n': int(len(table['n_atoms'])), 'sum_atoms': int(table['n_atoms'].sum()), 'cutoff': cutoff}
     return table, ' + '.join(dirs), {'sources': sources}
 
@@ -518,12 +569,61 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
                                     charge_label_key=_get(cfg, 'charge_label_key', None),
                                     charge_label_optional=bool(_get(cfg, 'charge_label_optional', False)),
                                     fragments=fragments_of(cfg)).items() if v}
+    if float(_get(cfg, 'charge_label_scale', 1.0)) != 1.0:
+        fields['charge_label_scale'] = float(_get(cfg, 'charge_label_scale', 1.0))   # labels scaled about their mean
     if 'train' not in sc or 'valid' not in sc:
         raise ValueError("data_format stream needs stream.train and stream.valid")
-    if isinstance(sc['train'], dict) and 'parts' in sc['train']:
+    use_parts = isinstance(sc['train'], dict) and 'parts' in sc['train']
+    if use_parts:
         table, tdir, tr = _stream_parts(sc['train']['parts'], cutoff, workers, log_dir, rank0, fout)
     else:
         tr = _stream_split(sc['train'])
+    # multi-dataset options (stream_io module docstring): periodic and open-boundary structures in one batch,
+    # per-source tasks / charge labels / dipole labels, and one E0 table per task
+    src_opts = [S.parse_source(x)['opts'] for x in tr['sources']]
+    if sc.get('mixed'):
+        fields['mixed'] = True
+    if any('task' in o or o.get('task_rules') for o in src_opts) and not fields.get('task'):
+        fields['task'] = 0          # every graph carries a task (sources without one: task 0)
+    if any(o.get('charge_label_key') for o in src_opts):
+        if fields.get('charge_label_key'):
+            raise ValueError("give charge_label_key either per source (stream sources) or for the whole config")
+        fields['opt_charge_labels'] = True
+    if sc.get('dipole'):
+        fields['dipole'] = True
+    if _get(cfg, 'model', 'RACE') == 'RACE_POLAR':
+        pol = dict(_get(cfg, 'polar', {}) or {})
+        if pol.get('charge_constraint', 'graph') == 'electrode':
+            from bam_omat24.thole import POLAR_DEFAULTS
+            fields['groups'] = int(pol.get('max_groups', POLAR_DEFAULTS['max_groups']))
+        if pol.get('slab_correction'):
+            fields['slab'] = True
+    lr_opts = dict(_get(cfg, 'long_range', {}) or {})
+    if float(_get(cfg, 'quadrupole_weight', 0.0)) > 0:
+        fields['quadrupole'] = True             # traceless quadrupole labels (RACE_POLAR graph quadrupoles)
+    if float(_get(cfg, 'spin_weight', 0.0)) > 0:
+        if not lr_opts.get('spin_head'):
+            raise ValueError("spin_weight needs long_range spin_head true")
+        fields['spin_labels'] = {'key': _get(cfg, 'spin_label_key', 'lowdin_spins')}
+        if lr_opts.get('spin_nbo_head'):
+            fields['spin_labels']['nbo_key'] = _get(cfg, 'spin_nbo_label_key', 'nbo_spins')
+    if lr_opts.get('charge_nbo_head'):
+        if float(_get(cfg, 'charge_weight', 0.0)) <= 0:
+            raise ValueError("long_range charge_nbo_head needs charge_weight > 0 (and charge_label_key)")
+        fields['charge_nbo_labels'] = {'key': _get(cfg, 'charge_nbo_label_key', 'nbo_charges')}
+    if lr_opts.get('ct_mode', 'global') == 'conductance':
+        # integer reference charges per molecule for the distance-limited charge transfer (race_lr_nnx, ct_solve)
+        fields['formal_charges'] = {'label_keys': list(lr_opts.get('ct_label_keys', ['nbo_charges', 'lowdin_charges'])),
+                                    'bond_factor': float(lr_opts.get('ct_bond_factor', 1.2))}
+    if lr_opts.get('cs_local') is not None:
+        # local charge / spin conditioning: molecule charges q0 (as for ct) and molecule spins s0 per atom
+        fields.setdefault('formal_charges', {'label_keys': list(lr_opts.get('ct_label_keys',
+                                                                            ['nbo_charges', 'lowdin_charges'])),
+                                             'bond_factor': float(lr_opts.get('ct_bond_factor', 1.2))})
+        fields['formal_charges']['spins'] = {'label_key': _get(cfg, 'spin_label_key', 'lowdin_spins')}
+    e0_tables = {int(t): S.load_e0_table(v, atomic_numbers).tolist()
+                 for t, v in dict(sc.get('atom_energies_by_task') or {}).items()}
+    if not use_parts:
         table, tdir = _stream_table(tr, 'train', cutoff, workers, log_dir, rank0)
     bs = int(_get(cfg, 'batch_size', 5))
     gpp = int(sc.get('graphs_per_pack', bs))
@@ -536,7 +636,9 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
     m = min(n, int(sc.get('stats_sample', 2000)))
     rows = np.sort(np.random.default_rng(seed).choice(n, m, replace=False))
     from bam_omat24.graph_fields import field_keys
-    ik, ak = field_keys(**fields)
+    ik, ak = field_keys(**{k: v for k, v in fields.items() if k not in ('mixed', 'dipole', 'opt_charge_labels', 'groups',
+                                                                         'slab', 'quadrupole', 'spin_labels',
+                                                                         'charge_nbo_labels')})
     meta = table['meta']
     idx = {int(z): i for i, z in enumerate(atomic_numbers)}
     sample = []
@@ -544,7 +646,8 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
         kind, path = meta['kinds'][int(fi)], meta['files'][int(fi)]
         src = S.ExtxyzSource([path], info_keys=ik, array_keys=ak) if kind == 'extxyz' else S.AselmdbSource([path])
         keys = table['key'][rows[table['file'][rows] == fi]]
-        sample += [_to_graph(_cast(S.graph_arrays(st, idx, atom_energies, cutoff, fields), np.float32))
+        fo = S.file_opts(meta)[int(fi)]
+        sample += [_to_graph(_cast(S.graph_arrays(st, idx, atom_energies, cutoff, fields, fo, e0_tables), np.float32))
                    for st in src.read_block(0, keys)]
     if not bool(_get(cfg, 'periodic', False)) and any(g.edges is not None for g in sample):
         raise ValueError("the stream training data hold periodic structures but the config has periodic false")
@@ -554,26 +657,34 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
 
     train_loader = StreamLoader(table, buckets, atomic_numbers, atom_energies, cutoff, n_local=n_local,
                                 workers=workers, seed=seed, block_rows=int(sc.get('block_rows', 128)), shuffle=True,
-                                dtype=dtype, fields=fields, mix_blocks=int(sc.get('mix_blocks', 16)))
+                                dtype=dtype, fields=fields, mix_blocks=int(sc.get('mix_blocks', 16)),
+                                e0_tables=e0_tables)
     from bam_omat24.stream_data import counts_allgather_jax
     plan0 = train_loader.plan(0, jax.process_index(), jax.process_count(), counts_allgather_jax)
     stats['steps_per_epoch'] = int(sc.get('steps_per_epoch') or len(plan0.steps))
+    cell_tables = [meta]        # largest cell over every split (RACE_POLAR reciprocal budget)
     stats['steps_per_data_epoch'] = len(plan0.steps)
 
     def eval_set(spec, name):
         t, _ = _stream_table(spec, name, cutoff, workers, log_dir, rank0)
+        cell_tables.append(t['meta'])
         return StreamEvalSet(t, buckets, atomic_numbers, atom_energies, cutoff, n_local=n_local, workers=eval_workers,
                              dtype=dtype, fields=fields, max_structures=spec.get('max_structures'), seed=seed,
-                             block_rows=int(sc.get('block_rows', 128)), name=name)
+                             block_rows=int(sc.get('block_rows', 128)), name=name, e0_tables=e0_tables)
     valid_set = eval_set(_stream_split(sc['valid']), 'valid')
     if _get(cfg, 'gauge_refit', False):
         # gauge refit at the end: a fixed seeded subset of the training split (gauge_structures, default 20000)
         stats['gauge_set'] = StreamEvalSet(table, buckets, atomic_numbers, atom_energies, cutoff, n_local=n_local,
                                            workers=eval_workers, dtype=dtype, fields=fields,
                                            max_structures=int(sc.get('gauge_structures', 20000)), seed=seed + 1,
-                                           block_rows=int(sc.get('block_rows', 128)), name='gauge')
+                                           block_rows=int(sc.get('block_rows', 128)), name='gauge',
+                                           e0_tables=e0_tables)
     test_sets = {nm: eval_set(_stream_split(v), nm) for nm, v in dict(sc.get('test', {}) or {}).items()}
 
+    if all('max_cell_volume' in m for m in cell_tables):
+        stats['max_cell_volume'] = max(float(m['max_cell_volume']) for m in cell_tables)
+        stats['max_cell_length'] = [max(float(m['max_cell_length'][k]) for m in cell_tables) for k in range(3)]
+        stats['has_open_boundary'] = any(int(m['n_periodic']) < int(m['n']) for m in cell_tables)
     print(f"data_format stream: train {n} structures ({meta['sum_atoms']} atoms) from {tr['sources']}, size table "
           f"{tdir}; neighbour backend {os.environ.get('BAM_NEIGHBORS', 'ase')}", file=fout)
     for b, bk in enumerate(buckets):
@@ -593,6 +704,19 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
 # Model / optimizer
 # =============================================================================
 
+def wsd_schedule(warmup_steps: int, decay_start: int, total_steps: int, min_scale: float):
+    """LR factor of lr_schedule "wsd": linear min_scale -> 1 over warmup_steps, 1 until decay_start, linear to
+    min_scale at total_steps (and min_scale after)."""
+    if not 0 <= warmup_steps <= decay_start < total_steps:
+        raise ValueError(f"lr_schedule wsd: need 0 <= warmup <= decay start < total steps, got {warmup_steps}, "
+                         f"{decay_start}, {total_steps}")
+    return optax.join_schedules(
+        [optax.linear_schedule(min_scale, 1.0, max(warmup_steps, 1)),
+         optax.constant_schedule(1.0),
+         optax.linear_schedule(1.0, min_scale, total_steps - decay_start)],
+        boundaries=[warmup_steps, decay_start])
+
+
 def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Dict, fout, n_devices: int = 1):
     seed = int(_get(cfg, 'seed', 42))
     model_rngs = nnx.Rngs(seed)
@@ -611,7 +735,9 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
     else:
         shift = float(_get(cfg, 'shift', 0.0))
         scale = float(_get(cfg, 'scale', 1.0))
-        avg_n_neighbors = float(_get(cfg, 'avg_n_neighbors', 25.0))
+        # stream configs without the key take the value of the size table (in-memory configs keep the old default)
+        avg_n_neighbors = float(_get(cfg, 'avg_n_neighbors', stats['avg_n_neighbors']
+                                     if _get(cfg, 'data_format', 'xyz') == 'stream' else 25.0))
     print(f"Model init: shift={shift:.6f} scale={scale:.6f} avg_n_neighbors={avg_n_neighbors:.3f}",
           file=fout)
 
@@ -642,6 +768,10 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         if model_type == 'RACE_LR':      # RACEv2 + charge equilibration + long-range electrostatics (race_lr_nnx.py)
             from bam_omat24.race_lr_nnx import RACE_LR
             race_cls, lr_kw = RACE_LR, dict(long_range=_get(cfg, 'long_range', None))
+        elif model_type == 'RACE_POLAR':  # RACEv2 + Thole-type polarizable electrostatics (race_polar_nnx.py)
+            from bam_omat24.race_polar_nnx import RACE_POLAR
+            race_cls, lr_kw = RACE_POLAR, dict(long_range=_get(cfg, 'long_range', None),
+                                               polar=_polar_config(cfg, stats))
         model = race_cls(**common, **lr_kw,
                      x_mode=_get(cfg, 'x_mode', 'species'),
                      x_basis_lmax=_get(cfg, 'x_basis_lmax', None),
@@ -653,6 +783,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
                      dens=bool(_get(cfg, 'dens', None)),
                      dens_seed=seed + 7919,
                      x_readout_norm=bool(_get(cfg, 'x_readout_norm', True)),
+                     x_readout_norm_eps=_get(cfg, 'x_readout_norm_eps', None),
                      f_readout=bool(_get(cfg, 'f_readout', True)),
                      cov_mode=_get(cfg, 'cov_mode', 'scalar6'),
                      tp_backend=_get(cfg, 'tp_backend', 'e3nn'),
@@ -761,10 +892,15 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
             sp_adam = _get(cfg, 'soap_species_adam', False)
             if sp_adam not in (False, True, 'any_axis', None):
                 raise ValueError(f"soap_species_adam must be false, true or 'any_axis', got {sp_adam!r}")
+            # soap_distributed_refresh: with several devices every device orthonormalises 1/D of each factor group
+            # in the basis refresh and the bases are all-gathered, instead of every device repeating all QRs (the
+            # optimizer update runs inside shard_map on replicated state; axis 'dp' of make_sharded_train_step)
+            dist = bool(_get(cfg, 'soap_distributed_refresh', False)) and int(n_devices) > 1
             soap_fn = functools.partial(scale_by_soap_grouped, orth=_get(cfg, 'soap_orth', 'householder'),
                                         state_dtype=_get(cfg, 'soap_state_dtype', None),
                                         adam_leading_dim=(n_species if sp_adam else None),
-                                        adam_any_axis=(sp_adam == 'any_axis'))
+                                        adam_any_axis=(sp_adam == 'any_axis'),
+                                        **(dict(axis_name='dp', axis_size=int(n_devices)) if dist else {}))
         elif soap_impl == 'reference':
             if _get(cfg, 'soap_state_dtype', None):
                 raise ValueError("soap_state_dtype needs soap_impl='grouped'")
@@ -860,6 +996,21 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
               + (f"; cosine length {cos_steps} steps" if cos_steps != total_steps else "")
               + (f"; linear cool-down from step {s0} (factor {v0:.4f}) to {min_scale} at step {total_steps}"
                  if cd_epoch is not None else ""), file=fout)
+    elif lr_mode == 'wsd':
+        # warmup - stable - decay (2026-11-15): linear warmup from min scale to 1 over lr_warmup_epochs, constant 1
+        # until lr_decay_start_epoch, then linear decay to lr_cosine_min_scale at n_epochs.  The factor depends on the
+        # global step only, so a resumed run can move the decay start (e.g. to fit a deadline) through the config.
+        steps_per_epoch = int(stats.get('steps_per_epoch') or
+                              max(int(stats['n_graphs']) // (int(_get(cfg, 'batch_size', 5)) * n_devices), 1))
+        total_steps = int(_get(cfg, 'n_epochs', 1000)) * steps_per_epoch
+        warmup_steps = int(_get(cfg, 'lr_warmup_epochs', 10)) * steps_per_epoch
+        decay_start = int(float(_get(cfg, 'lr_decay_start_epoch', 0.8 * int(_get(cfg, 'n_epochs', 1000))))
+                          * steps_per_epoch)
+        min_scale = float(_get(cfg, 'lr_cosine_min_scale', 0.01))
+        cosine_fn = wsd_schedule(warmup_steps, decay_start, total_steps, min_scale)
+        chain.append(optax.scale_by_schedule(cosine_fn))
+        print(f"LR schedule: wsd, warmup {warmup_steps} steps, constant to step {decay_start}, linear decay to "
+              f"{min_scale} at step {total_steps} (plateau scaling disabled)", file=fout)
     elif lr_mode != 'plateau':
         raise ValueError(f"unknown lr_schedule {lr_mode!r}")
     optimizer = optax.chain(*chain)
@@ -892,7 +1043,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
               f"({sum(s for _, s in free):,} of {sum(s for _, s in named):,} parameters): "
               f"{[nm for nm, _ in free]}", file=fout)
 
-    if lr_mode == 'cosine':
+    if lr_mode in ('cosine', 'wsd'):
         # plateau transform kept for the state/plumbing but made inert (never fires)
         schedule = optax.contrib.reduce_on_plateau(factor=0.5, patience=10**8, min_scale=1.0)
     else:
@@ -920,7 +1071,9 @@ def _fmt_metrics(m: Dict) -> str:
             f"F_RMSE: {m['force_rmse']*1e3:7.2f} meV/A"
             + (f" | E_MAE/atom: {m['energy_mae']*1e3:7.2f} meV | S_MAE: {m['stress_mae_comp']*160.21766:6.3f} GPa | "
                f"S_RMSE: {m['stress_rmse_comp']*160.21766:6.3f} GPa"
-               if m.get('stress_rmse_comp', 0.0) > 0 else ""))
+               if m.get('stress_rmse_comp', 0.0) > 0 else "")
+            + (f" | q_RMSE: {m['charge_rmse']*1e3:6.1f} me" if m.get('n_charge', 0) > 0 else "")
+            + (f" | mu_RMSE: {m['dipole_rmse']:6.4f} eA" if m.get('n_dipole', 0) > 0 else ""))
 
 
 def _cast_graphs(graphs, dtype):
@@ -967,15 +1120,12 @@ def train(cfg: Dict):
     cov_mode = _get(cfg, 'cov_mode', 'scalar6')
     beta_nll = float(_get(cfg, 'beta_nll', 0.0))
     huber_delta = float(_get(cfg, 'huber_delta', 0.1))
-    # per-term deltas (2026-11-13): huber_delta_energy / _force / _stress override huber_delta for loss_type 'huber'
-    _hd = [_get(cfg, f'huber_delta_{k}', None) for k in ('energy', 'force', 'stress')]
-    if any(v is not None for v in _hd):
-        if loss_type != 'huber' or _get(cfg, 'deep_supervision', 0.0):
-            raise ValueError("huber_delta_energy / _force / _stress need loss_type 'huber' and no deep_supervision")
-        huber_delta = tuple(float(v) if v is not None else huber_delta for v in _hd)
-        print(f"Huber deltas: energy {huber_delta[0]} (eV/atom), force {huber_delta[1]} (eV/A per component), "
-              f"stress {huber_delta[2]} (eV/A^3 per Voigt component)", flush=True)
+    # per-term deltas (2026-11-13): huber_delta_energy / _force / _stress, each defaulting to huber_delta
+    _hd = tuple(float(_get(cfg, f'huber_delta_{k}', huber_delta)) for k in ('energy', 'force', 'stress'))
+    if len(set(_hd)) > 1:
+        huber_delta = _hd
     ema_decay = float(_get(cfg, 'ema_decay', 0.99))
+    ema_warmup = bool(_get(cfg, 'ema_warmup', False))
     # batch_size = graphs per device; global_batch_size (optional) = graphs per optimizer step, split
     # over the devices (the single-device run with batch_size = global_batch_size is the same
     # algorithm, training_utils.make_sharded_train_step)
@@ -1142,7 +1292,7 @@ def train(cfg: Dict):
         energy_weight=float(_get(cfg, 'energy_weight', 1.0)),
         force_weight=float(_get(cfg, 'force_weight', 1.0)),
         stress_weight=float(_get(cfg, 'stress_weight', 1.0)) if use_stress else 0.0,
-        huber_delta=huber_delta, ema_decay=ema_decay,
+        huber_delta=huber_delta, ema_decay=ema_decay, ema_warmup=ema_warmup,
         loss_type=loss_type, periodic=use_stress, cov_mode=cov_mode, beta_nll=beta_nll,
         grad_clip=float(grad_clip) if grad_clip else 1.0,
         dynamic_loss_weights=dynamic_weights,
@@ -1159,8 +1309,13 @@ def train(cfg: Dict):
         radial_l2=float(_get(cfg, 'radial_l2', 0.0)),
         dens=dens_cfg or None,
         charge_weight=float(_get(cfg, 'charge_weight', 0.0)),
+        dipole_weight=float(_get(cfg, 'dipole_weight', 0.0)),
+        quadrupole_weight=float(_get(cfg, 'quadrupole_weight', 0.0)),
+        spin_weight=float(_get(cfg, 'spin_weight', 0.0)),
     )
-    if float(_get(cfg, 'charge_weight', 0.0)) > 0 and not _get(cfg, 'charge_label_key', None):
+    if (float(_get(cfg, 'charge_weight', 0.0)) > 0 and not _get(cfg, 'charge_label_key', None)
+            and not any(isinstance(x, dict) and x.get('charge_label_key')
+                        for x in _stream_split((_get(cfg, 'stream', {}) or {}).get('train', []))['sources'])):
         raise ValueError("charge_weight needs charge_label_key")
     if float(_get(cfg, 'stochastic_depth', 0.0)) > 0 and _get(cfg, 'residual', 'none') == 'none':
         raise ValueError("stochastic_depth needs residual='identity' or 'identity_cum'")

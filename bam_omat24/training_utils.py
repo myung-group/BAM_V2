@@ -60,6 +60,17 @@ def huber_loss(x: jnp.ndarray, delta: float = 1.0) -> jnp.ndarray:
     return jnp.where(abs_x <= delta, 0.5 * x ** 2, delta * (abs_x - 0.5 * delta))
 
 
+def huber_deltas(delta):
+    """(energy, force, stress) Huber deltas from one number (the same delta for every term, the original
+    behaviour) or a 3-sequence (config keys huber_delta_energy / _force / _stress, 2026-11-13)."""
+    if isinstance(delta, (tuple, list)):
+        if len(delta) != 3:
+            raise ValueError(f"huber_delta: one number or (energy, force, stress), got {delta!r}")
+        return float(delta[0]), float(delta[1]), float(delta[2])
+    d = float(delta)
+    return d, d, d
+
+
 def _build_force_L(frc_var: jnp.ndarray) -> jnp.ndarray:
     """Build 3x3 lower triangular Cholesky L from 6 parameters per atom.
 
@@ -159,14 +170,19 @@ def force_whiten(frc_var: jnp.ndarray, force_diff: jnp.ndarray, cov_mode: str):
     return z, log_det_L
 
 
-def masked_charge_loss(q: jnp.ndarray, q_ref: jnp.ndarray, node_mask: jnp.ndarray, n_atoms) -> jnp.ndarray:
-    """sum_i (q_i - q_ref_i)^2 / n_atoms over the real atoms that have a label.  NaN labels (structures without
-    reference charges, graph_fields charge_label_optional) contribute nothing, also to the gradient; n_atoms stays
-    the number of real atoms of the batch, so fully labelled batches are unchanged."""
+def masked_charge_loss(q: jnp.ndarray, q_ref: jnp.ndarray, node_mask: jnp.ndarray, n_atoms, weights=None) -> jnp.ndarray:
+    """Charge loss sum_i w_i (q_i - q_ref_i)^2 / norm over the real atoms that have a label.
+    NaN labels (structures without reference charges, graph_fields charge_label_optional) contribute nothing, also
+    to the gradient.  weights None: norm = n_atoms, the number of real atoms of the batch, so fully labelled batches
+    keep the old value.  weights (nodes 'ref_charges_w' of mixed corpora; 0 = no label): norm = the sum of the
+    weights of the labelled atoms (at least 1)."""
     ref = q_ref.astype(q.dtype)
     has = jnp.isfinite(ref)
     m = node_mask.astype(q.dtype) * has.astype(q.dtype)
     dq = q - jnp.where(has, ref, 0.0)
+    if weights is not None:
+        m = m * weights.astype(q.dtype)
+        return jnp.sum(m * dq ** 2) / jnp.maximum(jnp.sum(m), 1.0)
     return jnp.sum(m * dq ** 2) / n_atoms
 
 
@@ -189,6 +205,38 @@ def _build_stress_L(stress_var: jnp.ndarray) -> jnp.ndarray:
             L = L.at[:, i, j].set(stress_var[:, idx])
             idx += 1
     return L
+
+
+def _dipole_sq(results, batch, graph_mask):
+    """(sum of squared dipole errors, number of elements) of the labelled graphs (e A).  Open-boundary graphs: the
+    three components of results['dipole'].  Periodic graphs (slabs; batch.globals['pbc'] and
+    results['dipole_normal']): one element, the component along the slab normal (what a dipole-corrected slab
+    calculation labels), as BAM-torch dipole_components "auto"."""
+    dt = results['dipole'].dtype
+    w = batch.globals['dipole_w'].reshape(-1).astype(dt) * graph_mask.astype(dt)
+    ref = batch.globals['dipole'].reshape(-1, 3).astype(dt)
+    dd = results['dipole'] - ref
+    if 'dipole_normal' in results and 'pbc' in batch.globals:
+        per = (batch.globals['pbc'].reshape(-1) > 0.5).astype(dt)
+        dn = results['dipole_normal'] - jnp.sum(ref * results['slab_normal'], axis=-1)
+        se = jnp.sum(w * (1.0 - per) * jnp.sum(dd ** 2, axis=-1)) + jnp.sum(w * per * dn ** 2)
+        return se, jnp.sum(w * (3.0 - 2.0 * per))
+    return jnp.sum(w[:, None] * dd ** 2), 3.0 * jnp.sum(w)
+
+
+def _charge_dipole_sums(results, batch, node_mask, graph_mask):
+    """Sums for the charge / dipole metrics of models that return them (RACE_LR, RACE_POLAR); zeros otherwise."""
+    z = jnp.zeros(())
+    out = {'charge_se': z, 'n_charge': z, 'dipole_se': z, 'n_dipole': z}
+    if 'charges' in results and isinstance(batch.nodes, dict) and 'ref_charges' in batch.nodes:
+        w = node_mask.astype(results['charges'].dtype)
+        if 'ref_charges_w' in batch.nodes:
+            w = w * batch.nodes['ref_charges_w'].astype(w.dtype)
+        dq = results['charges'] - batch.nodes['ref_charges'].astype(w.dtype)
+        out['charge_se'], out['n_charge'] = jnp.sum(w * dq ** 2), jnp.sum(w)
+    if 'dipole' in results and isinstance(batch.globals, dict) and 'dipole' in batch.globals:
+        out['dipole_se'], out['n_dipole'] = _dipole_sq(results, batch, graph_mask)       # n_dipole = elements
+    return out
 
 
 def _loss_terms(
@@ -226,6 +274,7 @@ def _loss_terms(
     node_mask = jraph.get_node_padding_mask(batch).astype(jnp.float32)
     n_graphs = jnp.maximum(graph_mask.sum(), 1)
     n_atoms = jnp.maximum(node_mask.sum(), 1)
+    dE, dF, dS = huber_deltas(huber_delta)
 
     energy = results['energy']
     forces = results['forces']
@@ -272,6 +321,11 @@ def _loss_terms(
     if periodic:
         stress = results['stress']
         stress_diff_raw = (stress - batch.globals["stress"]) * graph_mask[:, None]
+        # mixed corpora (stream fields 'mixed'): graphs without a stress label (molecules, OC25) have stress_w = 0
+        sw = batch.globals.get("stress_w") if isinstance(batch.globals, dict) else None
+        if sw is not None:
+            sw = sw.reshape(-1).astype(stress_diff_raw.dtype) * graph_mask
+            stress_diff_raw = stress_diff_raw * sw[:, None]
         if clip_residuals:
             vmax_S = 0.5
             stress_diff = vmax_S * jnp.tanh(stress_diff_raw / vmax_S)
@@ -293,7 +347,7 @@ def _loss_terms(
             energy_sigma = energy_var.squeeze(-1) * graph_mask + (1.0 - graph_mask)
             energy_z = energy_diff / energy_sigma
             if loss_type == 'nll':
-                e_fit = jnp.sum(huber_loss(energy_z, delta=huber_delta))
+                e_fit = jnp.sum(huber_loss(energy_z, delta=dE))
                 e_logdet = 2.0 * jnp.sum(jnp.log(energy_sigma) * graph_mask)
                 e_const = -2.0 * log_min_var * n_graphs
             else:
@@ -302,7 +356,7 @@ def _loss_terms(
                 e_logdet = jnp.sum(w * jnp.log(energy_sigma) * graph_mask)
                 e_const = -log_min_var * n_graphs
         else:
-            e_fit = jnp.sum(huber_loss(energy_diff, delta=huber_delta))
+            e_fit = jnp.sum(huber_loss(energy_diff, delta=dE))
             e_logdet = 0.0
             e_const = 0.0
 
@@ -310,10 +364,10 @@ def _loss_terms(
         frc_z, log_det_L = force_whiten(frc_var, force_diff, cov_mode)   # (n,3), (n,)
         if loss_type == 'nll':
             if cov_mode == 'scalar6':
-                f_fit = jnp.sum(huber_loss(frc_z, delta=huber_delta))
+                f_fit = jnp.sum(huber_loss(frc_z, delta=dF))
             else:  # rotation-invariant: Huber on the Mahalanobis norm
                 z_norm = jnp.sqrt(jnp.sum(frc_z ** 2, axis=-1) + 1e-12)
-                f_fit = jnp.sum(huber_loss(z_norm, delta=huber_delta) * node_mask)
+                f_fit = jnp.sum(huber_loss(z_norm, delta=dF) * node_mask)
             f_logdet = 2.0 * jnp.sum(log_det_L * node_mask)
             f_const = -2.0 * log_min_var * (3 * n_atoms)
         else:
@@ -332,7 +386,7 @@ def _loss_terms(
                 stress_sigma = stress_var * graph_mask[:, None] + (1.0 - graph_mask[:, None])
                 stress_z = stress_diff / stress_sigma
                 if loss_type == 'nll':
-                    s_fit = jnp.sum(huber_loss(stress_z, delta=huber_delta))
+                    s_fit = jnp.sum(huber_loss(stress_z, delta=dS))
                     s_logdet = 2.0 * jnp.sum(jnp.log(stress_sigma) * graph_mask[:, None])
                     s_const = -12.0 * log_min_var * n_graphs
                 else:
@@ -340,7 +394,7 @@ def _loss_terms(
                     s_logdet = jnp.sum(jnp.log(stress_sigma) * graph_mask[:, None])
                     s_const = -6.0 * log_min_var * n_graphs
             else:
-                s_fit = jnp.sum(huber_loss(stress_diff, delta=huber_delta))
+                s_fit = jnp.sum(huber_loss(stress_diff, delta=dS))
                 s_logdet = s_const = 0.0
         else:
             s_fit = s_logdet = s_const = 0.0
@@ -348,11 +402,10 @@ def _loss_terms(
         out['energy_loss'] = e_fit + e_logdet + e_const
         out['force_loss'] = f_fit + f_logdet + f_const
         out['stress_loss'] = s_fit + s_logdet + s_const
-    else:  # 'huber'; huber_delta: one value, or (energy, force, stress) deltas (2026-11-13, V1-matched runs)
-        d_e, d_f, d_s = huber_delta if isinstance(huber_delta, (tuple, list)) else (huber_delta,) * 3
-        out['energy_loss'] = jnp.sum(huber_loss(energy_diff, delta=d_e) * gw)
-        out['force_loss'] = jnp.sum(huber_loss(force_diff, delta=d_f) * nw[:, None])
-        out['stress_loss'] = (jnp.sum(huber_loss(stress_diff, delta=d_s))
+    else:  # 'huber'
+        out['energy_loss'] = jnp.sum(huber_loss(energy_diff, delta=dE) * gw)
+        out['force_loss'] = jnp.sum(huber_loss(force_diff, delta=dF) * nw[:, None])
+        out['stress_loss'] = (jnp.sum(huber_loss(stress_diff, delta=dS))
                               if periodic else 0.0)
 
     # ---- raw metrics (never clipped) ----
@@ -370,6 +423,9 @@ def _loss_terms(
         'stress_ae': jnp.sum(jnp.abs(stress_diff_raw)) if periodic else 0.0,
         'n_graphs': n_graphs,
         'n_atoms': n_atoms,
+        **_charge_dipole_sums(results, batch, node_mask, graph_mask),
+        # graphs with a stress label (= real graphs unless the batch carries globals['stress_w'])
+        'n_stress': (jnp.sum(sw) if (periodic and sw is not None) else graph_mask.sum()),
     })
     return out
 
@@ -396,6 +452,9 @@ def compute_loss(
     dens: Optional[Dict] = None,
     dens_weight: Any = 0.0,
     charge_weight: float = 0.0,
+    dipole_weight: float = 0.0,
+    quadrupole_weight: float = 0.0,
+    spin_weight: float = 0.0,
 ) -> Tuple[jnp.ndarray, Dict]:
     """Compute training loss for a single batch (no device dimension).
 
@@ -431,6 +490,8 @@ def compute_loss(
                                (ACE purification / restratification as a penalty)
       noisy_nodes (sigma, w) : + w * mean |head(x + eps) - eps/sigma|^2, eps = batch.nodes['noise']
                                (Noisy Nodes denoising auxiliary task; needs model.noise_head)
+      dipole_weight w        : + w * mean over labelled graphs and components of (p - p_ref)^2 (e A)^2, p =
+                               results['dipole'] (RACE_POLAR), p_ref / mask = batch.globals['dipole'] / ['dipole_w']
       charge_weight w        : + w * sum_i (q_i - q_ref_i)^2 / n_atoms (e^2), q = results['charges'] (RACE_LR),
                                q_ref = batch.nodes['ref_charges'] (cfg charge_label_key); skipped if either is absent
 
@@ -483,7 +544,7 @@ def compute_loss(
         for tt in range(e_partial.shape[0] - 1):                    # last partial sum = full energy
             d = (e_partial[tt] - target) * graph_mask / n_node
             d = 5.0 * jnp.tanh(d / 5.0)
-            ds_loss = ds_loss + jnp.sum(huber_loss(d, delta=huber_delta)) / n_graphs
+            ds_loss = ds_loss + jnp.sum(huber_loss(d, delta=huber_deltas(huber_delta)[0])) / n_graphs
         total_loss = total_loss + deep_supervision * ds_loss
     if stratum_decorrelation > 0.0:
         m = node_mask
@@ -545,8 +606,76 @@ def compute_loss(
     q_loss = jnp.zeros(())
     if charge_weight > 0.0 and 'charges' in results and isinstance(batch.nodes, dict) and 'ref_charges' in batch.nodes:
         q_loss = masked_charge_loss(results['charges'], batch.nodes['ref_charges'],
-                                    jraph.get_node_padding_mask(batch), n_atoms)
+                                    jraph.get_node_padding_mask(batch), n_atoms,
+                                    weights=batch.nodes.get('ref_charges_w'))
+        if results.get('charge_nbo_t') is not None and 'ref_charges_nbo' in batch.nodes:
+            # RACE_LR charge_nbo_head: the redistribution applied to the charge labels vs the NBO labels (atoms of
+            # structures with both labels; NaN labels = none)
+            from bam_omat24.race_lr_nnx import RACE_LR
+            qdt = results['charges'].dtype
+            rl = batch.nodes['ref_charges'].astype(qdt)
+            has = jnp.isfinite(rl)
+            rl0 = jnp.where(has, rl, 0.0)
+            wq = (jraph.get_node_padding_mask(batch).astype(qdt) * has.astype(qdt)
+                  * batch.nodes['ref_charges_nbo_w'].astype(qdt))
+            if batch.nodes.get('ref_charges_w') is not None:
+                wq = wq * batch.nodes['ref_charges_w'].astype(qdt)
+            pq = RACE_LR.spin_redistribute(rl0, results['charge_nbo_t'].astype(qdt), batch)
+            q_loss = q_loss + jnp.sum(wq * (pq - batch.nodes['ref_charges_nbo'].astype(qdt)) ** 2) / jnp.maximum(
+                jnp.sum(wq), 1.0)
         total_loss = total_loss + charge_weight * q_loss
+    d_loss = jnp.zeros(())
+    if dipole_weight > 0.0 and 'dipole' in results and isinstance(batch.globals, dict) and 'dipole' in batch.globals:
+        # graph dipoles (RACE_POLAR; e A): mean squared error over the labelled elements (_dipole_sq)
+        d_se, d_n = _dipole_sq(results, batch, jraph.get_graph_padding_mask(batch))
+        d_loss = d_se / jnp.maximum(d_n, 1.0)
+        total_loss = total_loss + dipole_weight * d_loss
+    qd_loss = jnp.zeros(())
+    if (quadrupole_weight > 0.0 and 'quadrupole' in results and isinstance(batch.globals, dict)
+            and 'quad' in batch.globals):
+        # traceless graph quadrupoles (RACE_POLAR, e A^2, about the centre of mass; components xx yy zz xy xz yz):
+        # mean over labelled graphs of the squared Frobenius norm of the 3 x 3 difference / 9 (per-device mean, like
+        # the dipole term: the weight acts times the number of devices)
+        qdt = results['quadrupole'].dtype
+        gw = batch.globals['quad_w'].reshape(-1).astype(qdt) * jraph.get_graph_padding_mask(batch).astype(qdt)
+        dq6 = results['quadrupole'] - batch.globals['quad'].reshape(-1, 6).astype(qdt)
+        cw = jnp.asarray([1.0, 1.0, 1.0, 2.0, 2.0, 2.0], qdt)
+        qd_loss = jnp.sum(gw[:, None] * cw * dq6 ** 2) / jnp.maximum(9.0 * jnp.sum(gw), 1.0)
+        total_loss = total_loss + quadrupole_weight * qd_loss
+    sp_loss = jnp.zeros(())
+    if spin_weight > 0.0 and 'spins' in results and isinstance(batch.nodes, dict) and 'ref_spins' in batch.nodes:
+        # atomic spin populations (RACE_LR long_range spin_head): squared error over the labelled atoms (per-device
+        # mean, like the dipole term)
+        sdt = results['spins'].dtype
+        nw = jraph.get_node_padding_mask(batch).astype(sdt) * batch.nodes['ref_spins_w'].astype(sdt)
+        ref = batch.nodes['ref_spins'].astype(sdt)
+        ds = results['spins'] - ref
+        if results.get('spin_moments') is None:
+            sp_loss = jnp.sum(nw * ds ** 2) / jnp.maximum(jnp.sum(nw), 1.0)
+        else:
+            # RACE_LR spin_energy: invariant targets.  (1) local moments mu vs |m_ref|; (2) pair correlations c vs
+            # sign(m_ref,i m_ref,j) on the neighbour pairs with |m_ref| >= 0.1 on both atoms; (3) the signed head only
+            # on graphs with 2S+1 > 1 (a singlet's sign pattern is arbitrary: +m / -m are the same state)
+            n_nodes = ref.shape[0]
+            ng = jnp.repeat(jnp.arange(batch.n_node.shape[0]), batch.n_node, total_repeat_length=n_nodes)
+            S = jnp.asarray(batch.globals['spin'], sdt).reshape(-1) if 'spin' in batch.globals else jnp.ones(
+                (batch.n_node.shape[0],), sdt)
+            mom = jnp.sum(nw * (results['spin_moments'] - jnp.abs(ref)) ** 2) / jnp.maximum(jnp.sum(nw), 1.0)
+            rcv, snd = batch.receivers, batch.senders
+            big = (jnp.abs(ref) >= 0.1).astype(sdt) * nw
+            ew = big[rcv] * big[snd] * (rcv != snd).astype(sdt)
+            cor = jnp.sum(ew * (results['spin_corr'] - jnp.sign(ref[rcv] * ref[snd])) ** 2) / jnp.maximum(jnp.sum(ew), 1.0)
+            nws = nw * (S[ng] > 1.5).astype(sdt)
+            sgn = jnp.sum(nws * ds ** 2) / jnp.maximum(jnp.sum(nws), 1.0)
+            sp_loss = mom + cor + sgn
+        if results.get('spin_nbo_t') is not None and 'ref_spins_nbo' in batch.nodes:
+            # RACE_LR spin_nbo_head: the redistribution applied to the Lowdin labels vs the NBO labels
+            from bam_omat24.race_lr_nnx import RACE_LR
+            nwn = nw * batch.nodes['ref_spins_nbo_w'].astype(sdt)
+            pn = RACE_LR.spin_redistribute(ref, results['spin_nbo_t'].astype(sdt), batch)
+            sp_loss = sp_loss + jnp.sum(nwn * (pn - batch.nodes['ref_spins_nbo'].astype(sdt)) ** 2) / jnp.maximum(
+                jnp.sum(nwn), 1.0)
+        total_loss = total_loss + spin_weight * sp_loss
 
     aux = {
         'energy_loss': energy_loss,
@@ -554,10 +683,12 @@ def compute_loss(
         'stress_loss': stress_loss,
         'aux_loss': (deep_supervision * ds_loss + stratum_decorrelation * decor_loss + w_dn * denoise_loss
                      + dens_weight * dens_loss
-                     + w_tc * tc_loss + radial_l2 * rl2_loss + charge_weight * q_loss),
+                     + w_tc * tc_loss + radial_l2 * rl2_loss + charge_weight * q_loss
+                     + dipole_weight * d_loss + quadrupole_weight * qd_loss + spin_weight * sp_loss),
         'ds_loss': ds_loss, 'decor_loss': decor_loss, 'denoise_loss': denoise_loss, 'dens_loss': dens_loss,
         'dens_sum': dens_sum, 'dens_count': dens_count,
-        'tc_loss': tc_loss, 'rl2_loss': rl2_loss, 'q_loss': q_loss,
+        'tc_loss': tc_loss, 'rl2_loss': rl2_loss, 'q_loss': q_loss, 'd_loss': d_loss, 'qd_loss': qd_loss,
+        'sp_loss': sp_loss,
         'energy_mse': t['energy_se'] / n_graphs,
         'force_mse': t['force_se'] / (3 * n_atoms),       # all atoms (DeNS: incl. the corrupted ones)
         'stress_mse': t['stress_se'] / n_graphs if periodic else 0.0,
@@ -618,6 +749,7 @@ def make_sharded_train_step(
     stress_weight: float = 1.0,
     huber_delta: float = 0.1,
     ema_decay: float = 0.99,
+    ema_warmup: bool = False,
     freeze_mask: Any = None,
     loss_type: str = 'huber',
     periodic: bool = True,
@@ -637,6 +769,9 @@ def make_sharded_train_step(
     radial_l2: float = 0.0,
     dens: Optional[Dict] = None,
     charge_weight: float = 0.0,
+    dipole_weight: float = 0.0,
+    quadrupole_weight: float = 0.0,
+    spin_weight: float = 0.0,
 ):
     """Create sharded training step with gradient synchronization.
 
@@ -772,6 +907,9 @@ def make_sharded_train_step(
                 dens=None if dens is None else {'sigma': dens['sigma'], 'noisy_ef': dens['noisy_ef']},
                 dens_weight=dw,
                 charge_weight=charge_weight,
+                dipole_weight=dipole_weight,
+                quadrupole_weight=quadrupole_weight,
+                spin_weight=spin_weight,
             )
 
         # Compute gradients locally
@@ -796,16 +934,23 @@ def make_sharded_train_step(
         updates, new_opt_state = optimizer.update(grads, opt_state, params)
         updates = optax.tree_utils.tree_scale(schedule_state.scale, updates)
         new_params = optax.apply_updates(params, updates)
+        # ema_warmup (2026-11-15): decay min(ema_decay, (1 + t) / (10 + t)) at optimiser step t, so the EMA does not
+        # keep ~0.999^t of the random initial weights early on (v2local: 27 % after the first epoch); unchanged once
+        # (1 + t) / (10 + t) > ema_decay (t > ~9000 for 0.999), so a resumed run is not affected
+        d = ema_decay
+        if ema_warmup:
+            t = jnp.asarray(step, jnp.float32)
+            d = jnp.minimum(ema_decay, (1.0 + t) / (10.0 + t))
         if freeze_mask is not None:
             # Only apply EMA to trainable params; frozen params keep current values
             new_ema_params = jax.tree.map(
                 lambda ema, p, m: jnp.where(
-                    m, ema, ema_decay * ema + (1 - ema_decay) * p),
+                    m, ema, d * ema + (1 - d) * p),
                 ema_params, new_params, freeze_mask
             )
         else:
             new_ema_params = jax.tree.map(
-                lambda ema, p: ema_decay * ema + (1 - ema_decay) * p,
+                lambda ema, p: d * ema + (1 - d) * p,
                 ema_params, new_params
             )
 
@@ -981,7 +1126,9 @@ def evaluate_sharded(
         'energy_dN': 0.0,
         'n_node_sq': 0.0,
         'n_graphs': 0.0,
-        'n_atoms': 0.0
+        'n_atoms': 0.0,
+        'n_stress': 0.0,
+        'charge_se': 0.0, 'n_charge': 0.0, 'dipole_se': 0.0, 'n_dipole': 0.0,
     }
 
     if eval_step is None:
@@ -1034,6 +1181,7 @@ def evaluate_sharded(
     # Compute final metrics
     n_g = max(totals['n_graphs'], 1)
     n_a = max(totals['n_atoms'], 1)
+    n_s = max(totals['n_stress'], 1)          # graphs with a stress label (= n_g without globals['stress_w'])
     total_loss = (energy_weight * totals['energy_loss'] / n_g +
                   force_weight * totals['force_loss'] / (3* n_a) +
                   stress_weight * totals['stress_loss'] / n_g )
@@ -1045,9 +1193,9 @@ def evaluate_sharded(
         'energy_mae_total': totals['energy_ae_total'] / n_g,
         'energy_rmse_total': np.sqrt(totals['energy_se_total']/n_g),
         'force_mae': totals['force_ae'] / (3 * n_a),
-        'stress_mae': totals['stress_ae'] / n_g,                    # sum of the 6 Voigt |errors| per graph (legacy)
-        'stress_mae_comp': totals['stress_ae'] / (6 * n_g),         # per Voigt component, eV/A^3
-        'stress_rmse_comp': np.sqrt(totals['stress_se'] / (6 * n_g)),
+        'stress_mae': totals['stress_ae'] / n_s,                    # sum of the 6 Voigt |errors| per graph (legacy)
+        'stress_mae_comp': totals['stress_ae'] / (6 * n_s),         # per Voigt component, eV/A^3
+        'stress_rmse_comp': np.sqrt(totals['stress_se'] / (6 * n_s)),
         'force_rmse': np.sqrt(totals['force_se']/(3 * n_a)),
         'energy_loss': totals['energy_loss'] / n_g,
         'force_loss': totals['force_loss'] / (3 * n_a),
@@ -1055,6 +1203,10 @@ def evaluate_sharded(
         'total_loss': total_loss,
         'n_graphs': n_g,
         'n_atoms': n_a,
+        # charges (e) and graph dipoles (e A, per component) of the labelled atoms / graphs; 0 without labels
+        'charge_rmse': np.sqrt(totals['charge_se'] / max(totals['n_charge'], 1)),
+        'dipole_rmse': np.sqrt(totals['dipole_se'] / max(totals['n_dipole'], 1)),      # per labelled element
+        'n_charge': totals['n_charge'], 'n_dipole': totals['n_dipole'],
         # per-atom shift that minimises sum_n (d_n + N_n delta)^2 (VarPro / closed-form gauge refit;
         # apply with gauge_shift_params, only from a *training*-set evaluation)
         'gauge_shift': -totals['energy_dN'] / max(totals['n_node_sq'], 1.0),

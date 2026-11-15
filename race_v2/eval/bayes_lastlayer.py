@@ -485,3 +485,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+load_3bpa_graphs = load_xyz_graphs          # old name

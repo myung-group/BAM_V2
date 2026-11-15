@@ -1230,7 +1230,16 @@ def save_checkpoint(state_dict: Dict, path: str):
         pickle.dump(state_dict, f)
 
 
+class _CompatUnpickler(pickle.Unpickler):
+    """Maps the module paths of the old package layout (race_v2/_compat.py) to the new ones: checkpoints written
+    before 2026-11-16 name bam_omat24.soap_grouped.ScaleBySoapGroupedState for the optimiser state."""
+
+    def find_class(self, module, name):
+        from race_v2._compat import OLD_MODULES
+        return super().find_class(OLD_MODULES.get(module, module), name)
+
+
 def load_checkpoint(path: str) -> Dict:
-    """Load checkpoint."""
+    """Load checkpoint (also one written by the old package layout, see _CompatUnpickler)."""
     with open(path, 'rb') as f:
-        return pickle.load(f)
+        return _CompatUnpickler(f).load()

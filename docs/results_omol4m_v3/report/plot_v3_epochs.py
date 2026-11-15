@@ -41,6 +41,6 @@ for b, k, tk, ttl, lim in [(ax[1, 0], 8, 1, 'val energy MAE (meV)', (50, 220)), 
     b.set_ylim(*lim); b.set_title(ttl, loc='left', color=INK); b.legend(frameon=False, fontsize=9)
 for b in ax.flat:
     b.set_xlabel('epoch'); b.grid(alpha=0.25, which='both'); b.set_xlim(0, 170)
-fig.suptitle(f'RACE v3 (OMol25 4M, 3 nodes): epochs 1-{int(ep[-1])} of 170', x=0.01, ha='left', color=INK, fontsize=12)
+fig.suptitle(f'RACE v2 LR-POLAR (OMol25 4M, 3 nodes): epochs 1-{int(ep[-1])} of 170', x=0.01, ha='left', color=INK, fontsize=12)
 fig.tight_layout(); fig.savefig(OUT, dpi=140)
 print(OUT)

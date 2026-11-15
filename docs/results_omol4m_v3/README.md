@@ -1,10 +1,13 @@
-# RACE v3 (OMol25 4M) 결과 모음
+# RACE v2 LR-POLAR (OMol25 4M) 결과 모음
+
+이름: 모델의 이름은 **RACE v2 LR-POLAR**다. 폴더, 실행, 결과 파일 이름에 남아 있는 `v3`(예: `results_omol4m_v3`,
+`v3_final`, `BAM_V2_run_v3`)는 학습 당시의 내부 실행 이름이다.
 
 2026-11-15~16 계산 창(exclusive06, 11/16 09:00 종료)에서 나온 결과를 패키지 안에 따로 모아 둔 폴더다.
 원본은 `/scratch/t510a13/md_water`에 있는데, `/scratch`는 15일 동안 쓰지 않으면 지워지므로 작은 결과 파일(텍스트,
 JSON, 그림)만 여기로 복사했다. 체크포인트, 크기표, extxyz 표본은 넣지 않았다.
 
-방법론(수식)과 결과를 정리한 문서는 `report/RACE_v3_methods_results_ko.pdf`다.
+방법론(수식)과 결과를 정리한 문서는 `report/RACEv2_LR-POLAR_methods_results_ko.pdf`다.
 
 ## 학습 설정 요약
 

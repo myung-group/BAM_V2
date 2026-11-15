@@ -468,7 +468,10 @@ def _stream_table(spec: Dict, name: str, cutoff: float, workers: int, log_dir: P
 def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool, fout):
     """stream.train = {"parts": [{"sources": [...], "sizes": dir, "repeat": r}, ...]}: one size table per part, merged
     into one training table in which every row of part i appears repeat_i times per data epoch (e.g. MPtrj x8 +
-    sAlex x1 for fine-tuning).  File indices of later parts are offset; the duplicates are distinct rows."""
+    sAlex x1 for fine-tuning).  Every copy gets its own file indices (the file list repeats the same paths), so the
+    copies of a structure fall into different read blocks and are spread over the data epoch by the block shuffle of
+    stream_plan.plan_data_epoch; with one shared file index the copies sort next to each other ((file, key) order)
+    and land in the same block, i.e. a structure was seen `repeat` times within a few steps (fixed 2026-11-15)."""
     cols = {'n_atoms': [], 'n_edges': [], 'file': [], 'key': []}
     files, kinds, sources, dirs = [], [], [], []
     for i, p in enumerate(parts):
@@ -477,11 +480,12 @@ def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool
         if rep < 1:
             raise ValueError(f"stream.train.parts[{i}]: repeat must be >= 1, got {rep}")
         t, d = _stream_table(spec, f'train{i}', cutoff, workers, log_dir, rank0)
-        off = len(files)
-        for k in ('n_atoms', 'n_edges', 'key'):
-            cols[k].append(np.tile(t[k], rep))
-        cols['file'].append(np.tile(t['file'] + off, rep))
-        files += list(t['meta']['files']); kinds += list(t['meta']['kinds'])
+        for _ in range(rep):
+            off = len(files)
+            for k in ('n_atoms', 'n_edges', 'key'):
+                cols[k].append(t[k])
+            cols['file'].append(t['file'] + off)
+            files += list(t['meta']['files']); kinds += list(t['meta']['kinds'])
         sources += list(spec['sources']); dirs.append(str(d))
         print(f"stream train part {i}: {len(t['n_atoms'])} structures x {rep} from {spec['sources']} ({d})", file=fout)
     table = {k: np.concatenate(v) for k, v in cols.items()}

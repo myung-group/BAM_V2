@@ -1,0 +1,18 @@
+== v3_final (race) /scratch/t510a13/md_water/eval/v3_final_snap/ckpt_final.pkl  04:27:37
+v3_final: 32000 scored, 0 failed, 432 s
+  all                          n= 32000  E_MAE     363.8 meV  F_MAE   23.29 meV/A
+  dom:ani2x                    n=    44  E_MAE      87.0 meV  F_MAE   80.67 meV/A
+  dom:biomolecules             n=  7013  E_MAE     206.7 meV  F_MAE   12.27 meV/A
+  dom:elytes                   n= 19725  E_MAE     452.7 meV  F_MAE   25.22 meV/A
+  dom:geom_orca6               n=    65  E_MAE      31.7 meV  F_MAE   20.85 meV/A
+  dom:metal_complexes          n=  2242  E_MAE     330.9 meV  F_MAE   54.46 meV/A
+  dom:orbnet_denali            n=   206  E_MAE      97.2 meV  F_MAE   33.25 meV/A
+  dom:reactivity               n=  2598  E_MAE     183.4 meV  F_MAE   66.37 meV/A
+  dom:spice                    n=   107  E_MAE     176.0 meV  F_MAE   12.64 meV/A
+  q:q+-1                       n= 13844  E_MAE     262.1 meV  F_MAE   21.76 meV/A
+  q:q0                         n= 13572  E_MAE     192.5 meV  F_MAE   16.00 meV/A
+  q:q|2+|                      n=  4584  E_MAE    1178.1 meV  F_MAE   45.20 meV/A
+  s:closed                     n= 29070  E_MAE     329.5 meV  F_MAE   19.83 meV/A
+  s:open                       n=  2930  E_MAE     703.7 meV  F_MAE   66.68 meV/A
+  metal:metal                  n=  3790  E_MAE     698.7 meV  F_MAE   60.02 meV/A
+  metal:no metal               n= 28210  E_MAE     318.8 meV  F_MAE   19.64 meV/A

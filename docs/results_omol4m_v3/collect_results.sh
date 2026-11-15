@@ -57,11 +57,9 @@ prep opoly26_c6 /appsdata/t510a13/prep/opoly26_c6.0
 prep oc25_c6 /appsdata/t510a13/prep/oc25_c6.0
 prep omol_full_c6 /appsdata/t510a13/prep/omol_full_c6.0
 
-# figures made in this session
-# (only the newest per-epoch loss figure)
-EP=$(ls -t "$SP"/figs/v3_epochs_*.png 2>/dev/null | head -n 1)
-for f in $EP "$SP"/figs/v3_loss_now.png "$SP"/figs/v3_summary*.png "$SP"/figs/bench_vs_public*.png "$SP"/figs/iw_vs_public*.png; do
-    [ -f "$f" ] && cp "$f" "$OUT/figures/"
+# figures of the final test (drawn by report/plot_*.py)
+for f in v3_epochs_final v3_summary_final bench_vs_public_final iw_vs_public_final; do
+    [ -f "$SP/figs/$f.png" ] && cp "$SP/figs/$f.png" "$OUT/figures/"
 done
 ls -la "$OUT" "$OUT"/*/ | awk 'NF>=9 {s+=$5} END {printf "total %.1f MB\n", s/1e6}'
 find "$OUT" -type f | wc -l

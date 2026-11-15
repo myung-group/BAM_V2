@@ -1,7 +1,10 @@
 # Repository layout (since 2026-11-16)
 
-Main branch: **`main`** (until 2026-11-16 `racev2-thole-merge`).  It contains the former lines `racev2` (Matbench
-Discovery work) and `thole-merge` (OMol25 / RACE v2 LR-POLAR); new work starts from `main`.
+Main branch: **`main`**.  On 2026-11-16 the branch `racev2-thole-merge` was merged into it; that branch holds the
+former lines `racev2` (Matbench Discovery work) and `thole-merge` (OMol25 / RACE v2 LR-POLAR) in this layout.  New
+work starts from `main`.  The older folders of `main` (`bam_3bpa`, `bam_torch`, `bam_torch_cue`, `dataset_3BPA`,
+`input`) are not in this layout: `dataset_3BPA` and `input` moved to `research/`, the other three were removed on
+`racev2` before this layout.
 
 Distribution name: **BAM_V2** (`pyproject.toml`).  Python package: **`race_v2`** (was `bam_omat24`).
 PyTorch inference port: **`race_v2_torch`** (was `racev2_torch`).

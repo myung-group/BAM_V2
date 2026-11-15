@@ -84,7 +84,7 @@
   - MPtrj / sAlex: 응집상 (bulk).
   - OMol25 / OPoly26: 분자·기체·응집상 (생체분자에 적용 가능). OPoly26은 train+val 590만 + 20만, 66 GB.
 - 방법:
-  - 주 브랜치 `main`(옛 이름 racev2-thole-merge)의 다중 데이터 스트림(parts, 소스별 task·레이블, 주기·비주기 혼합)을 쓴다.
+  - 주 브랜치 `main`(racev2-thole-merge를 병합한 상태)의 다중 데이터 스트림(parts, 소스별 task·레이블, 주기·비주기 혼합)을 쓴다.
   - 파라미터를 약 4.5M으로 맞춘 모델과, 더 큰 모델 두 가지로 학습한다.
 - 보고 항목:
   - WBM 형성 에너지 MAE (meV/atom, racev2 쪽 eval_wbm.sh)

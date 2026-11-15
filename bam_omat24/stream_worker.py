@@ -52,18 +52,21 @@ def _worker_init(kinds, files, atomic_numbers, atom_energies, cutoff, fields=Non
 
 
 def _source(fi):
+    # cached by (kind, path), not by file index: stream.train.parts gives every repeated copy its own file indices
+    # for the same paths, and an lmdb environment may be opened only once per process
     S, src = _W['S'], _W['src']
-    if fi in src:
-        src[fi] = src.pop(fi)                      # most recently used last
-        return src[fi]
+    kind, path = _W['kinds'][fi], _W['files'][fi]
+    k = (kind, path)
+    if k in src:
+        src[k] = src.pop(k)                        # most recently used last
+        return src[k]
     while len(src) >= MAX_OPEN:
         old = src.pop(next(iter(src)))
         for env in getattr(old, '_envs', {}).values():
             env.close()
-    kind, path = _W['kinds'][fi], _W['files'][fi]
-    src[fi] = (S.ExtxyzSource([path], info_keys=_W['keys'][0], array_keys=_W['keys'][1])
-               if kind == 'extxyz' else S.AselmdbSource([path]))
-    return src[fi]
+    src[k] = (S.ExtxyzSource([path], info_keys=_W['keys'][0], array_keys=_W['keys'][1])
+              if kind == 'extxyz' else S.AselmdbSource([path]))
+    return src[k]
 
 
 def _worker_block(task):

@@ -72,7 +72,7 @@ def test_in_layer_order_changes_energy_default_unchanged(graph):
     assert _energy(base, graph) == _energy(make_model(n_layers=2, seed=9, in_layer_order=1), graph)
     assert abs(_energy(base, graph) - _energy(make_model(n_layers=2, seed=9, in_layer_order=2), graph)) > 1e-6
     with pytest.raises(ValueError):
-        make_model(n_layers=2, in_layer_order=4)      # 3 is the round-17 symmetric contraction
+        make_model(n_layers=2, in_layer_order=5)      # 3 and 4 are the symmetric contractions
     with pytest.raises(ValueError):
         make_model(n_layers=2, in_layer_order=2, hidden_irreps=TAPER)
 

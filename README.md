@@ -24,6 +24,18 @@ preparation tests are summarised in
 > representative configs in `configs/`, diagnostics and old configs in `research/`.  Old -> new names, commands and
 > the limits of the aliases: [docs/LAYOUT.md](docs/LAYOUT.md).
 
+## Results in this repository
+
+| Model | Benchmark | Headline numbers | Details |
+|---|---|---|---|
+| **RACE v2 OAM** (17.8M parameters; OMat24 2 epochs, then MPtrj x8 + sAlex x1) | Matbench Discovery, full WBM, unique prototypes | F1 0.893, MAE 0.0214 eV/atom, R2 0.872, RMSD 0.0643 A, kappa SRME 0.229, CPS 0.858 (about rank 20 of 49 on the leaderboard read on 2026-11-15) | [docs/results/race_v2_oam_mbd](docs/results/race_v2_oam_mbd/README.md) |
+| **RACE v2 MPtrj-only** (17.8M) | same | F1 0.777, MAE 0.040, R2 0.800, RMSD 0.0785, kappa SRME 0.375, CPS 0.761 (about rank 6 of the 19 MPtrj-only models) | same folder |
+| **RACE v2 LR-POLAR** (OMol25 4M) | OMol25 validation sets | see the folder | [docs/results/race_v2_lr_polar_omol25_4m](docs/results/race_v2_lr_polar_omol25_4m/README.md) |
+
+The Matbench Discovery numbers use float64 inference of the float32-trained model (`BAM_PREDICT_X64=1`,
+[docs/inference_precision.md](docs/inference_precision.md)), no energy corrections, and the last epoch of a schedule
+fixed before the evaluation.
+
 ## Changes with respect to RACE V1 (final recipe)
 
 | Component | RACE V1 | RACEv2 |

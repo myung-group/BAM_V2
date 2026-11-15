@@ -98,3 +98,18 @@ Config JSON keys are unchanged.
 - The JAX-free modules of `race_v2/data` (neighbors, graph_fields, formal_assign, stream_io, stream_plan, stream_data,
   stream_worker, graph_sizes) are imported as top-level modules by worker processes (no package import, no JAX), so
   they must stay together in that folder.
+
+## Matbench Discovery scripts moved from branch `racev2` (2026-11-16)
+
+| Was (racev2 work folder / untracked) | Now |
+|---|---|
+| `runs/helpers/{eval_x64.sh, eval_loop.sh, final_eval.sh, next_epoch.sh, val_table.py}` | `scripts/eval/mbd/` |
+| `runs/diag/uq/{ood_laplace.py, ood_laplace.sh, plot_ood.py}` | `scripts/eval/uq/` |
+| `runs/diag/bench/{mem_bench.py, ref_rattled.py, bench.sh}` | `scripts/eval/bench/` |
+| `runs/torch_port/tools/compare_pred.py` | `race_v2_torch/tools/compare_pred.py` |
+| `runs/helpers/` one-off launchers of the OAM run (start, restart, backups) | `research/diag/oam_run_2026-11/` (record only) |
+| `docs/racev2_mbd/{report, figures}` | `docs/results/race_v2_oam_mbd/{report, figures}` |
+
+These scripts are run from a work folder that holds `race_v2 -> <repo>/race_v2` and `scripts -> <repo>/scripts`
+(the launchers `cd` to `/scratch/t510a13/race_v2/work`).  Check of the move:
+`research/diag/oam_run_2026-11/verify_port.sh`.

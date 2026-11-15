@@ -1,4 +1,4 @@
-"""stream.train.parts with repeat (train_3bpa._stream_parts): every copy of a repeated part has its own file indices,
+"""stream.train.parts with repeat (race_v2.training.train._stream_parts): every copy of a repeated part has its own file indices,
 so the copies of a structure are spread over the data epoch instead of landing in the same read block, and the
 loader workers cache the open sources by path (an lmdb environment may be opened only once per process)."""
 import io

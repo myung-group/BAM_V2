@@ -2,7 +2,7 @@
 task rows 1.. untouched by training?  Compares two checkpoints of the same config and seed with different numbers of
 epochs (same initial parameters): the entries of absent elements must be bit-identical, task rows 1.. exactly 0.
 
-    python runs/diag/omol_universal/check_untouched.py <ckpt_a.pkl> <ckpt_b.pkl> --present 1 6 7 8 9 16 17
+    python research/diag/omol_universal_check_untouched.py <ckpt_a.pkl> <ckpt_b.pkl> --present 1 6 7 8 9 16 17
 Result 2026-11-10 (OpenFF 10k subset, L3x64, 1 vs 2 epochs): AMSGrad f32 and SOAP f64 with soap_species_adam
 "any_axis" pass; SOAP with soap_species_adam true moved x_hill (species on the last axis) of absent elements by 0.11.
 """

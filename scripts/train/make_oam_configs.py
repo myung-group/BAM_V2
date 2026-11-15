@@ -1,12 +1,12 @@
 """Configs for the OAM subset screening (2026-11-05): RACEv2 final recipe ("v2") vs all new parts removed ("v1"),
 one per dataset (omat24, mptrj, salex), from the 3BPA ablation baseline and the subset meta files.
 
-    python -I runs/diag/make_oam_configs.py <subset_dir> [--epochs N] [--tag oam] [--seeds 42]
--> input/input_3bpa_omat24_<tag>_<dataset>_<variant>_s<seed>_cue.json  (name pattern of runs/run_cue.sh)
+    python -I scripts/train/make_oam_configs.py <subset_dir> [--epochs N] [--tag oam] [--seeds 42]
+-> research/input/input_3bpa_omat24_<tag>_<dataset>_<variant>_s<seed>_cue.json  (name pattern of runs/run_cue.sh)
 
 avg_n_neighbors (2026-11-06): the atom-weighted mean neighbour count of the FULL training split at the model cutoff
 (sum of edges / sum of atoms, the same statistic the trainer prints as "avg_n_neighbors" in the training-set
-statistics).  It is computed once with the JAX-free neighbour search (bam_omat24/neighbors.py, --workers processes)
+statistics).  It is computed once with the JAX-free neighbour search (race_v2/data/neighbors.py, --workers processes)
 and cached next to the xyz as <stem>.avg_n_c<cutoff>.json.  Earlier configs used the per-structure mean of the first
 500 structures from the subset meta file (OMat24 10k: 26.965 vs the full-split value 27.909; 100k: 26.965 vs
 26.966).  Run inside a job for large splits (no heavy work on login nodes).
@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _count(args):
     import sys
-    sys.path.insert(0, str(ROOT / 'bam_omat24'))
-    from neighbors import neighbor_pairs                     # JAX-free (bam_omat24/__init__ would import JAX)
+    sys.path.insert(0, str(ROOT / 'race_v2' / 'data'))
+    from neighbors import neighbor_pairs                     # JAX-free (race_v2/__init__ would import JAX)
     frames, cutoff = args
     return [(len(a), len(neighbor_pairs(a, cutoff)[0])) for a in frames]
 
@@ -85,12 +85,12 @@ def main():
                     help='racelr: RACE_LR with the Qeq stratum (Ewald) and chi0 from Pauling; the OAM data are '
                          'neutral, so no charge / spin input')
     ap.add_argument('--ewald', type=float, nargs=3, default=None, metavar=('ALPHA', 'N_REAL', 'N_RECIP'),
-                    help='Ewald settings for --model racelr (required; choose with runs/diag/check_ewald.py)')
+                    help='Ewald settings for --model racelr (required; choose with scripts/data/check_ewald.py)')
     ap.add_argument('--cutoff', type=float, default=5.0,
                     help='!= 5: avg_n_neighbors recomputed on 500 training structures at this cutoff')
     args = ap.parse_args()
     if args.model == 'racelr' and args.ewald is None:
-        raise SystemExit('--model racelr needs --ewald ALPHA N_REAL N_RECIP (runs/diag/check_ewald.py)')
+        raise SystemExit('--model racelr needs --ewald ALPHA N_REAL N_RECIP (scripts/data/check_ewald.py)')
     base = json.load(open(BASE))
     for ds in args.datasets:
         meta = json.load(open(args.subset_dir / f'{ds}_meta.json'))

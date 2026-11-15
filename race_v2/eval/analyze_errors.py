@@ -341,7 +341,7 @@ def main():
           " ".join(f"{SPECIES_NAMES.get(int(z_of_species[int(np.asarray(train_graphs[0].nodes['species'])[i])]), '?')}{i}:{len(bonds[i])}" for i in range(N)))
 
     # training dihedrals (the training frames are a shuffled subset of the file)
-    train_path = Path(cfg.get("train_path", "dataset_3BPA/train_300K.xyz"))
+    train_path = Path(cfg.get("train_path", "research/dataset_3BPA/train_300K.xyz"))
     all_train_dih = _read_dihedrals(train_path, 500)
     # match training graphs to file frames via energies (unique in practice)
     file_E = None

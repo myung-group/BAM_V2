@@ -4,7 +4,7 @@ with the same atom order (same mapped SMILES), the work along the straight path,
 must equal E_2 - E_1 to second order.  The slope of dE vs dE_pred is +1 for forces = -dE/dx in the energy units per
 length unit, -1 for the opposite sign; a slope far from +-1 means inconsistent units.
 
-    python -I runs/diag/check_force_sign.py <descent_data shard.parquet> [--rows 200000] [--max-rms 0.05]
+    python -I scripts/data/check_force_sign.py <descent_data shard.parquet> [--rows 200000] [--max-rms 0.05]
 (--max-rms: only pairs whose atomic displacement RMS is below this many Å, where the trapezoid rule is accurate)
 """
 import argparse

@@ -1,7 +1,7 @@
 # RACE_LR: charge-dependent long-range extension of RACEv2 (design, 2026-11-06)
 
 User request (2026-11-06): extend the model to charge-dependent and long-range interactions **without changing the
-existing model**, so that it can be tried on other problems. RACE (`bam_omat24/race_nnx.py`) is unchanged; the
+existing model**, so that it can be tried on other problems. RACE (`race_v2/models/race.py`) is unchanged; the
 extension is a subclass selected with `"model": "RACE_LR"`.
 
 Status:
@@ -90,12 +90,12 @@ from scratch on OMol25):
   there.
   - The Qeq charges are solved with the unswitched matrix.
   - Periodic graphs use the lattice images |n| ≤ 1, so r_off must be below the shortest cell height.
-- **Inference API `bam_omat24/predict.py`.** `load(ckpt) -> Predictor`.
+- **Inference API `race_v2/inference/predict.py`.** `load(ckpt) -> Predictor`.
   - `Predictor.predict(frames)` returns total energies (eV) and per-frame forces (eV/Å). `charges(frames)` returns
     the Qeq charges.
   - Each frame gives `info["charge"]`, `info["spin"]` and `arrays["is_ligand"]` under the key names of the training
     config.
-  - `python -m bam_omat24.predict refit <ckpt> --xyz <train.xyz>` fits a per-element energy correction on training
+  - `python -m race_v2.inference.predict refit <ckpt> --xyz <train.xyz>` fits a per-element energy correction on training
     frames and writes it to `<ckpt>.species_refit.json`. It is applied when present.
   - Checked on a trained checkpoint: it reproduces the trainer's test numbers exactly, and the refit gives the
     per-composition result of `by_state.py`.
@@ -130,7 +130,7 @@ from scratch on OMol25):
     0.008 meV of α 0.3 / n_real 4 / n_recip 24, and α 0.2–0.4 agree to < 1e-4 meV.
   - With random charges (std 0.5 e) the defaults err by up to 1.9 meV there, so use α 0.3 / n_real 1 / n_recip 8
     (0.06 meV). Small bulk cells of about 5 Å are fine with the defaults (0.006 meV).
-  - Check every periodic dataset with `runs/diag/check_ewald.py <xyz>`. It prints the cheapest converged setting.
+  - Check every periodic dataset with `scripts/data/check_ewald.py <xyz>`. It prints the cheapest converged setting.
 - **Slab dipole.** The Ewald sum is plain 3D periodic, with no slab dipole correction. This matches the DFT
   reference as far as the record shows: the paper names no dipole correction and FHI-aims applies none by default.
   - The Al-doped Au2/MgO slab has M_z = 1.2–3.7 eÅ. A Yeh–Berkowitz correction would be 65–584 meV, with a
@@ -145,7 +145,7 @@ from scratch on OMol25):
 
 ## 3. Validation plan
 
-Step 1 (unit tests, `tests/test_race_lr.py`, job `runs/diag/race_lr_check.sh`, about 5 min on one GPU):
+Step 1 (unit tests, `tests/test_race_lr.py`, job `research/diag/race_lr_check.sh`, about 5 min on one GPU):
 - Ewald vs the NaCl Madelung constant 1.747564594633 (relative error 1e-7), for three values of α
   (α-independence).
 - Batched Ewald with different cells per graph equals the single-cell result.

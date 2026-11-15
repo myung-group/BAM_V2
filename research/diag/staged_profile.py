@@ -1,7 +1,7 @@
 """GPU time of the staged (halo) functions vs the monolithic export function on one halo graph (LiPS supercell,
 owned atoms + one shell of image ghosts, edges for owned receivers).  Which part dominates a halo step?
 
-    python runs/diag/staged_profile.py <config.json> <ckpt.pkl> <extxyz> [backend] [rep]
+    python research/diag/staged_profile.py <config.json> <ckpt.pkl> <extxyz> [backend] [rep]
 """
 import sys
 import time
@@ -24,7 +24,7 @@ def main():
     cfg_path, ckpt, xyz = sys.argv[1:4]
     backend = sys.argv[4] if len(sys.argv) > 4 else 'cue'
     rep = int(sys.argv[5]) if len(sys.argv) > 5 else 2
-    from bam_omat24.export_lammps import build, make_fn, make_stage_fns
+    from race_v2.export.lammps import build, make_fn, make_stage_fns
     import ase.io
     from ase.neighborlist import neighbor_list
     cfg, model, zs, e0 = build(cfg_path, ckpt, backend, 'float64')
@@ -69,9 +69,9 @@ def main():
               flush=True)
 
     # prelude-only cost inside a layer: the layer function with the layer step removed
-    from bam_omat24.export_lammps import _graph
+    from race_v2.export.lammps import _graph
     import e3nn_jax as e3nn
-    from bam_omat24.race_nnx import _dense
+    from race_v2.models.race import _dense
 
     def ctx_only(sp_, rc_, sd_, rv_, nr, er, nl):
         gg, pos0, cell, cut = _graph(sp_, rc_, sd_, rv_, nr, er, n_pad, e_pad, cutoff)

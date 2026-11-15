@@ -1,7 +1,7 @@
 """T6: a data_format "stream" copy of an in-memory config (train_path / valid_path / test_paths -> stream sources),
 short run: n_epochs virtual epochs of steps_per_epoch steps (2026-11-09).
 
-usage: python -I runs/diag/stream_t6/make_config.py <base.json> <out.json> --run-dir runs/stream_t6/<name> \
+usage: python -I research/diag/stream_t6/make_config.py <base.json> <out.json> --run-dir runs/stream_t6/<name> \
            --sizes <train size table dir> [--steps-per-epoch 250] [--epochs 2] [--workers 8] [--valid-max 1000]
 """
 import argparse

@@ -1,13 +1,13 @@
 # 1C — monotone variational resolvent: design and feasibility probe (2026-10-29)
 
 Source idea: `docs/RACE_literature_sweep_2026-10-29.md` §3 "1C" (Winston & Kolter, monDEQ, arXiv 2006.08591).
-Code grounding: `bam_omat24/race_nnx.py` (`RACEConvolution.__call__`, `aggregate`, residual `"neumann"`,
+Code grounding: `race_v2/models/race.py` (`RACEConvolution.__call__`, `aggregate`, residual `"neumann"`,
 `tie_operator`, `_hill_normalize`, `RACE.node_energies`) and `docs/RACE_omat24_review.md` §12.4–12.6.
-Probe: `runs/diag/probe_1c.py` → `runs/diag/probe_1c.txt` (job 1174479, GH200, float64, cue backend,
+Probe: `research/diag/probe_1c.py` → `research/diag/probe_1c.txt` (job 1174479, GH200, float64, cue backend,
 Triton GEMM off, 323 s). Checkpoint: `runs/r25p_ntied_hill_s42_cue/ckpt_r25p_ntied_hill_s42_cue.pkl`
 (epoch 1491). Every number in §2 is transcribed from that file. The converged-series check on the depth-sweep
-checkpoints (§2.1) is in `runs/diag/probe_1c_T{10,20}_1174690.txt`. Nothing in `race_nnx.py`, `train_3bpa.py`
-or `training_utils.py` was changed. This document says where the changes would go.
+checkpoints (§2.1) is in `research/diag/probe_1c_T{10,20}_1174690.txt`. Nothing in `models/race.py`, `training/train.py`
+or `training/utils.py` was changed. This document says where the changes would go.
 
 ---
 
@@ -87,7 +87,7 @@ E         = scale * sum_t sum_i [ r_t(h_{t+1,i}) + x_t(x_i) (+ f_t) ] + shift
   - It is block-diagonal over the graphs of a batch: zero leak between frames and into padding.
 - Hidden irreps are 128x0e+128x1o+128x2e+128x3o, which is 2048 components per node. That gives 55 296 unknowns per 27-atom frame and 294 912 for a padded batch of 5 (144 nodes).
 
-## 2. Feasibility probe: results (verbatim numbers from `runs/diag/probe_1c.txt`, job 1174479)
+## 2. Feasibility probe: results (verbatim numbers from `research/diag/probe_1c.txt`, job 1174479)
 
 Five training frames and five `test_1200K` frames, each collated as one padded batch:
 
@@ -166,7 +166,7 @@ Pooled over the three test sets:
 
 `probe_1c.py --run r26_ntied_hill_T{10,20}_s42 --items 3,4` was run on the checkpoints of the running Stage-1a jobs.
 - T10 was at epoch 100 of 500 and T20 at epoch 39 of 500, so both are **early snapshots**.
-- Outputs: `runs/diag/probe_1c_T10_1174690.txt` and `runs/diag/probe_1c_T20_1174690.txt`.
+- Outputs: `research/diag/probe_1c_T10_1174690.txt` and `research/diag/probe_1c_T20_1174690.txt`.
 - The same job re-ran items 1–5 on r25p (`probe_1c_r25p_regress_1174690.txt`) and reproduces `probe_1c.txt`. Items 3–5 match to the printed digits. The adjoint residuals vary run to run at the 1e-18 level (6.2e-19–1.9e-18), from non-deterministic GPU scatter order.
 
 | quantity (5 frames each) | T10 train | T10 test_1200K | T20 train | T20 test_1200K |
@@ -268,7 +268,7 @@ Pooled over the three test sets:
 - **Unmasked Λ does not make graph-wise CG NaN-safe.**
   - `default_collate_fn` → `jraph.pad_with_graphs` always puts the padded nodes (≥ 1, since pad_nodes = bucket(n + 1)) into one extra padding graph, plus empty graphs in a partial last batch (`pad_graphs = batch_size + 1`).
   - With u₀ = 0 on padding and x₀ = P⁻¹u₀ = 0, that graph has r_g = p_g = 0, so α_g = ⟨r_g, r_g⟩/⟨p_g, A p_g⟩ = 0/0 = NaN on *every* batch. An empty graph gives 0/0 from `segment_sum` as well.
-  - mask ⊙ NaN is still NaN. Node energies are masked by multiplication (`utils.py` `ne*node_mask`) and the loss by `* graph_mask` (`training_utils.py`), so the NaN would reach the loss and the gradients.
+  - mask ⊙ NaN is still NaN. Node energies are masked by multiplication (`models/blocks.py` `ne*node_mask`) and the loss by `* graph_mask` (`training/utils.py`), so the NaN would reach the loss and the gradients.
   - The transposed solve has the same problem, because its cotangent on padding is zero.
 - **Rule for `graph_pcg`:**
   - α_g = where(den_g > 0, num_g/den_g, 0) and β_g = where(⟨r,r⟩_old,g > 0, ⟨r,r⟩_new,g/⟨r,r⟩_old,g, 0).
@@ -443,10 +443,10 @@ The training loss is L(θ) = w_E ℓ(E − E_ref) + w_F ℓ(F − F_ref), with F
 
 ## 6. Code plan
 
-No edits now to `race_nnx.py`, `train_3bpa.py` or `training_utils.py` (another engineer is editing them). Everything
-new goes into **`bam_omat24/resolvent.py`**. The hooks into the three files are listed here for later.
+No edits now to `models/race.py`, `training/train.py` or `training/utils.py` (another engineer is editing them). Everything
+new goes into **`race_v2/resolvent.py`**. The hooks into the three files are listed here for later.
 
-### 6.1 Config keys (`train_3bpa.py`, read with `_get`, passed to `RACE(...)`)
+### 6.1 Config keys (`training/train.py`, read with `_get`, passed to `RACE(...)`)
 | key | default | meaning |
 |---|---|---|
 | `resolvent` | `null` | `null` (off, current behaviour) \| `"variational"` (1C-V) \| `"monotone"` (1C-N) |
@@ -477,7 +477,7 @@ Validation (raise `ValueError`):
 - `resolvent_grad="hf"` with `resolvent_readout` or `"monotone"`: error.
 - `resolvent_shifts > 0` with `resolvent_precond="jacobi"`: error (no shift invariance, §3.8).
 
-### 6.2 `bam_omat24/resolvent.py` (new)
+### 6.2 `race_v2/resolvent.py` (new)
 ```python
 class ResolventConsts(NamedTuple):          # pytree of ARRAYS ONLY: every leaf is traced by custom_jvp (§5.3)
     k_state: nnx.State                      # params of the K path (split from ResolventOperator.K)
@@ -517,7 +517,7 @@ def make_e_pol_autodiff(graphdef, n_graphs, *, tol, maxiter, precond) -> Callabl
 def make_e_pol_multishift(graphdef, n_graphs, *, tol, maxiter, precond) -> Callable  # e_pol(consts, u0, s_k, z_k); precond in {"lambda", None}
 ```
 
-### 6.3 Changes to `RACE.__init__` / `RACE.node_energies` (later, when `race_nnx.py` is free)
+### 6.3 Changes to `RACE.__init__` / `RACE.node_energies` (later, when `models/race.py` is free)
 - `__init__`: if `resolvent`, build `self.resolvent = ResolventOperator(..., shared_conv=self.layers[1] if resolvent_K == "layer1" else None)`.
 - `node_energies`:
   1. Keep the x̂ of layer 1 (the `x_feats` after `_hill_normalize` with row `min(i,1)`) as `x_hat_1`.
@@ -596,7 +596,7 @@ one GPU job. "500 ep" screens use seed 42; promotions use seeds 42–44.
 
 | stage | arms | code | decision |
 |---|---|---|---|
-| **0** (done) | probe + D4 on 6396 frames | `runs/diag/probe_1c.py` | Machinery OK. D4 fails within temperature (corr 0.10–0.16 < 0.3). The trained operator is not monotone in the current coordinates (§2 Reading 2). |
+| **0** (done) | probe + D4 on 6396 frames | `research/diag/probe_1c.py` | Machinery OK. D4 fails within temperature (corr 0.10–0.16 < 0.3). The trained operator is not monotone in the current coordinates (§2 Reading 2). |
 | **1a** depth sweep | tied+hill with `n_layers` ∈ {10, 20}, every stratum read out (existing keys; running as `r26_ntied_hill_T{10,20}_s42`) | none, plus `probe_1c.py --run r26_ntied_hill_T{10,20}_s42 --items 3,4` on the final checkpoints | **Series check first:** 1a counts as a resolvent proxy only if ρ(M) < 1 and ‖S_T − h*‖/‖h*‖ ≤ 5 % at T = n_layers on every probed frame (snapshots at epochs 100 / 39 pass, §2.1). **Positive:** 1200 K E falls monotonically with T, with T=20 ≤ 31.8 (≥ 2 meV below 33.85) and 300 K F ≤ 9.4 → Stage 2. **Negative with the check passed:** evidence against gap (i). Close 1C for gap (i) only if 1b is also negative. **Check failed:** 1a says nothing about an exact resolvent; decide on 1b and the Stage-2 screen. |
 | **1b** (required before closing gap (i)) | tied+hill, readouts 0–4 + one on h_T, T ∈ {10, 20} (`neumann_steps`) | race_nnx hook | Same energy/force criterion and the same series check. 1a adds 15 strata, so 1b is what separates "more strata" from "more depth". |
 | **2** 1C-V screen | (a) V+ add, K=layer1, s₀=0 (s learnable through the ds term of the HF rule, §5.3; test 3 must pass); (b) V replace, K own, hill; (c) V replace, `x_norm: null`; (d) V replace, `resolvent_lambda: "local"` | resolvent.py + hooks + tests | Promote any arm with 1200 K E ≤ 31.8 and 300 K F ≤ 9.4 (500 ep). Kill an arm with 300 K F > 9.9 (+10 % vs tied+hill 500), or mean CG iterations > 300, or step > 6× the baseline. |

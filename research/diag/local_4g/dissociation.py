@@ -1,7 +1,7 @@
 """Pull one atom out of a charged cluster beyond the cutoff (local 4G-HDNNP checkpoints; no DFT reference there, so
 this checks the FORM of the tail, not accuracy).
 
-    python runs/diag/local_4g/dissociation.py <system> <index of the atom to pull> <q of that atom as a fragment>
+    python research/diag/local_4g/dissociation.py <system> <index of the atom to pull> <q of that atom as a fragment>
         [--frame 0] [--rmax 30]
 For each model: RACE, RACE_LR with the global constraint (total charge only) and RACE_LR with fragment constraints
 (the pulled atom = fragment 1 with charge q, the rest = fragment 0 with Q - q).  Prints E(d) - E(d_max), the charge
@@ -16,7 +16,7 @@ import numpy as np
 import ase.io
 
 sys.path.insert(0, '.')
-from bam_omat24.predict import load            # noqa: E402
+from race_v2.inference.predict import load            # noqa: E402
 
 K = 14.399645
 

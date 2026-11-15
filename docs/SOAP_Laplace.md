@@ -1,9 +1,9 @@
 # SOAP-curvature Laplace posterior for RACEv2 (design, 2026-11-06)
 
 Goal: a posterior over **all** weights at almost no extra cost, built from the curvature statistics that the SOAP
-optimizer already keeps. It complements the exact last-layer Bayesian regression (`bam_omat24/bayes_lastlayer.py`),
+optimizer already keeps. It complements the exact last-layer Bayesian regression (`race_v2/eval/bayes_lastlayer.py`),
 which represents only the uncertainty of the readout weights. Status: theory and code skeleton
-(`bam_omat24/soap_laplace.py`), **not run** (allocation exhausted). Order of work at the end.
+(`race_v2/eval/soap_laplace.py`), **not run** (allocation exhausted). Order of work at the end.
 
 ## 1. Laplace approximation
 
@@ -23,7 +23,7 @@ the Hessian of $\ell_n$ with respect to the outputs.
 ## 2. What SOAP stores and how it relates to the GGN
 
 For every matrix-shaped weight $W \in \mathbb R^{m\times n}$ (species slices of 3-D tables are separate matrices),
-SOAP (`bam_omat24/soap_grouped.py`) keeps:
+SOAP (`race_v2/training/soap_grouped.py`) keeps:
 - Kronecker factors $L = \mathrm{EMA}_{\beta_s}(G G^\top)$ and $R = \mathrm{EMA}_{\beta_s}(G^\top G)$ of the
   minibatch gradients $G$;
 - their eigenbases $Q_L$ and $Q_R$, refreshed every 10 steps;
@@ -88,7 +88,7 @@ $\delta W = Q_L\,\big(\varepsilon \oslash \sqrt{\kappa'\nu+\lambda}\big)\,Q_R^\t
 
 ## 5. Order of work (when compute is available)
 
-1. Quick check of `bayes_lastlayer.py` (`runs/diag/bayes_lastlayer.sh`, MAX_TEST=200), then the full run.
+1. Quick check of `bayes_lastlayer.py` (`research/diag/bayes_lastlayer.sh`, MAX_TEST=200), then the full run.
 2. `soap_laplace.py` on the 3BPA final checkpoint (abl3_full s42):
    - check that sampled weights stay finite and that energy/force predictions at κ′ → ∞ equal the network;
    - grid-fit κ′ and λ on validation;
@@ -108,7 +108,8 @@ u_i = rac1N\sum_s\sum_k w_k
   structure $s$ wrt the weights and $w_k = 1/\sigma_k^2$ the Gaussian likelihood precisions (defaults: the
   network's validation RMSEs). Estimated either exactly (one VJP per output, 1 + 3 n_atoms per structure) or by
   Hutchinson probes $v\sim\mathcal N(0,\mathrm{diag}\,w)$: $\mathbb E[(J^	op v)^{\odot 2}] = \mathrm{diag}(J^	op W J)$,
-  one VJP per probe. The untempered posterior precision is $N_{m train}\,
+  one VJP per probe. The untempered posterior precision is $N_{
+m train}\,
 u + \lambda$ (`--kappa-times-ntrain`,
   κ = 1). This is the EKFAC-style diagonal GGN that V1's torch Laplace obtained from curvlinops, here in the
   optimizer's own eigenbasis.

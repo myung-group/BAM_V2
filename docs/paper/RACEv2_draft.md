@@ -98,7 +98,7 @@ The radial weights $R_t$ are MLPs of a Bessel basis $b_n(r) = \frac{2}{r_c}\frac
   on the radial functions.
 - **Shell-radius channels.** For each element pair $(a, b)$:
   $S_{ab}(r) = \exp\!\big(-r/(\rho_a+\rho_b)\big)\,f_{\mathrm{cut}}(r)$, where $\rho$ are tabulated atomic shell radii
-  (`bam_omat24/atomic_shells.json`). This gives an element-aware length scale that does not have to be learned.
+  (`race_v2/models/atomic_shells.json`). This gives an element-aware length scale that does not have to be learned.
 
 ### 2.5 Non-bonded repulsion prior
 

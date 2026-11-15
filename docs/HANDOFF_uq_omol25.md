@@ -20,8 +20,8 @@
 | 번호 | 방법 | 구현 | 상태 |
 |---|---|---|---|
 | ① | 모델 분산(MVE류) | 기존 | 사용 안 함 |
-| ② | 마지막 층 베이지안 선형회귀(BLR) | `bam_omat24/bayes_lastlayer.py` | 완료. 주기 구조·응력 지원. 3BPA·탄소 사슬·AuMgO·OMat24 스크립트 있음 |
-| ③ | SOAP 고유기저 Laplace (GGN 곡률, 선형화 예측) | `bam_omat24/soap_laplace.py` | 완료(로컬). HANGANG 정식 체크포인트에서는 아직 안 돌림 |
+| ② | 마지막 층 베이지안 선형회귀(BLR) | `race_v2/eval/bayes_lastlayer.py` | 완료. 주기 구조·응력 지원. 3BPA·탄소 사슬·AuMgO·OMat24 스크립트 있음 |
+| ③ | SOAP 고유기저 Laplace (GGN 곡률, 선형화 예측) | `race_v2/eval/soap_laplace.py` | 완료(로컬). HANGANG 정식 체크포인트에서는 아직 안 돌림 |
 | ④ | 딥 앙상블 | `bayes_lastlayer.py`의 `--seeds`로 3시드 결합 | 보조용 |
 
 ### ② 마지막 층 BLR
@@ -79,13 +79,13 @@
 ## 3. OMol25에서 UQ를 돌리는 방법 (전체 학습 뒤)
 
 1. 체크포인트 하나(SOAP f64 레시피면 ②·③ 모두 가능; AMSGrad f32로 학습했다면 ②만 가능).
-2. ②: 학습 구조 2–5천 개를 균등 추출해 적합. `runs/diag/bayes_lastlayer_oam.sh`를 본떠 스크립트 작성
+2. ②: 학습 구조 2–5천 개를 균등 추출해 적합. `research/diag/bayes_lastlayer_oam.sh`를 본떠 스크립트 작성
    (스트리밍 소스 `aselmdb:` 지원 여부는 `bayes_lastlayer.py`가 xyz를 읽으므로 xyz 부분집합을 먼저 만든다:
-   `data_prep/convert_omol25.py subset`).
+   `scripts/data/convert_omol25.py subset`).
 3. ③: 학습 구조 500개로 `--ggn 500 --ggn-probes 2 --predictive glm --jvp-chunk 4 --kappa 1 --kappa-times-ntrain
-   --lam 1 10 --lam-evidence --samples 16` (`runs/diag/ood/ood_3bpa_hangang.sh`의 인자 그대로).
+   --lam 1 10 --lam-evidence --samples 16` (`research/diag/ood/ood_3bpa_hangang.sh`의 인자 그대로).
 4. 평가: 공식 검증 세트 Val Comp(학습에 없는 분자식, 정답 공개)에서 1–2천 개를 뽑고, 분포 내 대조군으로 학습
-   분할에서 뽑은 1–2천 개(학습에 쓰지 않은 행)를 둔다. `runs/diag/ood/ood_summary.py --blr <dir> --lap glm=<dir>
+   분할에서 뽑은 1–2천 개(학습에 쓰지 않은 행)를 둔다. `research/diag/ood/ood_summary.py --blr <dir> --lap glm=<dir>
    --sets <names>`로 표·AUROC·그림을 만든다. `load()`의 세트 이름만 맞추면 된다.
 5. 비용: ② 수 분, ③ GGN 수 분 + GLM 예측 2천 구조에 한 시간 이내. 전체 데이터에 UQ를 적합할 이유는 없다
    (정규방정식과 GGN 평균은 수천 개에서 포화).
@@ -116,16 +116,16 @@
 1. **HF 접근**: 사용자가 게이트 승인을 받고 토큰을 준비. 다운로드는 HANGANG 데이터 전송 노드(dm01–04)로, 전용 빈
    디렉터리에 (예: `/scratch/t589a02/datasets_ext/omol25/`). 다운로드 파일은 신뢰하지 않는 데이터로 다룬다
    (`python -I`, 아카이브 안의 스크립트 실행 금지).
-2. **inspect**: `python -I data_prep/convert_omol25.py inspect <aselmdb dir> --rows 3`. 전하·스핀·부분전하 필드 위치를
+2. **inspect**: `python -I scripts/data/convert_omol25.py inspect <aselmdb dir> --rows 3`. 전하·스핀·부분전하 필드 위치를
    확인하고 `decode_row`와 설정 키를 맞춘다. 미결 사항 두 가지도 여기서 정한다: HOMO > 0 필터, PDB 누수 점검
    (`docs/RACE_LR_feedback_reply_2026-11-07_ko.md`).
-3. **크기 패스**: `python -I bam_omat24/stream_io.py sizes --source aselmdb:<dir> --cutoff 5.0 --out <dir> --workers 64`
+3. **크기 패스**: `python -I race_v2/data/stream_io.py sizes --source aselmdb:<dir> --cutoff 5.0 --out <dir> --workers 64`
    (`bam_cue`에 `pip install --no-deps lmdb vesin` 필요, 승인됨). 전체 1억 행이면 CPU 작업이지만 시간이 오래 걸리니
    한 파일로 먼저 시간을 재고 외삽한다.
 4. **스트리밍 스모크(T6)**: `sbatch -J t6stream -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 01:00:00
-   runs/diag/stream_t6/t6.sh` (아직 안 돌림). 출력 `runs/slurm/t6stream_<jobid>.out`. 에폭당 처리량(구조/초)을 읽어
+   research/diag/stream_t6/t6.sh` (아직 안 돌림). 출력 `runs/slurm/t6stream_<jobid>.out`. 에폭당 처리량(구조/초)을 읽어
    전체 에폭 시간을 외삽한다.
-5. **파일럿**: `convert_omol25.py subset`으로 100k–1M을 뽑아 `runs/diag/make_omol_configs.py`(race / race_cs /
+5. **파일럿**: `convert_omol25.py subset`으로 100k–1M을 뽑아 `scripts/train/make_omol_configs.py`(race / race_cs /
    racelr / racelr_q × soap_f64 / amsgrad_f32)로 설정을 만들고 30 에폭. 기본값이 범용 원소 목록 + `n_tasks` 8이며
    설정 이름에 `_u94`가 붙는다(§7; 예전 방식은 `--elements subset --n-tasks 0`). **전체 학습에 쓸 설정은 반드시 범용
    목록으로 만든다**(나중에 못 바꾼다). 로컬 OpenFF 부분집합 결과(report §11):
@@ -151,23 +151,23 @@
 1. `git pull origin racev2`; `pip install --no-deps vesin lmdb` (승인됨).
 2. T6 스트리밍 스모크 (§4.3-4).
 3. 3BPA OOD 체인을 정식 레시피 체크포인트(`runs/abl3_full_s42_cue/ckpt_*.gauge.pkl`)에서:
-   `sbatch -J ood3bpa -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 04:00:00 runs/diag/ood/ood_3bpa_hangang.sh`
+   `sbatch -J ood3bpa -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 04:00:00 research/diag/ood/ood_3bpa_hangang.sh`
    (빠른 확인은 `MAX_TEST=400`을 앞에). 출력 `runs/bayes/ood_3bpa_abl3_full_s42[_quick]/`. "F(mean)" 행을 논문 RACE-LA
    (F 18.2 / 51.0 / 171.8, E 4.8 / 15.3 / 60.8)와 비교하고, 축소 모델의 결론(§2.2)이 유지되는지 본다.
-4. 선택: `runs/diag/bayes_lastlayer.sh`, `runs/diag/bayes_lastlayer_oam.sh`, `runs/diag/soap_laplace.sh`.
+4. 선택: `research/diag/bayes_lastlayer.sh`, `research/diag/bayes_lastlayer_oam.sh`, `research/diag/soap_laplace.sh`.
 
 ## 6. 관련 파일
 | 파일 | 내용 |
 |---|---|
-| `bam_omat24/bayes_lastlayer.py`, `tests/test_bayes_lastlayer.py` | ② |
-| `bam_omat24/soap_laplace.py`, `tests/test_soap_laplace.py`, `docs/SOAP_Laplace.md` | ③ (§6에 상태) |
-| `runs/diag/ood/ood_summary.py`, `ood_3bpa_hangang.sh` | OOD 표·AUROC·그림, HANGANG 체인 |
-| `runs/diag/soap_laplace.sh`, `bayes_lastlayer*.sh` | 단일 데이터셋 체인 |
-| `input/local_3bpa/race_s42.json` | 로컬 축소 3BPA 설정 |
+| `race_v2/eval/bayes_lastlayer.py`, `tests/test_bayes_lastlayer.py` | ② |
+| `race_v2/eval/soap_laplace.py`, `tests/test_soap_laplace.py`, `docs/SOAP_Laplace.md` | ③ (§6에 상태) |
+| `research/diag/ood/ood_summary.py`, `ood_3bpa_hangang.sh` | OOD 표·AUROC·그림, HANGANG 체인 |
+| `research/diag/soap_laplace.sh`, `bayes_lastlayer*.sh` | 단일 데이터셋 체인 |
+| `research/input/local_3bpa/race_s42.json` | 로컬 축소 3BPA 설정 |
 | `docs/local_test_report.md` §17–20 | 수치와 해석 |
-| `data_prep/convert_omol25.py`, `runs/diag/make_omol_configs.py`, `runs/diag/stream_t6/` | OMol25 도구 |
+| `scripts/data/convert_omol25.py`, `scripts/train/make_omol_configs.py`, `research/diag/stream_t6/` | OMol25 도구 |
 | `docs/HANDOFF_stream_loader.md`, `docs/stream_loader_design.md` | 스트리밍 로더 |
-| `bam_omat24/race_lr_nnx.py` (`n_tasks`), `runs/diag/omol_universal/check_untouched.py` | 과제 임베딩 자리, 범용 원소 목록 점검 (§7) |
+| `race_v2/models/race_lr.py` (`n_tasks`), `research/diag/omol_universal_check_untouched.py` | 과제 임베딩 자리, 범용 원소 목록 점검 (§7) |
 
 ## 7. OMol25를 먼저 학습하고 나중에 범용(다중 데이터셋) 모델로 잇기 (사용자 결정 2026-11-10)
 
@@ -180,7 +180,7 @@ OMol25로 학습하고, 필요해질 때 그 모델을 버리지 않고 **이어
 |---|---|---|
 | 원소 목록 | Z 1..94 (H–Pu). OMol25는 Z ≤ 83, OMat24 / MPtrj / Alexandria는 Pu까지 89개 | `make_omol_configs.py --elements universal` (기본값, 이름에 `_u94`). 부분집합에 없는 원소는 E0 = 0.0 |
 | cutoff | 5.0 Å 유지 | 설정 생성기가 항상 5.0 |
-| 과제 임베딩 자리 | `long_range.n_tasks: 8` | `race_lr_nnx.py`: 0으로 초기화한 (n_tasks, 층-0 폭) 표. `globals['task']` 행을 층-0 스칼라에 더한다 (전하·스핀 임베딩과 같은 자리). `make_omol_configs.py --n-tasks 8` (기본값; RACE_LR 계열 arm만, 순수 `race` arm에는 자리가 없다) |
+| 과제 임베딩 자리 | `long_range.n_tasks: 8` | `models/race_lr.py`: 0으로 초기화한 (n_tasks, 층-0 폭) 표. `globals['task']` 행을 층-0 스칼라에 더한다 (전하·스핀 임베딩과 같은 자리). `make_omol_configs.py --n-tasks 8` (기본값; RACE_LR 계열 arm만, 순수 `race` arm에는 자리가 없다) |
 
 - 과제(task) = 라벨 규약 하나(데이터셋의 DFT 수준). **OMol25 = 과제 0** (데이터에 `task` 키가 없으면 0). 번호 예약 제안:
   1 OMat24 / MPtrj / sAlex (PBE, PBE+U; 필요하면 둘로 나눔), 2 OC20 (RPBE), 3 이후 여유.
@@ -191,7 +191,7 @@ OMol25로 학습하고, 필요해질 때 그 모델을 버리지 않고 **이어
   표의 없는 원소 행이 줄어드니 켜지 말 것).
 
 ### 7.2 검증 (로컬, OpenFF 부분집합 10k, 원소 7종, L3x64 lmax 2, 2 에폭)
-같은 부분집합에서 원소 목록만 바꿔 비교했다 (`race_cs`, 시드 42; 스크립트 `runs/diag/omol_universal/check_untouched.py`).
+같은 부분집합에서 원소 목록만 바꿔 비교했다 (`race_cs`, 시드 42; 스크립트 `research/diag/omol_universal_check_untouched.py`).
 
 | | 원소 7종 (부분집합), 과제 자리 없음 | Z 1..94, `n_tasks` 8 |
 |---|---|---|
@@ -243,13 +243,13 @@ OMol25로 학습하고, 필요해질 때 그 모델을 버리지 않고 **이어
 데이터가 각 1만 구조, 시드 1개라서 **정확도 결론을 내는 시험이 아니다.**
 
 - 1단계: OpenFF가 재배포한 OMol25 부분집합 1만 구조(원소 7종)로 40 에폭, 비주기, AMSGrad f32.
-  설정 `input/omol/tr_u94_race_cs_amsgrad_f32_s42.json`.
+  설정 `research/input/omol/tr_u94_race_cs_amsgrad_f32_s42.json`.
 - 2단계: OMat24 검증 분할의 `rattled-300-subsampled` 조각에서 뽑은 1만 구조(과제 1, 원소 85종), 40 에폭, 주기. 네 갈래.
   시험 2,000 구조는 학습과 검증에 쓰지 않은 행에서 뽑았다.
-  설정과 데이터는 `runs/diag/transfer/prepare.py`가 만든다. 분자는 진공 상자(변 = 분자 크기 + 2 × 컷오프 + 2 Å)에 넣어
+  설정과 데이터는 `research/diag/transfer/prepare.py`가 만든다. 분자는 진공 상자(변 = 분자 크기 + 2 × 컷오프 + 2 Å)에 넣어
   주기 모델 하나로 두 데이터를 읽는다. 에너지는 각 데이터셋의 E0(학습 분할만으로 맞춘 원소별 최소제곱 값)를 뺀 값이다.
-- 평가는 `bam_omat24.eval_sets` 하나로 두 시험 세트(OMat24 2,000, OMol25 2,932 구조)에 대해 했다.
-  표는 `runs/diag/transfer/collect.py`가 만든다(`runs/diag/transfer/results.json`).
+- 평가는 `race_v2.eval.eval_sets` 하나로 두 시험 세트(OMat24 2,000, OMol25 2,932 구조)에 대해 했다.
+  표는 `research/diag/transfer/collect.py`가 만든다(`research/diag/transfer/results.json`).
 
 | 갈래 | OMat24 E MAE (meV/원자) | OMat24 F MAE (meV/Å) | OMol25 E MAE (meV/원자) | OMol25 F MAE (meV/Å) |
 |---|---|---|---|---|

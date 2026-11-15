@@ -1,13 +1,13 @@
 """Per-layer feature norms (|x|^2 into every cue edge TP, forward only) for rMD17 molecules, at the
 initial parameters and at a trained checkpoint: is the azobenzene explosion present at init?
-usage: python runs/diag/feat_norm.py mol[:run] ...   (run defaults to rmd17_<mol>_v9a_s42)"""
+usage: python research/diag/feat_norm.py mol[:run] ...   (run defaults to rmd17_<mol>_v9a_s42)"""
 import json, sys, io
 import numpy as np, jax, jax.numpy as jnp
 from flax import nnx
-import bam_omat24.race_nnx as R
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
+import race_v2.models.race as R
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn
+from race_v2.training.utils import load_checkpoint
 jax.config.update("jax_enable_x64", True)
 LOG = []
 orig = R.cue_edge_tensor_product
@@ -20,7 +20,7 @@ R.cue_edge_tensor_product = traced
 for arg in sys.argv[1:]:
     mol, run = (arg.split(":") + [None])[:2]
     run = run or f"rmd17_{mol}_v9a_s42"
-    cfg = json.load(open(f"input/input_3bpa_omat24_{run}_cue.json"))
+    cfg = json.load(open(f"research/input/input_3bpa_omat24_{run}_cue.json"))
     f = io.StringIO()
     an, ae, tr, va, te, st = T.build_datasets(cfg, f)
     gd, p0, *_ = T.build_model(cfg, len(an), ae, st, f)

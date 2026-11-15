@@ -5,7 +5,7 @@ The size table is made when missing (or reused; the trainer reads the same direc
 Per worker count: pool start + the first block (worker init, extxyz offset scan) timed apart, then `--steps` steps
 of data epoch 0.  BAM_NEIGHBORS (ase | vesin) is taken from the environment.
 
-usage (repo root): python -I runs/diag/stream_t6/loader_bench.py --source extxyz:<train.xyz> --cutoff 5.0 \
+usage (repo root): python -I research/diag/stream_t6/loader_bench.py --source extxyz:<train.xyz> --cutoff 5.0 \
     --sizes <dir> --atomic-numbers-from <config.json> --workers 2,4,8,16 --steps 500 --out <out.json>
 """
 import argparse
@@ -20,7 +20,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / 'bam_omat24'))     # stream_io / stream_plan are top-level modules
+sys.path.insert(0, str(ROOT / 'race_v2' / 'data'))     # stream_io / stream_plan are top-level modules
 
 
 def main():
@@ -39,7 +39,7 @@ def main():
     a = ap.parse_args()
     import stream_io as S
     import stream_plan as P
-    from bam_omat24.stream_data import StreamLoader
+    from race_v2.data.stream_data import StreamLoader
     import jraph
     cfg = json.load(open(a.atomic_numbers_from))
     Z = [int(z) for z in cfg['atomic_numbers']]; e0 = [float(x) for x in cfg['atom_energies']]

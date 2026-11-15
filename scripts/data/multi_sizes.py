@@ -2,7 +2,7 @@
 with many workers (JAX-free; docs/HANDOFF_multidataset_thole.md).  Needs "sizes" directories in the config
 (make_multidataset_configs.py --sizes-dir).
 
-    BAM_NEIGHBORS=vesin python -I runs/diag/multi_sizes.py input/multi/<name>.json [--workers 11] [--splits train valid]
+    BAM_NEIGHBORS=vesin python -I scripts/data/multi_sizes.py research/input/multi/<name>.json [--workers 11] [--splits train valid]
 """
 import argparse
 import json
@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'bam_omat24'))
+sys.path.insert(0, str(ROOT / 'race_v2' / 'data'))
 import stream_io as S  # noqa: E402
 
 

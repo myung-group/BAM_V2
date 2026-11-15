@@ -9,10 +9,10 @@ conda activate bam_cue
 SP=$(python -c "import site; print(site.getsitepackages()[0])")
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
-C=input/input_3bpa_omat24_lipsF_fu_s42_cue.json
+C=research/input/input_3bpa_omat24_lipsF_fu_s42_cue.json
 K=runs/lipsF_fu_s42_cue/ckpt_lipsF_fu_s42_cue.gauge.pkl
 for B in e3nn cue; do
-  python -m bam_omat24.export_lammps $C --ckpt $K --out runs/lammps_export/lips_${B}_float32 --backend $B --dtype float32 \
+  python -m race_v2.export.lammps $C --ckpt $K --out runs/lammps_export/lips_${B}_float32 --backend $B --dtype float32 \
     --buckets 128:4096 1024:32768 4096:131072 2>&1 | grep -a -E "exported|recorded|Error|error|Traceback" | head -4
 done
 export LD_LIBRARY_PATH=$(ls -d $SP/nvidia/*/lib | tr '\n' ':')$SP/cuequivariance_ops/lib:${LD_LIBRARY_PATH}

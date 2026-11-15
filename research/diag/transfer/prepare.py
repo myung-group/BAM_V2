@@ -1,9 +1,9 @@
 """Small-scale transfer test OMol25 -> OMat24 (2026-11-10): data and configs of the second stage.
 
-    python -I runs/diag/transfer/prepare.py --omol data_local/omol25_openff/sub10k --omat data_local/omat24_val/r300_10k
-           --pre input/omol/tr_u94_race_cs_amsgrad_f32_s42.json [--out data_local/transfer_omol_omat] [--epochs 40]
+    python -I research/diag/transfer/prepare.py --omol data_local/omol25_openff/sub10k --omat data_local/omat24_val/r300_10k
+           --pre research/input/omol/tr_u94_race_cs_amsgrad_f32_s42.json [--out data_local/transfer_omol_omat] [--epochs 40]
 
-Data (extxyz, read as data only; subsets made by data_prep/convert_omol25.py):
+Data (extxyz, read as data only; subsets made by scripts/data/convert_omol25.py):
   omol_{train,valid,test}.xyz : the OMol25 molecules in a cubic vacuum box (edge = extent + 2 cutoff + 2 A, pbc true),
                                 so that one periodic model reads both datasets; info task = 0
   omat_{train,valid,test}.xyz : the OMat24 structures, info task = 1 (charge 0, spin 1)
@@ -11,7 +11,7 @@ Data (extxyz, read as data only; subsets made by data_prep/convert_omol25.py):
 Energies are written referenced, E - sum_i E0(Z_i) with the E0 of the structure's own dataset (train-only least
 squares of each subset, meta.json), so the configs use atom_energies = 0 and a single file can hold both tasks.
 
-Configs input/transfer/<arm>.json, derived from the pretraining config --pre (same model configuration; only data,
+Configs research/input/transfer/<arm>.json, derived from the pretraining config --pre (same model configuration; only data,
 periodic true, task "task" (info key), avg_n_neighbors and the start differ):
   tr2_scratch : OMat24 only, random start, avg_n_neighbors of OMat24
   tr2_cont    : OMat24 only, init_params_from the pretraining checkpoint (avg_n_neighbors pinned to the pretraining value)
@@ -98,9 +98,9 @@ def main():
     (ROOT / 'input' / 'transfer').mkdir(exist_ok=True)
     for name, kw in arms.items():
         c = dict(base, **kw, log_file=f'runs/transfer/{name}/loss.out', ckpt_name=f'runs/transfer/{name}/ckpt.pkl',
-                 note='transfer test OMol25 -> OMat24 (runs/diag/transfer/prepare.py): ' + name)
+                 note='transfer test OMol25 -> OMat24 (research/diag/transfer/prepare.py): ' + name)
         json.dump(c, open(ROOT / 'input' / 'transfer' / f'{name}.json', 'w'), indent=1)
-        print('written', f'input/transfer/{name}.json', {k: (v if k != 'init_params_from' else '...') for k, v in kw.items()
+        print('written', f'research/input/transfer/{name}.json', {k: (v if k != 'init_params_from' else '...') for k, v in kw.items()
                                                          if k not in ('train_path', 'valid_path')})
 
 

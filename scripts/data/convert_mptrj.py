@@ -1,7 +1,7 @@
 """MPtrj (MPtrj_2022.9_full.json, figshare 23713842 v2, md5 50ead5f27f9a4f6beb7564c4188f1e9f) -> lmdb shards that
 race_v2/stream_io.AselmdbSource reads (zlib JSON rows with integer keys, as ASE's lmdb backend stores them).
 
-    python -I data_prep/convert_mptrj.py <MPtrj_2022.9_full.json> <out_dir> [--val-frac 0.05] [--seed 0] [--shards 32]
+    python -I scripts/data/convert_mptrj.py <MPtrj_2022.9_full.json> <out_dir> [--val-frac 0.05] [--seed 0] [--shards 32]
 
 Layout:  <out_dir>/train/mptrj_train_XXX.aselmdb, <out_dir>/val/mptrj_val_000.aselmdb, <out_dir>/convert_mptrj.json
 (counts, split ids, per-element least-squares reference energies of the training split).

@@ -6,7 +6,7 @@
 #   3. 2 x 250 training steps of the sz100k L5x128 amsgrad config with data_format stream (vesin, 8 workers):
 #      epoch 2 time = steady state, against the in-memory run of the same config when its log is present.
 # needs once in bam_cue:  pip install --no-deps vesin lmdb
-# usage: sbatch -J t6stream -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 01:00:00 runs/diag/stream_t6/t6.sh
+# usage: sbatch -J t6stream -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 01:00:00 research/diag/stream_t6/t6.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work
@@ -16,7 +16,7 @@ conda activate bam_cue
 python -c "import vesin, lmdb" || { echo "ABORT: run 'pip install --no-deps vesin lmdb' in bam_cue first"; exit 1; }
 echo "python $(which python)  git $(git rev-parse --short HEAD)  node $(hostname)  cpus $(nproc)"
 D=/scratch/t510a13/data/datasets_ext/oam_subsets_100k
-BASE=input/input_3bpa_omat24_sz100k_L5x128amsgrad_omat24_v2_s42_cue.json
+BASE=research/input/input_3bpa_omat24_sz100k_L5x128amsgrad_omat24_v2_s42_cue.json
 O=runs/stream_t6; mkdir -p $O
 SZ=$O/sizes_omat24_train
 CUT=$(python -c "import json; print(json.load(open('$BASE')).get('cutoff', 5.0))")
@@ -27,17 +27,17 @@ JAX_PLATFORMS=cpu python -m pytest -q tests/test_stream_io.py tests/test_stream_
   2>&1 | tail -n 4
 
 echo "== 2. loader only"
-LB="python -I runs/diag/stream_t6/loader_bench.py --source extxyz:$D/omat24_train.xyz --cutoff $CUT --sizes $SZ \
+LB="python -I research/diag/stream_t6/loader_bench.py --source extxyz:$D/omat24_train.xyz --cutoff $CUT --sizes $SZ \
   --atomic-numbers-from $BASE --graphs-per-pack 16"
 ( export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1
   BAM_NEIGHBORS=vesin $LB --workers 2,4,8,16 --steps 500 --out $O/loader_vesin.json 2>&1 | grep -E '^W=|size pass'
   BAM_NEIGHBORS=ase $LB --workers 8 --steps 300 --out $O/loader_ase.json 2>&1 | grep '^W=' )
 
 echo "== 3. training, data_format stream"
-python -I runs/diag/stream_t6/make_config.py $BASE $O/oam100k_stream.json --run-dir $O/train --sizes $SZ \
+python -I research/diag/stream_t6/make_config.py $BASE $O/oam100k_stream.json --run-dir $O/train --sizes $SZ \
   --steps-per-epoch 250 --epochs 2 --workers 8 --valid-max 1000 || exit 1
 export OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4
-BAM_NEIGHBORS=vesin /usr/bin/time -f "WALL %e s" python -m bam_omat24.train_3bpa $O/oam100k_stream.json \
+BAM_NEIGHBORS=vesin /usr/bin/time -f "WALL %e s" python -m race_v2.training.train $O/oam100k_stream.json \
   > $O/train/stdout.txt 2>&1
 tail -n 2 $O/train/stdout.txt
 grep -A1 "^  bucket\|steps per data epoch" $O/train/loss.out | head -n 6

@@ -40,13 +40,13 @@ Details for each:
 - **D2, no decay.**
   - The paper says (App. D.2): "linearly decaying DeNS coefficient λDeNS to 0 thoughout the training can result in better performance".
   - The code ([E]:372-377) is `denoising_pos_weight = args.denoising_pos_weight * (1 - min(1.0, ((epoch + 0.0) / args.epochs)))`. All 16 MD17 scripts pass `--use-denoising-pos-weight-linear-decay`: at line 28 in the two aspirin scripts and line 32 in the other 14.
-  - Ours is a Python float baked into the jit-compiled step (train_3bpa.py:719; training_utils.py:449-457, 608).
+  - Ours is a Python float baked into the jit-compiled step (training/train.py:719; training/utils.py:449-457, 608).
   - The decay is specific to the MD17 recipe; OC20/OC22 keep the weight constant ([T]:311-313, 521). MD17 is still the right analogue for 3BPA.
   - The paper never ablates the decay, so its effect size is unknown.
 - **D3, all atoms corrupted.**
   - The paper (§3.2.3) says "adding noise to all atoms … makes denoising too difficult and potentially not well-defined".
   - The code draws a per-atom mask: `corrupt_mask = (corrupt_mask < corrupt_ratio)` ([E]:533-534). MD17 uses r_DeNS = 0.25 for every molecule.
-  - Ours noises everything (training_utils.py:636-639).
+  - Ours noises everything (training/utils.py:636-639).
   - Table 6 Index 2 vs Index 5 shows the size of the effect: partial corruption improves forces by up to about 20% over all-atom corruption (aspirin 5.7 vs 6.9).
   - It is real but secondary. Its penalty in the paper is a few percent, far smaller than our w=1 loss.
 - **D5, base-loss form.**
@@ -55,19 +55,19 @@ Details for each:
   - The real difference is the loss **shape**, not the energy share: the reference is also about 1–2% energy. An L1 loss pulls an energy offset back with constant force. Our quadratic per-atom loss pulls with a gradient that shrinks with the offset, about 26× weaker relative to the force gradients at a 14 meV offset.
   - This explains most of the w=1 energy error (offset² / MSE ≈ 0.75 at 300 K). It explains neither the +46% force error nor the w=0.1 result.
 - **D7, concatenated force encoding.**
-  - The concatenation is at race_nnx.py:1576.
+  - The concatenation is at models/race.py:1576.
   - It grows layer-0 tp_irreps from 512 to 1280. Under e3nn's default path normalisation (path_weight = 1/√fan_in), the existing energy paths into layer-0 `linear_m` and all five `x_projs` are rescaled by 1/√2 or 1/√3. That changes both their initial output and their effective Adam step.
   - It also adds 786,560 parameters and shifts the random initialisation of every later module, because `force_enc` is built at :1218, before them.
   - No force_encoding=true, w=0 control exists. The "neutral at w=0.1" differences (−10%/+7% at 300 K) are within reach of this confound.
   - It cannot explain the w=1 harm: the Noisy-Nodes run without encoding is just as bad.
 - **D8, noise head.**
-  - Ours is a single e3nn Linear 128x1o → 1x1o (race_nnx.py:1411-1415), about 128 weights, with no nonlinearity.
+  - Ours is a single e3nn Linear 128x1o → 1x1o (models/race.py:1411-1415), about 128 weights, with no nonlinearity.
   - The reference MD17 head is a full `GraphAttention` block ([EM]:160-173; 3.50M → 4.00M parameters).
   - eSCN+DeNS uses a per-node MLP and still gains, so message passing is not strictly required, but a head with real capacity is.
   - The paper does not ablate head capacity. Both verifiers rate this low impact.
 - **D10, no force loss at the noisy geometry.**
   - The code computes `loss_f = criterion(pred_dy[(~data.noise_mask)], data.dy[(~data.noise_mask)] / task_std)` ([E]:390-393), where pred_dy = −∂E/∂pos at the noisy positions with force encoding active ([EM]:244, 322-329, 345).
-  - Our denoise pass computes no forces and no energy (race_nnx.py:1777-1785).
+  - Our denoise pass computes no forces and no energy (models/race.py:1777-1785).
   - This is the "data augmentation" half of DeNS (§3.2.4), and r22 never tested it. Its sign on 3BPA is unknown.
 - **D12, protocol confounds.**
   - The plateau scheduler cut the learning rate only in the DeNS arms. At w=1 the first cut was at epoch 267 and the final LR was 0.0017; at w=0.1 the first cut was at epoch 282 and the final LR was 0.0051. The reference stayed at 0.01.
@@ -162,7 +162,7 @@ Details for each:
 - This agrees with the paper and with other reports of plain noisy-nodes denoising: PIWSL says NoisyNode "deteriorates the accuracy"; FRAMES reports Equiformer + Noisy Nodes on aspirin at 10.5/8 against 5.3/7.2.
 
 **Other forensics:**
-- **Paired noise draws.** The σ=0.05 and σ=0.1 runs drew identical standard normals (`PRNGKey(seed+1000)` folded with the step, train_3bpa.py:723; training_utils.py:611-613), so their ε/σ targets are identical. The σ comparison is paired with n = 1; it is not biased.
+- **Paired noise draws.** The σ=0.05 and σ=0.1 runs drew identical standard normals (`PRNGKey(seed+1000)` folded with the step, training/train.py:723; training/utils.py:611-613), so their ε/σ targets are identical. The σ comparison is paired with n = 1; it is not biased.
 - **Gradient clipping.** Mean pre-clip GRAD stayed above 1 until epoch 16 at w=1, against epoch 5–6 for the reference. The clip fraction is computed but never logged.
 - **Released ablation code is not what Table 6 describes.** The MD17 "no force encoding" path (Table 6 Index 3) checks `denoising_mask`, which the trainer never sets ([EM]:314 vs [E]:528), and zeroes the picked outputs ([EM]:348-350). As released, it trains E(noisy) → E(clean) with no denoising gradient.
 - **fairchem port.** In fairchem_core 1.3.0 and 1.9.0 the DeNS branch appends a second force loss ([FT]:595-612). Third-party ports are not the reference.
@@ -240,7 +240,7 @@ The paper's own words: "DeNS with noise added to all atoms (Index 5) can be wors
 
 ## 4. Faithful DeNS specification for conservative RACE on 3BPA
 
-Where the paper and code disagree, the code is followed. The screening base is now "A + hill" (`input/input_3bpa_omat24_r25_cheb_hill_s42_cue.json`). It differs from the r22 base (r20_rp05 / v9a) by `residual: chebyshev`, `layer_scale: 0.5` and `x_norm: hill`, so the r22 conclusions transfer only approximately. In the base run the plateau scheduler never fired: the LR was 0.01 for all 500 epochs, and the best epoch was 498.
+Where the paper and code disagree, the code is followed. The screening base is now "A + hill" (`research/input/input_3bpa_omat24_r25_cheb_hill_s42_cue.json`). It differs from the r22 base (r20_rp05 / v9a) by `residual: chebyshev`, `layer_scale: 0.5` and `x_norm: hill`, so the r22 conclusions transfer only approximately. In the base run the plateau scheduler never fired: the LR was 0.01 for all 500 epochs, and the best epoch was 498.
 
 ### Components
 
@@ -281,23 +281,23 @@ Where the paper and code disagree, the code is followed. The screening base is n
 
 ### Code locations to change (all read-only so far)
 
-**`bam_omat24/race_nnx.py`**
+**`race_v2/models/race.py`**
 - :1188-1190 (`input_irreps` with concatenated 1o): stop concatenating, so the layer-0 input stays `embed_irreps`.
 - :1218-1222 (`force_enc`): replace with a bias-free Linear from `1x0e+1x1o+1x2e+1x3o` to `hidden_irreps`, using a separate RNG stream.
 - :1568-1576: remove the concatenation. Compute the SH encoding from a node field such as `data.nodes['dens_force']` (= m·F; absent means zero), so `__call__` → `energy_forces_stress(self.node_energies, …)` at :1835-1838 serves both the training pass and evaluation. Add the projected encoding to `features` right after `layer(...)` for i == 0 in the loop at :1662-1675.
 - :1411-1415 (`noise_head`): replace the Linear with an interaction block or gated MLP.
 - :1777-1785 (`denoise`): retire it. The noise prediction comes from the `node_features` already returned at :1766-1768.
 
-**`bam_omat24/utils.py`**
+**`race_v2/models/blocks.py`**
 - `energy_forces_stress` (:270ff; the aux dicts in both branches, around :321-328 and :347-355): pass `node_features` through `aux` and return them, so a single grad pass yields E, F and features for the noise head.
 
-**`bam_omat24/training_utils.py`**
+**`race_v2/training/utils.py`**
 - :636-639: replace the all-atom noise with structure and atom masks (via `node_graph_idx`) and m = mask ∧ padding. Write `positions + m⊙ε`, `dens_force = m⊙F`, `dens_mask = m` and `noise` into `batch.nodes`.
 - `compute_loss` :405-418: run the model once on the corrupted batch. Energy against clean energy is unchanged. For forces, use the per-node weight path at :238-240 with (1 − m), and normalise by Σ(1 − m) instead of 3·n_atoms at :411.
 - :449-457: change the DeNS term to L2MAE over m, weighted by a **traced** w(t).
 - `make_sharded_train_step` :556 and :600-608: add `dens_weight` to the dynamic `loss_weights` so the decay does not trigger a recompile. Log `denoise_loss` (:483) and the clip fraction (:692).
 
-**`bam_omat24/train_3bpa.py`**
+**`race_v2/training/train.py`**
 - :380 and :391: model flags for the new encoding and head.
 - :606 and :719: parse a new `dens` config block (p, r, σ, w₀, decay, loss form, noisy_ef on/off, head type).
 - :598 and :838-842: force the dynamic-weights path whenever `dens` is set, and feed w₀·(1 − epoch/n_epochs) each epoch.
@@ -310,7 +310,7 @@ Where the paper and code disagree, the code is followed. The screening base is n
 
 ## 5. Minimal screening plan (3 runs × 500 epochs, seed 42)
 
-All three runs start from `input/input_3bpa_omat24_r25_cheb_hill_s42_cue.json` unchanged (λ_E = 1, λ_F = 10, Huber δ 10, lr 0.01, batch 5, EMA 0.99, clip 1.0, A + hill model), with two additions:
+All three runs start from `research/input/input_3bpa_omat24_r25_cheb_hill_s42_cue.json` unchanged (λ_E = 1, λ_F = 10, Huber δ 10, lr 0.01, batch 5, EMA 0.99, clip 1.0, A + hill model), with two additions:
 - `"lr_schedule_patience": 100000000`, which reproduces the base's realised constant LR;
 - a `dens` block (new keys, to be implemented as in section 4).
 

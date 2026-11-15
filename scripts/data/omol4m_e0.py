@@ -6,7 +6,7 @@ JAX-free: imports race_v2/data/stream_io.py as a plain module (the package __ini
 
 The training sources are taken from <sizes>/sizes_meta.json, so E0 is fitted on exactly the files the trainer reads.
 Writes <out>/e0.json (atomic_numbers, atom_energies) and <out>/meta.json with the fields that
-runs/diag/make_omol_configs.py reads (atomic_numbers, atom_energies, avg_n_neighbors, periodic, train / valid / test).
+scripts/train/make_omol_configs.py reads (atomic_numbers, atom_energies, avg_n_neighbors, periodic, train / valid / test).
 """
 import argparse
 import json

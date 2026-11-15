@@ -1,7 +1,7 @@
 """Which ops of the exported RACEv2 function need the most device memory?  Compiles the LAMMPS export function for
 one bucket with XLA buffer-assignment dumps and lists the largest allocations with their HLO op and source line.
 
-    BAM_INDEXED_LINEAR=ragged python runs/diag/memory_probe.py <config.json> <ckpt.pkl> <n_pad> <e_pad> [backend]
+    BAM_INDEXED_LINEAR=ragged python research/diag/memory_probe.py <config.json> <ckpt.pkl> <n_pad> <e_pad> [backend]
 """
 import glob
 import os
@@ -15,7 +15,7 @@ os.environ['XLA_FLAGS'] = os.environ.get('XLA_FLAGS', '') + f' --xla_dump_to={du
 import jax
 import jax.numpy as jnp
 
-from bam_omat24.export_lammps import build, make_fn
+from race_v2.export.lammps import build, make_fn
 
 
 def main():

@@ -71,7 +71,7 @@
 
 ## 4. 실행 계획
 
-- **물 기준 레시피(현재 최선):** L5, 64 ch, lmax 3, cutoff 5, SOAP lr 3e-3(b1=b2=0.95), batch 2, Huber δ 10, E:F 100:1, EMA 0.99, gauge refit(`input/input_3bpa_omat24_w6_h64_lr3e3_cue.json` 계열).
+- **물 기준 레시피(현재 최선):** L5, 64 ch, lmax 3, cutoff 5, SOAP lr 3e-3(b1=b2=0.95), batch 2, Huber δ 10, E:F 100:1, EMA 0.99, gauge refit(`research/input/input_3bpa_omat24_w6_h64_lr3e3_cue.json` 계열).
 - **3BPA 통합 레시피:** v9a + SOAP lr 1e-2 + ZBL non-bonded(c=1.25). 500 ep 1-seed 참조값은 2.20/6.92, 7.52/17.50, 25.94/52.36, dihedral 10.34/18.29(r33_zblnb 3-seed 진행 중).
 - 5-job 한도를 지킵니다.
 

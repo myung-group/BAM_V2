@@ -1,9 +1,9 @@
 """Thermal conductivity of the 103 PhononDB structures with a RACEv2 checkpoint, and the kappa SRME metric
 (Matbench Discovery phonons task; 2026-11-11).
 
-    python runs/diag/mbd/kappa.py run   --ckpt <ckpt.pkl> --structures <phononDB-PBE-103-structures.extxyz> \
+    python scripts/eval/mbd/kappa.py run   --ckpt <ckpt.pkl> --structures <phononDB-PBE-103-structures.extxyz> \
                                         --out-dir <dir> [--shard 0 --num-shards 4] [--limit N]
-    python runs/diag/mbd/kappa.py score --out-dir <dir> --reference <kappas-phononDB-PBE-noNAC.json.gz>
+    python scripts/eval/mbd/kappa.py score --out-dir <dir> --reference <kappas-phononDB-PBE-noNAC.json.gz>
 
 Protocol, following matbench_discovery/phonons (pipeline.py KappaSettings defaults, adapters/standard.py and
 thermal_conductivity.py, fetched 2026-11-11; themselves adapted from MPA2suite/k_SRME):
@@ -44,9 +44,9 @@ def _bam_dir() -> str:
     if d:
         return d
     for base in (Path.cwd(), *Path(__file__).resolve().parents):
-        if (base / 'bam_omat24' / 'relax_batched.py').exists():
-            return str(base / 'bam_omat24')
-    raise SystemExit('bam_omat24 not found: run from the work folder or set BAM_OMAT24_DIR')
+        if (base / 'race_v2' / 'inference' / 'relax_batched.py').exists():
+            return str(base / 'race_v2' / 'data')
+    raise SystemExit('race_v2 not found: run from the work folder or set BAM_OMAT24_DIR')
 
 
 def spg_number(atoms, symprec: float) -> int:

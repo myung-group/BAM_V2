@@ -15,8 +15,8 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
 B=/scratch/t510a13/data/datasets_ext/BOTNet-datasets/dataset_3BPA
 for N in r27_soap_ew3_s42 r27_soap_ew10_s42 r27_soap_ew30_s42 r27_soap_ew100_s42; do
-  python -m bam_omat24.dump_frame_errors input/input_3bpa_omat24_${N}_cue.json --ckpt runs/${N}_cue/ckpt_${N}_cue.pkl --per-atom --index-key none --batch-size 32 \
-    --xyz dataset_3BPA/train_300K.xyz --xyz $B/test_dih.xyz --out runs/diag/wd/$N 2>&1 | grep -E "MAE|Error|Traceback"
+  python -m race_v2.eval.dump_frame_errors research/input/input_3bpa_omat24_${N}_cue.json --ckpt runs/${N}_cue/ckpt_${N}_cue.pkl --per-atom --index-key none --batch-size 32 \
+    --xyz research/dataset_3BPA/train_300K.xyz --xyz $B/test_dih.xyz --out research/diag/wd/$N 2>&1 | grep -E "MAE|Error|Traceback"
 done
 python - <<'PY'
 import pickle, json, numpy as np, jax
@@ -29,6 +29,6 @@ def norms(path):
     return out
 R={n:norms(f'runs/{n}_cue/ckpt_{n}_cue.gauge.pkl') for n in ['r28_soap_s42','r28_soap_lr3e3_s42','r31_base','r31_no_shells']}
 R['v9a_rp_s42']=norms('runs/v9a_rp_s42_cue/ckpt_v9a_rp_s42_cue.pkl')
-json.dump(R,open('runs/diag/wd/param_norms.json','w'))
+json.dump(R,open('research/diag/wd/param_norms.json','w'))
 print('param norms written', {k:len(v) for k,v in R.items()})
 PY

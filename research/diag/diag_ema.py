@@ -1,14 +1,14 @@
 """Raw vs EMA parameters: E / F errors on train and valid frames (energy+forces program).
-usage: python runs/diag/diag_ema.py run [run ...]"""
+usage: python research/diag/diag_ema.py run [run ...]"""
 import json, sys, io
 import numpy as np, jax, jax.numpy as jnp
 from flax import nnx
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn
+from race_v2.training.utils import load_checkpoint
 jax.config.update("jax_enable_x64", True)
 for run in sys.argv[1:]:
-    cfg = json.load(open(f"input/input_3bpa_omat24_{run}_cue.json"))
+    cfg = json.load(open(f"research/input/input_3bpa_omat24_{run}_cue.json"))
     f = io.StringIO()
     an, ae, tr, va, te, st = T.build_datasets(cfg, f)
     gd, *_ = T.build_model(cfg, len(an), ae, st, f)

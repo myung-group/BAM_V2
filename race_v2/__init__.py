@@ -1,7 +1,7 @@
 """race_v2: the RACE v2 equivariant ML potentials (JAX / Flax NNX) of the BAM_V2 repository.
 
-Subpackages: models, data, training, inference, eval, export.  The old package name ``bam_omat24`` and its module
-names (``bam_omat24.train_3bpa`` ...) remain importable through the compatibility aliases in ``bam_omat24/``.
+Subpackages: models, data, training, inference, eval, export.  The old package name ``race_v2`` and its module
+names (``race_v2.training.train`` ...) remain importable through the compatibility aliases in ``race_v2/``.
 """
 
 import os as _os

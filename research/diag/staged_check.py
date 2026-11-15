@@ -5,7 +5,7 @@
    edges only for owned receivers, ghost rows refreshed from their owners between layers, ghost cotangents added
    back to the owners) gives the same energy and forces as the monolithic owner-mode graph.
 
-    python runs/diag/staged_check.py <config.json> <ckpt.pkl> <extxyz> <old_case_dir> [backend] [rep]
+    python research/diag/staged_check.py <config.json> <ckpt.pkl> <extxyz> <old_case_dir> [backend] [rep]
 """
 import sys
 
@@ -18,7 +18,7 @@ def main():
     cfg_path, ckpt, xyz, case_dir = sys.argv[1:5]
     backend = sys.argv[5] if len(sys.argv) > 5 else 'cue'
     rep = int(sys.argv[6]) if len(sys.argv) > 6 else 1
-    from bam_omat24.export_lammps import build, make_fn, graph_inputs, make_stage_fns, staged_energy_forces
+    from race_v2.export.lammps import build, make_fn, graph_inputs, make_stage_fns, staged_energy_forces
     import ase.io
     from ase.neighborlist import neighbor_list
     cfg, model, zs, e0 = build(cfg_path, ckpt, backend, 'float64')

@@ -3,7 +3,7 @@
 # RACEv2: Highly locally resolved MLIP
 
 RACEv2 is an improved version of RACE, an E(3)-equivariant message-passing interatomic potential. The code lives in the
-`bam_omat24` package (JAX + Flax NNX). Symmetry operations (irreps, spherical harmonics) use e3nn-jax; the heaviest
+`race_v2` package (JAX + Flax NNX). Symmetry operations (irreps, spherical harmonics) use e3nn-jax; the heaviest
 operation, the edge tensor product, runs on the CUDA kernels of NVIDIA cuequivariance-jax (`"tp_backend": "cue"`).
 The `_cue` suffix of the config files refers to these kernels; it is not a PyTorch package.
 
@@ -17,6 +17,12 @@ preparation tests are summarised in
 [`docs/RACE_LR_results_summary_ko_2026-11-11.pdf`](docs/RACE_LR_results_summary_ko_2026-11-11.pdf) (in Korean).
 
 ![RACEv2 architecture](docs/RACEv2_architecture_en.png)
+
+
+> **Layout (2026-11-16).** The package is `race_v2` (subpackages `models`, `data`, `training`, `inference`, `eval`,
+> `export`); the old names `bam_omat24` and `racev2_torch` remain importable as aliases.  Launchers are in `scripts/`,
+> representative configs in `configs/`, diagnostics and old configs in `research/`.  Old -> new names, commands and
+> the limits of the aliases: [docs/LAYOUT.md](docs/LAYOUT.md).
 
 ## Changes with respect to RACE V1 (final recipe)
 
@@ -177,7 +183,7 @@ Test set (1,000 structures, checkpoint selected on validation):
 In this single-seed comparison, which mixes the architecture and the optimizer (V1 also uses AMSGrad), RACEv2 is better
 on every metric of all three datasets: energy MAE 7–31 % lower, force RMSE 11–35 % lower, stress
 MAE 14–20 % lower. It is 2–2.4× slower per epoch: refreshing the SOAP eigenbases takes 40–60 % of a step
-(`runs/diag/soap_profile.py`).
+(`research/diag/soap_profile.py`).
 The per-atom energy errors (100–180 meV) are large for both recipes. With 89 elements and 10k structures, the
 element-specific weights (89 % of the RACEv2 parameters) see little data.
 
@@ -209,7 +215,7 @@ The selection rule was fixed before the runs (`docs/size_screening_protocol_2026
 2. among them, take the lowest validation force RMSE;
 3. ties (< 2 %) go to the smaller model.
 
-`runs/diag/select_size.py` applies the rule. The L5×128 run with AMSGrad is an optimizer control, not a size
+`scripts/eval/select_size.py` applies the rule. The L5×128 run with AMSGrad is an optimizer control, not a size
 candidate.
 
 ![Size screening curves](docs/fig_size_screen_100k.png)
@@ -249,7 +255,7 @@ last-5-epoch mean is a secondary number, not part of the rule.
 - Design and limits: `docs/RACE_LR_design.md`.
 
 **Benchmark.** The four systems of the 4G-HDNNP paper (Ko et al., Nat. Commun. 12, 398 (2021); Materials Cloud
-2020.137, CC BY 4.0), converted with `data_prep/convert_4ghdnnp.py` (`docs/DATASETS.md` §16).
+2020.137, CC BY 4.0), converted with `scripts/data/convert_4ghdnnp.py` (`docs/DATASETS.md` §16).
 
 **Local small-budget test** (not the final result).
 - Model: the 3BPA recipe at reduced size (hidden 64, 3 layers, lmax 2, float64). Both models use the same settings.
@@ -411,7 +417,7 @@ last-layer Bayesian uncertainty, water rerun with repulsion, MD22.
 
 ## LAMMPS (`pair_style race`, experimental)
 
-The trained model is exported to StableHLO (`bam_omat24/export_lammps.py`) and run from C++ through the PJRT CUDA
+The trained model is exported to StableHLO (`race_v2/export/lammps.py`) and run from C++ through the PJRT CUDA
 plugin that ships with jaxlib (`lammps/`). Neither Python nor JAX is needed at run time. The cuEquivariance kernels
 are recompiled in the C++ process from a record written at export and registered with the plugin (FFI).
 
@@ -455,8 +461,8 @@ On one GPU halo is 3.3× slower than owner (4.1 steps/s). Three costs cause this
 recompute each layer, the ghost shell doubles the nodes, and there are 12 sequential executions per step. Halo is
 for systems that do not fit on one GPU. The 2-GPU point is low because of slower host↔device copies with two ranks;
 not yet understood.
-Build: `bash lammps/build_lammps.sh <LAMMPS source> <build dir> [mpi|serial]`. Tests: `runs/diag/lammps_multi.py`,
-`runs/diag/lammps_weak.py`, `runs/diag/staged_check.py`.
+Build: `bash lammps/build_lammps.sh <LAMMPS source> <build dir> [mpi|serial]`. Tests: `research/diag/lammps_multi.py`,
+`research/diag/lammps_weak.py`, `research/diag/staged_check.py`.
 
 ## Installation
 
@@ -473,29 +479,29 @@ Tested with Python 3.12, jax 0.12, flax 0.12, optax 0.2.8, e3nn-jax 0.21, cuequi
 
 ```bash
 # training (e.g. the 3BPA final recipe)
-python -m bam_omat24.train_3bpa input/input_3bpa_omat24_abl3_full_s42_cue.json
+python -m race_v2.training.train configs/base/race_v2_base_recipe.json
 # tests
 pytest tests
 # LiPS MD (Fu et al. 2023 protocol) and observables
-python -m bam_omat24.md_run --help
-python -m bam_omat24.md_lips_analysis <md_output_dir>
+python -m race_v2.inference.md_run --help
+python -m race_v2.eval.md_lips_analysis <md_output_dir>
 # regenerate the methods PDF and figures (needs NanumGothic fonts in docs/fonts/, not in the repository)
 python docs/make_methods_pdf.py
 ```
 
 On GPUs always set `XLA_FLAGS=--xla_gpu_enable_triton_gemm=false`; it avoids an XLA miscompilation of float64 GEMMs.
-Example Slurm scripts for KISTI HANGANG are in `runs/diag/*.sh`.
+Example Slurm scripts for KISTI HANGANG are in `research/diag/*.sh`.
 
 ## Main files
 
 | File | Content |
 |---|---|
-| `bam_omat24/race_nnx.py` | RACEv2 model (layers, hill, Chebyshev residual, UFF repulsion, cue tensor product) |
-| `bam_omat24/train_3bpa.py` | training, evaluation, energy-constant refit |
-| `bam_omat24/long_range.py`, `race_lr_nnx.py` | RACE_LR: Gaussian-charge Coulomb / Ewald, charge equilibration, RACE subclass |
-| `bam_omat24/soap_optax.py`, `soap_grouped.py` | SOAP optimizer |
-| `bam_omat24/md_run.py`, `md_lips_analysis.py` | restartable Nosé–Hoover MD, LiPS observables |
-| `bam_omat24/export_lammps.py`, `lammps/` | StableHLO export, PJRT C++ runtime, `pair_style race` |
+| `race_v2/models/race.py` | RACEv2 model (layers, hill, Chebyshev residual, UFF repulsion, cue tensor product) |
+| `race_v2/training/train.py` | training, evaluation, energy-constant refit |
+| `race_v2/models/long_range.py`, `models/race_lr.py` | RACE_LR: Gaussian-charge Coulomb / Ewald, charge equilibration, RACE subclass |
+| `race_v2/training/soap_optax.py`, `soap_grouped.py` | SOAP optimizer |
+| `race_v2/inference/md_run.py`, `md_lips_analysis.py` | restartable Nosé–Hoover MD, LiPS observables |
+| `race_v2/export/lammps.py`, `lammps/` | StableHLO export, PJRT C++ runtime, `pair_style race` |
 | `input/` | configs of all benchmarks and ablations |
 | `docs/` | methods PDF, architecture and data figures with their scripts |
 

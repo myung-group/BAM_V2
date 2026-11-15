@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# JAX backend: race_v2 (old import name bam_omat24: compatibility aliases in bam_omat24/)
+# JAX backend: race_v2 (old import name race_v2: compatibility aliases in race_v2/)
 jax = [
     "jax>=0.8.2",
     "jaxlib>=0.8.2",
@@ -68,7 +68,7 @@ Homepage = "https://github.com/myung-group/BAM_V2"
 Repository = "https://github.com/myung-group/BAM_V2"
 
 [tool.setuptools.packages.find]
-include = ["race_v2*", "bam_omat24*"]
+include = ["race_v2*", "race_v2*"]
 
 [tool.setuptools.package-data]
 race_v2 = ["models/atomic_shells.json"]

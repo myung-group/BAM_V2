@@ -5,9 +5,9 @@ import numpy as np, jax, jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 from jax import shard_map
 from flax import nnx
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn, setup_mesh
-from bam_omat24.training_utils import (load_checkpoint, replicate_pytree, squeeze_batch, _loss_terms,
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn, setup_mesh
+from race_v2.training.utils import (load_checkpoint, replicate_pytree, squeeze_batch, _loss_terms,
                                        make_sharded_evaluate_step)
 cfg = json.load(open(sys.argv[1])); ck = sys.argv[2]
 jax.config.update("jax_enable_x64", True)
@@ -32,7 +32,7 @@ print("library eval_step se_total", float(m["energy_se_total"]), "n_graphs", flo
 res = nnx.merge(gd, params)(b)
 t = _loss_terms(res, b, 10.0, "huber", False, "scalar6", 0.0)
 print("eager _loss_terms se_total", float(t["energy_se_total"]), "| energy shape", res["energy"].shape, "target shape", b.globals["energy"].shape)
-import bam_omat24.training_utils as TU
+import race_v2.training.utils as TU
 orig = TU._loss_terms
 def patched(results, batch, *a, **k):
     out = orig(results, batch, *a, **k)

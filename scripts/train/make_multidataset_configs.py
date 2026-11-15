@@ -1,14 +1,14 @@
 """Configs for multi-dataset training on the aselmdb corpora of ~/Datasets (OC25, MPtrj, sAlex, OMol25, OPoly26,
 OMC25), streamed (data_format "stream", stream option "mixed"), 2026-11-11.  The recipe is the RACEv2 final recipe
-(input/input_3bpa_omat24_abl3_full_s42_cue.json); tasks and E0 tables follow BAM-torch examples/oc25_mptrj
+(configs/base/race_v2_base_recipe.json); tasks and E0 tables follow BAM-torch examples/oc25_mptrj
 (dataset_id -> task; get_enr_avg_per_element_*.txt -> stream.atom_energies_by_task).
 
-    python -I runs/diag/make_multidataset_configs.py --name multi_smoke --model polar --frames 300 --one-shard
-    python -I runs/diag/make_multidataset_configs.py --name multi_1M --model polar          (BAM-torch frame counts)
+    python -I scripts/train/make_multidataset_configs.py --name multi_smoke --model polar --frames 300 --one-shard
+    python -I scripts/train/make_multidataset_configs.py --name multi_1M --model polar          (BAM-torch frame counts)
 
 --frames N: max_frames_per_shard of every source (default: the BAM-torch input.json values = about 1M frames per
 weight unit); --one-shard: first shard of every source only (smoke tests); --sources: subset of the source names.
--> input/multi/<name>.json
+-> research/input/multi/<name>.json
 """
 import argparse
 import ast
@@ -67,7 +67,7 @@ def main():
     ap.add_argument('--polar', default=None, help='JSON object merged into "polar"')
     ap.add_argument('--sizes-dir', default=None,
                     help='directory of the size tables (<dir>/train, <dir>/valid), shared by configs with the same '
-                         'sources and cutoff; make them with runs/diag/multi_sizes.py (default: made in the run dir)')
+                         'sources and cutoff; make them with scripts/data/multi_sizes.py (default: made in the run dir)')
     ap.add_argument('--patience', type=int, default=5, help='lr_schedule_patience in (virtual) epochs')
     ap.add_argument('--phase1', action='store_true',
                     help='polar without charge groups, contact charge transfer and the slab correction')
@@ -127,7 +127,7 @@ def main():
         },
         'batch_size': args.batch,
         'note': f'multi-dataset stream training ({", ".join(args.sources)}), model {args.model}, cutoff {args.cutoff:g} A, '
-                f'E0 per task from {args.e0_dir}; made by runs/diag/make_multidataset_configs.py',
+                f'E0 per task from {args.e0_dir}; made by scripts/train/make_multidataset_configs.py',
     })
     c['lr_schedule_patience'] = args.patience
     if args.sizes_dir:

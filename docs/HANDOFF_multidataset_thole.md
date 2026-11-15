@@ -1,6 +1,6 @@
 # Handoff: multi-dataset aselmdb training and Thole-type electrostatics (RACE_POLAR)
 
-Written 2026-11-11 on the user's local PC (RTX 4090, 12 cores, conda env `jax`). The request: train `bam_omat24`
+Written 2026-11-11 on the user's local PC (RTX 4090, 12 cores, conda env `jax`). The request: train `race_v2`
 on the corpora in `~/Datasets` (alex, mptrj, oc25, omc25, omol25, opoly26; fairchem-style `.aselmdb` shards), as
 was done with BAM-torch (`~/Python/BAM-torch/examples/oc25_mptrj`), and port the Thole-type electrostatics of
 `~/Python/BAM-torch/bam_ufo/model/thole.py`.
@@ -45,7 +45,7 @@ All six corpora decode with `stream_io.decode_row` (checked on 200 rows of every
 | opoly26/train | 80 | 73,786 | open | E, F, charge, spin, Löwdin / Mulliken, multipoles | |
 | omc25/train | 40 | 621,756 | periodic | E, F, stress | |
 
-New in `bam_omat24/stream_io.py` (module docstring has the full list):
+New in `race_v2/data/stream_io.py` (module docstring has the full list):
 
 - A source is `"aselmdb:<dir>"` as before, or a dict `{"path": "aselmdb:<dir>", "name", "max_frames_per_shard",
   "subset_seed", "meta_dir", "task", "task_rules", "energy_key", "charge_label_key", "charge_label_scale",
@@ -62,25 +62,25 @@ New in `bam_omat24/stream_io.py` (module docstring has the full list):
   `get_enr_avg_per_element_*.txt` are read directly).
 - The size table also records the cell volume and lengths (`sizes.npz` `cell`, meta `max_cell_volume`,
   `max_cell_length`, `n_periodic`); RACE_POLAR sizes its reciprocal sums from them.
-- Loss (`training_utils.py`): the stress term and the stress metrics use `globals['stress_w']` (OC25 and the
+- Loss (`training/utils.py`): the stress term and the stress metrics use `globals['stress_w']` (OC25 and the
   molecules have no stress); the charge loss uses `nodes['ref_charges_w']` (rows without labels).
 - Speed (one process, vesin): 0.3–1.9 ms per structure for read + graph at cutoff 6 Å, so a size pass of about
   1 M structures per source takes minutes with 12 workers.
 
-Config generator: `runs/diag/make_multidataset_configs.py` (frame counts per shard default to the BAM-torch
+Config generator: `scripts/train/make_multidataset_configs.py` (frame counts per shard default to the BAM-torch
 `input.json` values; `--one-shard --frames N` for small tests). Tasks: oc25 1, PBE (mptrj + alex) 2, omol25 3,
 opoly26 4, PBE+U 5, omc25 6, as the BAM-torch `dataset_id`s.
 
 ## 4. Thole electrostatics
 
-- `bam_omat24/thole.py`: the electrostatics (pure `jax.numpy`). Module docstring = the energy functional and the
+- `race_v2/models/thole.py`: the electrostatics (pure `jax.numpy`). Module docstring = the energy functional and the
   differences from the torch code:
   - static shapes: every periodic graph keeps its `n_k` reciprocal vectors of smallest |k| inside the sphere
     `k_max` out of a fixed integer half grid; a graph that needs more gets NaN energies (raise `polar.n_k`);
   - open-boundary graphs use dense N × N pair arrays of the padded batch;
   - one CG for the whole batch (`jax.scipy.sparse.linalg.cg`, implicit differentiation, also for the second
     derivative that force training needs).
-- `bam_omat24/race_polar_nnx.py`: `"model": "RACE_POLAR"` = RACE_LR (charge / spin embedding, task table; Qeq off)
+- `race_v2/models/race_polar.py`: `"model": "RACE_POLAR"` = RACE_LR (charge / spin embedding, task table; Qeq off)
   + the heads of the torch block (multipole, quadrupole, polarizability, Fukui) + `thole.thole_energy`. Returns
   `charges` and `dipole` next to the RACE outputs. Config `"polar"` (`thole.POLAR_DEFAULTS`).
 - Loss: `"charge_weight"` (per-source `charge_label_key`), `"dipole_weight"`; validation lines print `q_RMSE` and
@@ -185,7 +185,7 @@ tuning (`qatom_lambda`, its notes of 2026-10-18).
 
 ## 5b. Prepared for the first real run (2026-11-11; **not started**: show the user the commands first)
 
-**Bug fixed while benchmarking:** started with `python -m bam_omat24.train_3bpa`, every stream worker re-imported
+**Bug fixed while benchmarking:** started with `python -m race_v2.training.train`, every stream worker re-imported
 the package and created its own CUDA context (about 0.4–0.6 GB of GPU memory per worker, and a
 `BrokenProcessPool` when the GPU was full). `stream_io.worker_context()` now starts the fork server with
 `JAX_PLATFORMS=cpu`, `CUDA_VISIBLE_DEVICES=` and without `BAM_DISTRIBUTED`. **The peak-memory numbers of §4b and
@@ -208,11 +208,11 @@ For comparison, the BAM-torch run notes give 284 ms per step of 8 structures (35
 follows the largest cell of the whole subset (25,544 Å³ in 6000 OC25 rows against 19,222 Å³ in the benchmark
 subset).
 
-Configs (made with `runs/diag/make_multidataset_configs.py --name multi_full_<size> --model polar --layers ..
+Configs (made with `scripts/train/make_multidataset_configs.py --name multi_full_<size> --model polar --layers ..
 --hidden .. --lmax 2 --cutoff 6.0 --batch 4 --buckets 4 --workers 8 --steps-per-epoch 25000 --epochs 1000
 --patience 10 --sizes-dir runs/multi/sizes_full_c6`):
 
-- `input/multi/multi_full_L4x96.json`, `input/multi/multi_full_L5x128.json`: the BAM-torch frame counts
+- `research/input/multi/multi_full_L4x96.json`, `research/input/multi/multi_full_L5x128.json`: the BAM-torch frame counts
   (10,249,550 training structures: oc25 1.00 M, mptrj 1.00 M, alex 1.00 M, omol25 2.00 M, omol25_nbo 1.25 M,
   opoly26 3.00 M, omc25 1.00 M; validation 16,284), all with meta-data, OC25 as slabs.
 - One virtual epoch = 25,000 steps of about 4 structures = about 100,000 structures (about 43 min for 4 × 96,
@@ -227,8 +227,8 @@ Commands (from the repository root):
 
 ```
 conda activate jax
-BAM_NEIGHBORS=vesin python -I runs/diag/multi_sizes.py input/multi/multi_full_L4x96.json --workers 11
-bash runs/diag/run_multi.sh multi_full_L4x96
+BAM_NEIGHBORS=vesin python -I scripts/data/multi_sizes.py research/input/multi/multi_full_L4x96.json --workers 11
+bash scripts/train/run_multi.sh multi_full_L4x96
 ```
 
 The first makes the size tables in `runs/multi/sizes_full_c6/{valid,train}` (CPU only; 3000–6000 structures per

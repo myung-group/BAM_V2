@@ -1,10 +1,10 @@
 """Configs of the OMol25 pretraining pilot (2026-11-06): which charge handling and which optimizer / precision to
-use for a RACEv2 pretraining on OMol25, compared at the same budget on a subset made by data_prep/convert_omol25.py.
+use for a RACEv2 pretraining on OMol25, compared at the same budget on a subset made by scripts/data/convert_omol25.py.
 
-    python -I runs/diag/make_omol_configs.py <subset_dir> [--tag omol100k] [--epochs 30] [--layers 5 --hidden 128]
+    python -I scripts/train/make_omol_configs.py <subset_dir> [--tag omol100k] [--epochs 30] [--layers 5 --hidden 128]
         [--models race race_cs racelr racelr_q] [--opts soap_f64 amsgrad_f32] [--seed 42] [--batch 16]
         [--elements universal|subset] [--n-tasks 8]
--> input/omol/<tag>[_u94]_<model>_<opt>_s<seed>.json, logs and checkpoints under runs/omol/<same name>/
+-> research/input/omol/<tag>[_u94]_<model>_<opt>_s<seed>.json, logs and checkpoints under runs/omol/<same name>/
 
 --elements universal (default since 2026-11-10; name gets "_u94"): atomic_numbers = Z 1..94, so that a model trained
         on OMol25 can later be continued on, or get heads for, OMat24 / MPtrj / Alexandria / OC20 without changing the
@@ -12,7 +12,7 @@ use for a RACEv2 pretraining on OMol25, compared at the same budget on a subset 
         from the subset is 0.0 and their rows of the species tables keep their initial values (zero gradient; the
         SOAP arms get soap_species_adam "any_axis" for this, keep weight_decay 0).
         subset: the elements of the subset only (the pilot configs of 2026-11-06).
---n-tasks N (default 8; RACE_LR arms only): reserves the zero-initialised task embedding table (race_lr_nnx.py,
+--n-tasks N (default 8; RACE_LR arms only): reserves the zero-initialised task embedding table (models/race_lr.py,
         long_range "n_tasks").  OMol25 is task 0 (no 'task' key in the data); 0 switches the slot off.  The plain
         "race" arm has no slot.
 
@@ -25,7 +25,7 @@ opts    soap_f64     the RACEv2 recipe: SOAP, species tables by Adam, float64
 Every arm reads total_charge_key / total_spin_key, so all arms see identical graphs.
 Periodic subsets (meta.json "periodic", e.g. convert_omol25.py --allow-periodic on an OMat24-type aselmdb) get
 periodic true, the stress loss when the subset has stress (weight --stress-weight, the OAM value 10), and the Ewald
-settings --ewald ALPHA N_REAL N_RECIP for the Qeq arms (choose them with runs/diag/check_ewald.py).
+settings --ewald ALPHA N_REAL N_RECIP for the Qeq arms (choose them with scripts/data/check_ewald.py).
 """
 import argparse
 import json
@@ -61,7 +61,7 @@ def main():
     has_q = bool(meta.get('ref_charges_key'))
     periodic = bool(meta.get('periodic', False))
     if periodic and args.ewald is None and any(m.startswith('racelr') for m in args.models):
-        raise SystemExit('periodic subset: give --ewald ALPHA N_REAL N_RECIP (runs/diag/check_ewald.py)')
+        raise SystemExit('periodic subset: give --ewald ALPHA N_REAL N_RECIP (scripts/data/check_ewald.py)')
     numbers, e0 = [int(z) for z in meta['atomic_numbers']], [float(e) for e in meta['atom_energies']]
     if args.elements == 'universal':
         if max(numbers) > Z_MAX:

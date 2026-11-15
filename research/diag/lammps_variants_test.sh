@@ -1,5 +1,5 @@
 #!/bin/bash
-# C++ runtime test of the 4 exported variants only (exports from runs/diag/lammps_variants.sh), unfiltered output.
+# C++ runtime test of the 4 exported variants only (exports from research/diag/lammps_variants.sh), unfiltered output.
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work

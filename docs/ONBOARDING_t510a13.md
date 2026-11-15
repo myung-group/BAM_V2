@@ -6,7 +6,7 @@
 
 ## 1. 프로젝트 요약
 
-RACEv2는 JAX + Flax NNX로 구현한 E(3) 등변 메시지 전달 원자간 포텐셜(MLIP)이다(`bam_omat24/race_nnx.py`). 층마다 stratum
+RACEv2는 JAX + Flax NNX로 구현한 E(3) 등변 메시지 전달 원자간 포텐셜(MLIP)이다(`race_v2/models/race.py`). 층마다 stratum
 readout이 있어 총 에너지가 층별 stratum의 합이며, 깊이에 따라 body order가 커진다. RACE V1 대비 추가한 요소는 원자 중심 곱셈 인자
 (`x_mode=basis`), hill 크기 제어, Chebyshev형 층 점화식 + LayerScale, 방사 기저의 Gaussian prior + 원소 shell 채널, UFF 비결합
 반발 prior(학습되는 전역 스케일 하나)이고, 학습은 SOAP(float64) + 학습 후 에너지 상수의 닫힌형 재적합이다. 모든 보고 수치는 공식
@@ -48,13 +48,13 @@ potential: RACEv2"이며 OAM/Matbench 결과가 나오기 전에는 범용 모�
   BAM_V2/
     CLAUDE.md                              규칙 요약
     README.md                              결과(영어)
-    bam_omat24/                            RACEv2 코어: race_nnx.py, train_3bpa.py, soap_*.py, data_3bpa.py, export_lammps.py,
-                                           long_range.py·race_lr_nnx.py(RACE_LR), stream_*.py, soap_laplace.py, bayes_lastlayer.py
+    race_v2/                            RACEv2 코어: models/race.py, training/train.py, soap_*.py, data/xyz_graphs.py, export/lammps.py,
+                                           long_range.py·models/race_lr.py(RACE_LR), stream_*.py, soap_laplace.py, bayes_lastlayer.py
     bam_3bpa/, bam_torch/, bam_torch_cue/  다른 백엔드(건드리지 않음)
     lammps/                                PJRT C++ 런타임, pair_race, build_lammps.sh
     input/                                 설정 681개(369개가 t589a02 경로 포함)
-    runs/diag/                             Slurm 스크립트·진단(63개 .sh, git에 force-add; 61개가 t589a02 경로 포함)
-    data_prep/, dataset_3BPA/, tests/
+    research/diag/                             Slurm 스크립트·진단(63개 .sh, git에 force-add; 61개가 t589a02 경로 포함)
+    scripts/data/, research/dataset_3BPA/, tests/
     docs/                                  HANDOFF, RACE_LR_design, paper/RACEv2_draft, stream_loader_design, SOAP_Laplace,
                                            torch_port_scope, LOCAL_TEST_PROMPT, DATASETS, benchmark audit, methods PDF 등
     runs/                                  git 무시. 현재 체크포인트 .gauge.pkl 10개만 있음(이미 전송된 것)
@@ -71,12 +71,12 @@ potential: RACEv2"이며 OAM/Matbench 결과가 나오기 전에는 범용 모�
 
 | 항목 | 상태 | 먼저 돌릴 검증 작업 |
 |---|---|---|
-| RACE_LR (Qeq + 장거리 정전기) | 코드·단위테스트 작성, 미실행 | `runs/diag/race_lr_check.sh` (GPU 1장 약 5분) |
-| LAMMPS halo 저장 잔차 VJP / owned-row bucket | 컴파일만, 실행 안 함 | `runs/diag/lammps_halo_res.sh` |
-| 스트리밍 로더 | JAX 없는 테스트 4/4 통과(로그인 노드), 그래프·로더 동등성 테스트는 skip | `runs/diag/stream_check.sh` (CPU; aselmdb에는 `pip install lmdb` 필요) |
+| RACE_LR (Qeq + 장거리 정전기) | 코드·단위테스트 작성, 미실행 | `research/diag/race_lr_check.sh` (GPU 1장 약 5분) |
+| LAMMPS halo 저장 잔차 VJP / owned-row bucket | 컴파일만, 실행 안 함 | `research/diag/lammps_halo_res.sh` |
+| 스트리밍 로더 | JAX 없는 테스트 4/4 통과(로그인 노드), 그래프·로더 동등성 테스트는 skip | `research/diag/stream_check.sh` (CPU; aselmdb에는 `pip install lmdb` 필요) |
 | `stream` 데이터 형식의 `train_3bpa` 통합(2c') | 미착수 | — |
-| SOAP-Laplace | 이론 + 골격, 미실행 | `runs/diag/soap_laplace.sh` |
-| last-layer Bayes (`bayes_lastlayer.py`) | 미실행 | `runs/diag/bayes_lastlayer.sh` (`MAX_TEST=200` 먼저) |
+| SOAP-Laplace | 이론 + 골격, 미실행 | `research/diag/soap_laplace.sh` |
+| last-layer Bayes (`bayes_lastlayer.py`) | 미실행 | `research/diag/bayes_lastlayer.sh` (`MAX_TEST=200` 먼저) |
 | 논문 초안 | 텍스트 | — (TODO/CHECK 채우기) |
 
 **다음 작업 순서**
@@ -105,7 +105,7 @@ potential: RACEv2"이며 OAM/Matbench 결과가 나오기 전에는 범용 모�
 4. 패치: site-packages에서 `patch -p0 --dry-run < env/cuequivariance_jax_dce_shim.patch` 로 먼저 확인 후 적용
    (대상 `cuequivariance_jax/segmented_polynomials/segmented_polynomial.py`, 끝 4줄: DCE 규칙 시그니처 shim). 로그인 노드에서는 JAX를 import하지 않는다.
 5. 항상 `XLA_FLAGS=--xla_gpu_enable_triton_gemm=false`. 검증은 GPU 작업에서 `pytest tests`.
-6. 스크립트(`runs/diag/*.sh` 등)가 `~/.conda/envs/bam_cue`를 가정하면 `/scratch/t510a13/envs/bam_cue`로 바꿔야 한다(먼저 grep으로 확인).
+6. 스크립트(`research/diag/*.sh` 등)가 `~/.conda/envs/bam_cue`를 가정하면 `/scratch/t510a13/envs/bam_cue`로 바꿔야 한다(먼저 grep으로 확인).
 
 **할당·파티션 확인용 명령(사용자가 실행; `!` 접두어로 이 세션에서도 가능)**
 ```
@@ -118,12 +118,12 @@ sbatch --test-only --comment="field=<field>;appl=<appl>" -p <partition> --gres=g
 이전 계정은 SRU 소진으로 2026-11-06에 sbatch가 거부됐다(문의: account@ksc.re.kr). 이 계정의 할당 여부는 위 명령으로 확인해야 한다.
 
 **데이터 경로 변경 계획(파일은 아직 수정 안 함)**
-- 설정(369개)의 `/scratch/t589a02/` 접두어는 모두 `datasets_ext` 아래이고(937곳), `runs/diag/*.sh` 61개에도 t589a02 경로가 있다.
+- 설정(369개)의 `/scratch/t589a02/` 접두어는 모두 `datasets_ext` 아래이고(937곳), `research/diag/*.sh` 61개에도 t589a02 경로가 있다.
 - `data_splits.tar.gz`는 `scratch/t589a02/...` 구조라, 경로 단축을 위해 풀 때 두 단계를 벗긴다(108개 항목, 약 1 GB; 소량이지만 Slurm 또는 dm 노드 권장):
   `mkdir -p /scratch/t510a13/data && tar -xzf data_splits.tar.gz -C /scratch/t510a13/data --strip-components=2`
   → `/scratch/t510a13/data/datasets_ext/...`, `/scratch/t510a13/data/oam_data/refs/`.
 - 그 뒤 한 번에 치환(RESTORE.md의 sed 예시와 같은 방식, 범위를 `/scratch/t589a02/` 전체로 넓힘):
-  `sed -i "s#/scratch/t589a02/#/scratch/t510a13/data/#g" input/*.json` 와 필요한 스크립트. 실행 전 `git diff --stat`으로 확인하고, 다른 용도의 t589a02 경로(예: `/home01/t589a02`, 소스 코드 경로)는 따로 본다.
+  `sed -i "s#/scratch/t589a02/#/scratch/t510a13/data/#g" research/input/*.json` 와 필요한 스크립트. 실행 전 `git diff --stat`으로 확인하고, 다른 용도의 t589a02 경로(예: `/home01/t589a02`, 소스 코드 경로)는 따로 본다.
 - 패키지에 **없는** 데이터: md22, qm9(변환기 스크립트만 있음), OAM 원시 샤드(`oam_data/*_train|val`, MPtrj raw; refs 3개만 있음), LAMMPS 소스/빌드, 3BPA 외 `rmd17`·`water`·`si` 는 있음. 필요 시 `docs/DATASETS.md`의 다운로드/변환 절차로 재구성.
 - 대안: `/scratch/t589a02` 심볼릭 링크는 다른 계정 영역이므로 만들지 않는다.
 
@@ -139,6 +139,6 @@ sbatch --test-only --comment="field=<field>;appl=<appl>" -p <partition> --gres=g
 1. 이 계정의 SRU 할당과 사용 가능한 파티션·`--comment` 값(field/appl)은 무엇인가? (위 확인 명령 결과를 알려 주면 된다.)
 2. 체크포인트: 원 계정에서 core 10개만 옮길지, 125개 전체(302.6 GB)를 옮길지? 이미 와 있는 `.gauge.pkl` 10개는 core 그대로인가?
 3. 환경 설치를 어디서·어떻게 할까(Slurm 작업으로 제출해도 되는지, `/scratch/t510a13/envs`에 두는 것으로 괜찮은지; `/scratch`는 15일 미접근 삭제 대상이므로 환경 보관 방식)?
-4. 데이터: `data_splits.tar.gz`를 `/scratch/t510a13/data`에 풀고 `input/*.json`·`runs/diag/*.sh` 경로를 sed로 바꿔도 되는가? 변경분을 커밋할지, 로컬 변경으로만 둘지? md22/qm9/OAM 원시 샤드는 필요한가?
+4. 데이터: `data_splits.tar.gz`를 `/scratch/t510a13/data`에 풀고 `research/input/*.json`·`research/diag/*.sh` 경로를 sed로 바꿔도 되는가? 변경분을 커밋할지, 로컬 변경으로만 둘지? md22/qm9/OAM 원시 샤드는 필요한가?
 5. 첫 작업으로 무엇을 할까: HANDOFF §8의 검증 작업(stream_check부터)인가, 남은 절제인가, RACE_LR 검증인가? 방법론(수학·물리 기반) 쪽 우선순위가 있는가?
 6. 이 계정에서 계속 `racev2` 브랜치에 커밋하고 push는 사용자가 하는 방식(원격 `origin` URL 재설정 포함) 그대로 가는가?

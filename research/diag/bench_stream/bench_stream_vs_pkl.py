@@ -7,7 +7,7 @@ differs.  Measures
   C  training: structures/s of n_steps optimiser steps fed by each path, against the GPU-only rate (the same steps on
      batches already in memory = the ideal, no data waiting), and the main-thread time spent getting the next batch.
 
-usage (repo root):  python runs/diag/bench_stream/bench_stream_vs_pkl.py <config.json> <out.json> [--workers 1,2,4,8]
+usage (repo root):  python research/diag/bench_stream/bench_stream_vs_pkl.py <config.json> <out.json> [--workers 1,2,4,8]
                     [--steps 300] [--override '{"x64": false}']
 """
 import argparse
@@ -23,7 +23,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / 'bam_omat24'))     # stream_io / stream_plan are top-level modules
+sys.path.insert(0, str(ROOT / 'race_v2' / 'data'))     # stream_io / stream_plan are top-level modules
 
 
 def main():
@@ -36,17 +36,17 @@ def main():
     a = ap.parse_args()
     cfg = {**json.load(open(a.config)), **json.loads(a.override)}
     import jax
-    from bam_omat24 import train_3bpa as T
+    from race_v2.training import train as T
     if cfg.get('x64'):
         jax.config.update('jax_enable_x64', True)
     import jax.numpy as jnp
     from flax import nnx
-    from bam_omat24.data_3bpa import load_frames, build_graphs, GraphListDataset
-    from bam_omat24.data_nnx import BucketedDataLoader, fixed_collate_fn, setup_mesh, stack_batches_for_devices
-    from bam_omat24.training_utils import make_sharded_train_step, replicate, replicate_pytree
+    from race_v2.data.xyz_graphs import load_frames, build_graphs, GraphListDataset
+    from race_v2.data.loaders import BucketedDataLoader, fixed_collate_fn, setup_mesh, stack_batches_for_devices
+    from race_v2.training.utils import make_sharded_train_step, replicate, replicate_pytree
     import stream_io as S
     import stream_plan as P
-    from bam_omat24.stream_data import StreamLoader
+    from race_v2.data.stream_data import StreamLoader
 
     os.chdir(ROOT)
     xyz = cfg['train_path']; cutoff = float(cfg.get('cutoff', 5.0))

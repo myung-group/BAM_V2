@@ -456,7 +456,7 @@ def main():
 
     def evaluate(gs, kappa, lam, seed, netE, netF, dump=None):
         """Calibration with two centres: the sample mean ('mean') and the network itself ('map', sigma = sample std).
-        dump: path of an npz with the per-structure arrays (OOD analyses, runs/diag/ood_summary.py)."""
+        dump: path of an npz with the per-structure arrays (OOD analyses, research/diag/ood_summary.py)."""
         Es, Fs = mc(gs, kappa, lam, seed) if a.predictive == 'mc' else mc_lin(gs, kappa, lam, seed, netE, netF)
         if not (np.isfinite(Es).all() and np.isfinite(Fs).all()):
             return None

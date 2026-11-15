@@ -47,7 +47,7 @@
 동의합니다. 무보정(zero-shot) 평가가 되려면 원소별 보정을 사전학습 학습 분할로만 맞춰야 합니다.
 
 ```bash
-python -m bam_omat24.predict refit <ckpt> --xyz <사전학습 학습 분할 표본.xyz> --max-frames 20000
+python -m race_v2.inference.predict refit <ckpt> --xyz <사전학습 학습 분할 표본.xyz> --max-frames 20000
 ```
 
 - 결과는 `<ckpt>.species_refit.json`으로 저장되고, `load`가 자동으로 적용합니다.

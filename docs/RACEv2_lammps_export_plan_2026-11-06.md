@@ -30,7 +30,7 @@ LAMMPS가 이미 만든 이웃 목록의 쌍 벡터 r_ij = x_j − x_i 를 그�
 
 ## 단계
 
-1. **내보내기와 검증 (파이썬, GPU 작업 1개)** — `bam_omat24/export_lammps.py`, `runs/diag/export_lammps.sh`
+1. **내보내기와 검증 (파이썬, GPU 작업 1개)** — `race_v2/export/lammps.py`, `research/diag/export_lammps.sh`
    - LiPS 최종 모델(주기계, float64)을 e3nn / cue 백엔드로 각각 내보낸다.
    - 내보낸 함수를 다시 불러 LiPS 시험 구조 20개에서 원래 모델과 에너지·힘·응력을 비교한다(float64라 1e-10 수준 기대).
    - cue 버전의 custom_call 이름 목록을 기록한다.

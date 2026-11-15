@@ -1,7 +1,7 @@
 """Time breakdown of one training step on a real fixed-shape OAM batch: inference (energy + forces), loss + gradient,
 SOAP update (regular step / eigenbasis refresh step) and AMSGrad update, for float64 or float32.
 
-    python runs/diag/soap_profile.py --dtype float64 input/input_3bpa_omat24_oam64_salex_v2_s42_cue.json [...]
+    python research/diag/soap_profile.py --dtype float64 research/input/input_3bpa_omat24_oam64_salex_v2_s42_cue.json [...]
 
 float32 is timed even though float32 SOAP diverges in training (timing only).  Each number is the median of repeated
 jitted calls after compilation (jax.block_until_ready).
@@ -17,9 +17,9 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import BucketedDataLoader, fixed_collate_fn
-from bam_omat24.training_utils import compute_loss
+from race_v2.training import train as T
+from race_v2.data.loaders import BucketedDataLoader, fixed_collate_fn
+from race_v2.training.utils import compute_loss
 
 
 def bench(f, *args, n=15):

@@ -1,7 +1,7 @@
 """Per-element energy refit from model energies of training frames (JAX-free).  Input: the extxyz of
-refit_subset.py (reference energies) and the JSONL written by bam_omat24/relax_wbm.py run on it with a huge fmax
+refit_subset.py (reference energies) and the JSONL written by race_v2/inference/relax_wbm.py run on it with a huge fmax
 (no relaxation: initial_energy = model energy of the training geometry).  Least squares of (E_model - E_ref) on the
-element counts, minimum norm; writes <ckpt>.species_refit.json in the format of bam_omat24/predict.py
+element counts, minimum norm; writes <ckpt>.species_refit.json in the format of race_v2/inference/predict.py
 (delta_eV is ADDED per atom of each element to the predicted total energy).
 
     python -I refit_fit.py --xyz <subset.extxyz> --relaxed <dir with relaxed_*.jsonl> --ckpt <ckpt.pkl> --atomic-numbers-from <config.json>"""

@@ -2,7 +2,7 @@
 # pair_style race mode halo weak scaling (2026-11-06): 5312 LiPS atoms per GPU, 1 / 2 / 4 GPUs on one node, 8 GPUs on
 # two nodes (Slingshot); energies / forces checked against the 1-GPU run (replicated frame).
 # usage: sbatch -J rv2_weak -p normal --comment="field=sciai;appl=jax" -N 2 --exclusive --ntasks-per-node=4 \
-#          --gres=gpu:4 -t 01:30:00 runs/diag/lammps_weak.sh
+#          --gres=gpu:4 -t 01:30:00 research/diag/lammps_weak.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work
@@ -17,7 +17,7 @@ export LD_LIBRARY_PATH=$(ls -d $SP/nvidia/*/lib | tr '\n' ':')$SP/cuequivariance
 export PATH=$SP/nvidia/cuda_nvcc/bin:$PATH
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false --xla_gpu_cuda_data_dir=$SP/nvidia/cuda_nvcc"
-python runs/diag/lammps_weak.py --mpi /scratch/t510a13/src/lammps-racev2-mpi-build/lmp_racev2_mpi \
+python research/diag/lammps_weak.py --mpi /scratch/t510a13/src/lammps-racev2-mpi-build/lmp_racev2_mpi \
   --plugin $SP/jax_plugins/xla_cuda12/xla_cuda_plugin.so --export $OUT \
   --xyz /scratch/t510a13/data/datasets_ext/lips/fu_test.xyz --base 4 4 4 --steps 200 \
   --runs 1:1:1x1x1 2:1:2x1x1 4:1:2x2x1 8:2:2x2x2

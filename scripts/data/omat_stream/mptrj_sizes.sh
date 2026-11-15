@@ -1,7 +1,7 @@
 #!/bin/bash
 # Size tables of the MPtrj lmdb shards for another cutoff (CPU only, one node; 2026-11-13).  Same filters as
 # mptrj_prep.sh.  usage (from /scratch/t510a13/race_v2/work):
-#   $ sbatch -J mptrjsz -p exclusive06 --comment="field=sciai;appl=jax" --nodes=1 --exclusive --gres=gpu:4 -t 01:30:00 --exclude=node[0449-0484,0499-0576] --export=ALL,CUT=7.0 runs/diag/omat_stream/mptrj_sizes.sh
+#   $ sbatch -J mptrjsz -p exclusive06 --comment="field=sciai;appl=jax" --nodes=1 --exclusive --gres=gpu:4 -t 01:30:00 --exclude=node[0449-0484,0499-0576] --export=ALL,CUT=7.0 scripts/data/omat_stream/mptrj_sizes.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work
@@ -13,7 +13,7 @@ CUT=${CUT:?cutoff}; TAG=c${CUT%.0}; D=/scratch/t510a13/data; OUT=$D/mptrj_lmdb; 
 echo "node $(hostname)  cpus $(OMP_NUM_THREADS= nproc)  cutoff $CUT  $(date '+%F %T')"
 for S in train val; do        # train first: 32 files in parallel; val is one file (one task)
   echo "== size pass $S  $(date +%T)"
-  python -I bam_omat24/stream_io.py sizes --source aselmdb:$OUT/$S --cutoff $CUT --out $SZ/mptrj_${S}_$TAG \
+  python -I race_v2/data/stream_io.py sizes --source aselmdb:$OUT/$S --cutoff $CUT --out $SZ/mptrj_${S}_$TAG \
     --workers 250 --filters $OUT/filters.json 2>&1 | tail -n 3 &
 done
 wait

@@ -1,7 +1,7 @@
 #!/bin/bash
 # LAMMPS plan step 2 (2026-11-06): export the LiPS model (e3nn backend, float64) with C++ test cases, then run the
 # PJRT C++ runtime (lammps/test_pjrt, built on glogin) on them and compare with the JAX outputs.
-# usage: sbatch -J rv2_cpp -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 00:40:00 runs/diag/lammps_step2.sh
+# usage: sbatch -J rv2_cpp -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 00:40:00 research/diag/lammps_step2.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work
@@ -11,7 +11,7 @@ conda activate bam_cue
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
 OUT=runs/lammps_export/lips_e3nn
-python -m bam_omat24.export_lammps input/input_3bpa_omat24_lipsF_fu_s42_cue.json \
+python -m race_v2.export.lammps research/input/input_3bpa_omat24_lipsF_fu_s42_cue.json \
   --ckpt runs/lipsF_fu_s42_cue/ckpt_lipsF_fu_s42_cue.gauge.pkl --out $OUT --backend e3nn \
   --buckets 128:4096 256:8192 --cases /scratch/t510a13/data/datasets_ext/lips/fu_test.xyz 2>&1 \
   | grep -E "exported|written|Error|error|Traceback"

@@ -2,7 +2,7 @@
 2S+1 = 1 for even N_e and 2 for odd N_e (the lowest spin state).  For datasets that store no spin (e.g. the 4G-HDNNP
 files); this ASSUMES the reference DFT used the lowest multiplicity.
 
-usage: python -I data_prep/add_spin_parity.py <in.xyz> <out.xyz> [--charge-key charge] [--spin-key spin]
+usage: python -I scripts/data/add_spin_parity.py <in.xyz> <out.xyz> [--charge-key charge] [--spin-key spin]
 Prints the counts per (charge, multiplicity).  The input file is not modified.
 """
 import argparse

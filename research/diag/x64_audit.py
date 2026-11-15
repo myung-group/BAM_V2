@@ -2,7 +2,7 @@
 SOAP state, soap_state_dtype)?  Traces loss + gradient of one float32 batch and lists every equation with a float64
 output, grouped by source line.
 
-    python runs/diag/x64_audit.py input/input_3bpa_omat24_<run>_cue.json
+    python research/diag/x64_audit.py research/input/input_3bpa_omat24_<run>_cue.json
 """
 import collections
 import functools
@@ -15,9 +15,9 @@ import jax
 import jax.numpy as jnp
 from jax._src import source_info_util
 
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import fixed_collate_fn
-from bam_omat24.training_utils import compute_loss
+from race_v2.training import train as T
+from race_v2.data.loaders import fixed_collate_fn
+from race_v2.training.utils import compute_loss
 
 jax.config.update('jax_enable_x64', True)        # after the imports: train_3bpa switches it off at import
 

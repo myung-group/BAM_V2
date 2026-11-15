@@ -5,7 +5,7 @@ numpy>=2.2.6
 tqdm>=4.67.1
 natsort>=8.0.0
 
-# ── JAX backend (bam_omat24, bam_3bpa) ──────────────────────────────────────
+# ── JAX backend (race_v2, bam_3bpa) ──────────────────────────────────────
 # pip install -e ".[jax]"
 jax>=0.8.2
 jaxlib>=0.8.2

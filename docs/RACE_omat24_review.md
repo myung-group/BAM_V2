@@ -1,4 +1,4 @@
-# `bam_omat24/race_nnx.py` review and 3BPA reproduction setup
+# `race_v2/models/race.py` review and 3BPA reproduction setup
 
 Branch: `refactor/race-omat24-canonical`. Environment: conda env `bam_v2`
 (Python 3.12.15, jax 0.12.0.1 + CUDA 12, e3nn-jax 0.21.0, flax 0.12.10,
@@ -10,13 +10,13 @@ unreachable NVIDIA extra index (no version pins were changed).
 
 | File | Content |
 | --- | --- |
-| `bam_omat24/race_nnx.py` | `RACEXReadout` (x-feature readout: indexed Linear → Linear → gate → Linear), `RACEConvolution` (layer-norm → Linear → TP with SH × radial MLP → scatter → **second TP with x_feats** → Linear + per-species skip → gate → per-layer energy readout), `RACE` (species embedding, `x_linear`, `n_layers` convolutions, `x_readouts`, `f_readouts`, variance heads `frc_logvar` 6x0e / `energy_logvar` / `stress_logvar`). |
-| `bam_omat24/utils.py` | `bessel_basis`, `polynomial_cutoff`, `separated_layer_norm`, `DenseLinear`, `MLP`, `compute_node_edge_features` (one-hot, displacements, radial basis, SH), `node_graph_idx`, `energy_forces_stress` (forces via `jax.grad`, stress, variance aggregation). |
-| `bam_omat24/linear_nnx.py` | NNX wrappers of e3nn `FunctionalLinear` (`vanilla`/`indexed`) and `FullyConnectedTensorProduct`. |
-| `bam_omat24/training_utils.py` | `huber_loss`, `_build_force_L` (Cholesky), `compute_loss`, `make_sharded_train_step` (shard_map + pmean), `make_sharded_evaluate_step`, `evaluate_sharded`, pickle checkpoints. |
-| `bam_omat24/data_nnx.py` | `Dataset` (pickle of GraphsTuple), `BucketedDataLoader`, `MultiDeviceDataLoader`, `setup_mesh`. |
-| `bam_omat24/train_omat24.py`, `finetuning_nnx.py`, `build_pkl.py` | OMAT24 pre-training / delta fine-tuning (periodic, stress). Not touched. |
-| `bam_omat24/train_3bpa.py` | Port of the OMAT24 loop. **Could not run 3BPA**: expected non-existent `dataset_3BPA/*_cutoff_6.0.pkl`, ignored `hidden_size`/`cutoff` from `input_3bpa.json`, hard-coded `clip_by_global_norm(1.0)`. |
+| `race_v2/models/race.py` | `RACEXReadout` (x-feature readout: indexed Linear → Linear → gate → Linear), `RACEConvolution` (layer-norm → Linear → TP with SH × radial MLP → scatter → **second TP with x_feats** → Linear + per-species skip → gate → per-layer energy readout), `RACE` (species embedding, `x_linear`, `n_layers` convolutions, `x_readouts`, `f_readouts`, variance heads `frc_logvar` 6x0e / `energy_logvar` / `stress_logvar`). |
+| `race_v2/models/blocks.py` | `bessel_basis`, `polynomial_cutoff`, `separated_layer_norm`, `DenseLinear`, `MLP`, `compute_node_edge_features` (one-hot, displacements, radial basis, SH), `node_graph_idx`, `energy_forces_stress` (forces via `jax.grad`, stress, variance aggregation). |
+| `race_v2/models/linear.py` | NNX wrappers of e3nn `FunctionalLinear` (`vanilla`/`indexed`) and `FullyConnectedTensorProduct`. |
+| `race_v2/training/utils.py` | `huber_loss`, `_build_force_L` (Cholesky), `compute_loss`, `make_sharded_train_step` (shard_map + pmean), `make_sharded_evaluate_step`, `evaluate_sharded`, pickle checkpoints. |
+| `race_v2/data/loaders.py` | `Dataset` (pickle of GraphsTuple), `BucketedDataLoader`, `MultiDeviceDataLoader`, `setup_mesh`. |
+| `race_v2/train_omat24.py`, `models/finetuning.py`, `build_pkl.py` | OMAT24 pre-training / delta fine-tuning (periodic, stress). Not touched. |
+| `race_v2/training/train.py` | Port of the OMAT24 loop. **Could not run 3BPA**: expected non-existent `research/dataset_3BPA/*_cutoff_6.0.pkl`, ignored `hidden_size`/`cutoff` from `input_3bpa.json`, hard-coded `clip_by_global_norm(1.0)`. |
 | `bam_3bpa/*` | Original 3BPA code that produced the README table (`hidden_irreps = hidden_size * s2_irreps(lmax)` = `128x0e+128x1o+128x2e+128x3o`, cutoff 5 Å, power-of-two padding, train/valid split `RandomState(42)` 90/10, raw energies with E0 added inside the model with `stop_gradient`). Read only. |
 
 Data flow (3BPA, non-periodic): extxyz → `data_3bpa.preprocess_graph`
@@ -30,14 +30,14 @@ Data flow (3BPA, non-periodic): extxyz → `data_3bpa.preprocess_graph`
 | # | Issue | Location (commit `9c6d1a4`) | Fix |
 | --- | --- | --- | --- |
 | 1 | BRACE advertised but absent | `README.md` "Model Architecture" | README: "(planned)". |
-| 2 | `x_feats` is a per-element constant | `race_nnx.py:392` `x_feats = self.x_linear(species, features)`; second TP `race_nnx.py:186-190` | `x_mode="node_scalar"` option (`race_nnx.py` `x_projs`, per layer). Default `"species"`. |
-| 3 | Constants declared as `nnx.Param` | `race_nnx.py:264` (`avg_n_neighbors`), `:268-270` (`atom_energies`) | Plain Python float / tuple (static graphdef). `nnx.split(model, nnx.Param)` unchanged. |
-| 4 | Data statistics unused (shift 0, scale 1, 25 neighbours) | `train_3bpa.py:68-70`, `bam_3bpa/train_3bpa.py:544-546` | `data_3bpa.compute_dataset_stats`, `fit_e0`; `use_dataset_stats`, `e0_mode` in `train_3bpa.py`. |
-| 5 | Force covariance not equivariant | `race_nnx.py:337-342` (`6x0e` head), `:436-440`; `training_utils.py:59-78`, `:162-170` | `cov_mode="irreps"`: head `1x0e+1x2e`; `training_utils._build_force_L_irreps`: `L = aI + B'`, `Σ = L²`, `‖B'‖_F ≤ 0.9a`. |
-| 6 | NLL is Huber on whitened residuals (+ `2·log σ`) | `training_utils.py:146-208` | `loss_type="gauss_nll"`: `0.5‖z‖² + log|L|`, optional `beta_nll`. Legacy `"nll"` kept (for `irreps` the Huber acts on `‖z‖`). |
-| 7 | E:F weighting fixed, energy term negligible | `train_3bpa.py:97-100` | `loss_schedule` stages; dynamic weights passed into the jitted step. Best-checkpoint tracking and plateau counter restart at a stage change. |
-| 8a | `grad_clip` ignored | `train_3bpa.py:88` `clip_by_global_norm(1.0)` | Read from config (`null` disables). |
-| 8b | tanh clipping leaks into MAE/RMSE; energy metrics per-atom | `training_utils.py:138-139, 431-432, 511-516` | Metrics from raw residuals; `energy_*_total` (eV, 3BPA/MACE convention) added. Also: component-wise tanh of force residuals was not rotation equivariant → now applied to the residual norm. |
+| 2 | `x_feats` is a per-element constant | `models/race.py:392` `x_feats = self.x_linear(species, features)`; second TP `models/race.py:186-190` | `x_mode="node_scalar"` option (`models/race.py` `x_projs`, per layer). Default `"species"`. |
+| 3 | Constants declared as `nnx.Param` | `models/race.py:264` (`avg_n_neighbors`), `:268-270` (`atom_energies`) | Plain Python float / tuple (static graphdef). `nnx.split(model, nnx.Param)` unchanged. |
+| 4 | Data statistics unused (shift 0, scale 1, 25 neighbours) | `training/train.py:68-70`, `bam_3bpa/train_3bpa.py:544-546` | `data_3bpa.compute_dataset_stats`, `fit_e0`; `use_dataset_stats`, `e0_mode` in `training/train.py`. |
+| 5 | Force covariance not equivariant | `models/race.py:337-342` (`6x0e` head), `:436-440`; `training/utils.py:59-78`, `:162-170` | `cov_mode="irreps"`: head `1x0e+1x2e`; `training_utils._build_force_L_irreps`: `L = aI + B'`, `Σ = L²`, `‖B'‖_F ≤ 0.9a`. |
+| 6 | NLL is Huber on whitened residuals (+ `2·log σ`) | `training/utils.py:146-208` | `loss_type="gauss_nll"`: `0.5‖z‖² + log|L|`, optional `beta_nll`. Legacy `"nll"` kept (for `irreps` the Huber acts on `‖z‖`). |
+| 7 | E:F weighting fixed, energy term negligible | `training/train.py:97-100` | `loss_schedule` stages; dynamic weights passed into the jitted step. Best-checkpoint tracking and plateau counter restart at a stage change. |
+| 8a | `grad_clip` ignored | `training/train.py:88` `clip_by_global_norm(1.0)` | Read from config (`null` disables). |
+| 8b | tanh clipping leaks into MAE/RMSE; energy metrics per-atom | `training/utils.py:138-139, 431-432, 511-516` | Metrics from raw residuals; `energy_*_total` (eV, 3BPA/MACE convention) added. Also: component-wise tanh of force residuals was not rotation equivariant → now applied to the residual norm. |
 
 ## 2. New options (all default to the original behaviour)
 
@@ -86,11 +86,11 @@ scalar variances are 0.05–0.15, so it is not the `eps`). Recorded as a questio
 to 3 %, neighbour count exactly. `x_mode="species"`: identical x for atoms of
 the same element; `node_scalar`: geometry dependent, same output shapes.
 
-## 4. End-to-end smoke run (20 epochs, `input/input_3bpa_omat24_smoke.json`)
+## 4. End-to-end smoke run (20 epochs, `research/input/input_3bpa_omat24_smoke.json`)
 
 ```
 conda activate bam_v2
-python -m bam_omat24.train_3bpa input/input_3bpa_omat24_smoke.json
+python -m race_v2.training.train research/input/input_3bpa_omat24_smoke.json
 ```
 Model: 128x0e+128x1o+128x2e+128x3o, 5 layers, cutoff 5 Å, batch 5, AMSGrad 1e-2,
 Huber δ = 0.1, E:F = 1:1, 90 steps/epoch, ≈ 27 s/epoch on the RTX 4060 Ti
@@ -165,7 +165,7 @@ expansion order, not a free hyper-parameter.  Tooling added (local, uncommitted)
 * `RACE.node_energies` returns `strata` (n_strata, n_atoms) and `strata_parts`;
   `RACE.strata_energies_forces(batch)` gives per-stratum total energies and
   forces (one VJP per stratum).
-* `python -m bam_omat24.analyze_strata <config> --ckpt <pkl>`: per dataset
+* `python -m race_v2.analyze_strata <config> --ckpt <pkl>`: per dataset
   (train / valid / 300K / 600K / 1200K) the energy fluctuation and force RMS of
   every stratum and the force RMSE when a stratum is removed.  Smoke model
   (20 epochs): deepest stratum carries |F| ≈ 480 meV/Å vs 170–210 for the others
@@ -174,7 +174,7 @@ expansion order, not a free hyper-parameter.  Tooling added (local, uncommitted)
   `stratum_gain` ("uniform" | "inverse" | "inverse_sq" static gain 1/(i+1)^k on
   stratum i), `stratum_weight_decay` {base, power, scope} (wd_i = base·(i+1)^power
   on the readout heads or the whole layer i; ACE-style hierarchical regularisation).
-* Screening configs `input/input_3bpa_omat24_s500_{ref,strata,pair,mse,smooth}_cue.json`
+* Screening configs `research/input/input_3bpa_omat24_s500_{ref,strata,pair,mse,smooth}_cue.json`
   (500 epochs, cue backend, v2 recipe + one change each).
 
 ## 5. Questions (not changed; design intent unknown)
@@ -224,7 +224,7 @@ expansion order, not a free hyper-parameter.  Tooling added (local, uncommitted)
 
 ## 6. Next steps (separate sessions)
 
-* Full 1500-epoch runs: baseline (`input/input_3bpa_omat24_baseline.json`) and
+* Full 1500-epoch runs: baseline (`research/input/input_3bpa_omat24_baseline.json`) and
   `v2` (dataset statistics + two-stage loss schedule) — see section 7.
 * MACE comparison under identical conditions, 5 seeds, UQ / calibration with
   `cov_mode="irreps"` + `gauss_nll`.
@@ -319,7 +319,7 @@ Files: `runs/<name>_cue/strata_<name>_cue.json`, `strata_stdout.txt`.
 
 ### 7.3 Round 2 (500 epochs from scratch, huber δ=10, no loss schedule, stats on)
 
-`input/input_3bpa_omat24_r2_*_cue.json`: `r2_mse` (new reference), `r2_mse_s2`
+`research/input/input_3bpa_omat24_r2_*_cue.json`: `r2_mse` (new reference), `r2_mse_s2`
 (seed 43, noise estimate), `r2_mse_nostats`, `r2_mse_swd` (decoupled stratum WD
 base 1e-3, power 1, readout), `r2_mse_gaininv` (gain only), `r2_mse_fw10`
 (force weight 10). Results: see 7.4.
@@ -385,7 +385,7 @@ Force weight 10 and stats-off add up (1200 K F 80 / 77 for two seeds vs 100 for 
 round-1 baseline, −20 %; 300 K F 11.3–11.7 vs 12.3). Force weight 100 overshoots
 (energy 8.4 meV, 1200 K forces back to 100). **v3 recipe** = δ=10, stats off,
 force weight 10, no loss schedule, 1500 epochs, 3 seeds
-(`input/input_3bpa_omat24_v3_s{42,43,44}_cue.json`); results in 7.7.
+(`research/input/input_3bpa_omat24_v3_s{42,43,44}_cue.json`); results in 7.7.
 
 ### 7.7 Round 4 (500 epochs on the combo recipe)
 
@@ -678,8 +678,8 @@ radial transform are worse; stochastic depth is incompatible with the energy-sum
 
 ### 7.14 Where the v3 error sits (`analyze_errors`, 3 seeds, all frames; 2026-10-27)
 
-Tools: `bam_omat24/analyze_errors.py` (per-atom decomposition of one run, saves `.json/.npz`)
-and `bam_omat24/analyze_errors_compare.py` (bias / variance split over several runs; numpy
+Tools: `race_v2/eval/analyze_errors.py` (per-atom decomposition of one run, saves `.json/.npz`)
+and `race_v2/analyze_errors_compare.py` (bias / variance split over several runs; numpy
 only).  Run via `runs/sbatch_errors.sh v3_s42 v3_s43 v3_s44`; outputs
 `runs/v3_s4*_cue/errors_*.{txt,json,npz}`, `runs/errors_compare_v3_s42.{txt,json}`.
 Per-atom *novelty* = RMS distance between the 26-vector of inter-atomic distances of a site
@@ -796,7 +796,7 @@ Not promoted; `pair_repulsion` stays available as an option.
 User: "라디알 디스트리부션 … 4f는 국소화돼 있고 3d는 퍼져 있을텐데 그런 걸 고려한 임베딩".
 
 Where it enters RACE.  The ACE one-particle basis is φ_{nlm}(r_ij; Z_i, Z_j) = R_n(r; Z_i, Z_j)
-Y_lm(r̂).  Today `race_nnx.py` has (a) a one-hot species embedding (`species_embedding`
+Y_lm(r̂).  Today `models/race.py` has (a) a one-hot species embedding (`species_embedding`
 Linear) and (b) a radial basis that is species-blind (Bessel × polynomial cutoff, species
 only enters the radial MLP through the node features of the receiver).  Both are the places
 where the radial extent of the valence shells can be injected *without touching the
@@ -809,7 +809,7 @@ Design.
    energies ε_{nl}, occupations, and the outermost-shell radius.  Source: relativistic
    Dirac–Fock atomic tables (Desclaux 1973, Z ≤ 120) or one small atomic DFT run per element
    (the environment has neither `mendeleev` nor `pyscf`; the table would be a ~90-row JSON
-   under `bam_omat24/`).  Standardise per feature over the 89 mp_data elements.
+   under `race_v2/`).  Standardise per feature over the 89 mp_data elements.
 2. Species embedding: `h_i^0 = MLP(d_{Z_i})` instead of (or added to) `W·onehot(Z_i)`.  For
    89 elements the one-hot rows of rare elements are undertrained; the descriptor shares
    parameters across the periodic table (lanthanides differ only through ⟨r⟩_4f and the
@@ -828,16 +828,16 @@ Design.
    proxy) and the outer-shell radii, and the mixing weights decide how much the 4f channel
    is used; forcing ⟨r⟩_4f to be *the* pair length scale would be wrong.
 
-Implementation (2026-10-27, `race_nnx.py`, defaults unchanged).  User follow-up: "원자마다
+Implementation (2026-10-27, `models/race.py`, defaults unchanged).  User follow-up: "원자마다
 반지름 정보가 다 있잖아 그거 기반으로 임베딩" — the descriptor therefore carries both the
 tabulated covalent radius and the computed shell radii.
 
-* `bam_omat24/atomic_shells.py`: spherical spin-unpolarised LDA (Slater + PZ81) atom solver
+* `race_v2/models/atomic_shells.py`: spherical spin-unpolarised LDA (Slater + PZ81) atom solver
   (shifted exponential grid, tridiagonal eigenproblem, SCF with density mixing); validated
   against the exact Coulomb spectrum (H 1s −0.5000, ⟨r⟩ 1.500; hydrogenic U 1s −4231.9 vs
   −4232) and the NIST LDA atomic reference eigenvalues (H −0.2337 / −0.233471, He −0.5702 /
   −0.570425, Ne 2p −0.4978 / −0.4983, Ar 3p −0.3823 / −0.3822 Ha).  Output
-  `bam_omat24/atomic_shells.json` (Z = 1..94, all SCFs converged): per l the outermost
+  `race_v2/models/atomic_shells.json` (Z = 1..94, all SCFs converged): per l the outermost
   occupied shell with ⟨r⟩, r_peak (Bohr), eigenvalue (Ha), occupation; e.g. Fe 3d ⟨r⟩ 1.13 vs
   4s 3.00 a₀, Gd 4f 0.82 vs 5d 2.67 vs 6s 4.20 a₀ — the localised-4f / compact-3d / diffuse-s
   picture the user asked for.  Run it as a script (not via the package: `__init__` imports JAX).
@@ -907,7 +907,7 @@ it (−9 %).  300 K and 600 K are within seed noise (the 600 K energy spread is 
 The 1200 K seed spread is larger than v3's (sd 2.9 vs 0.5): the envelopes add a lever whose benefit
 depends on the optimisation path, which also means the mean may still be improvable by making the
 length scales learnable (a per-shell-pair scale, initialised at 1) or by longer training.  **v6_shell
-replaces v3 as the reference recipe** (`input/input_3bpa_omat24_v6_shell_s*_cue.json`); the gap to
+replaces v3 as the reference recipe** (`research/input/input_3bpa_omat24_v6_shell_s*_cue.json`); the gap to
 MACE at 1200 K shrinks from ×1.22 to ×1.10 (F) and from ×1.25 to ×1.14 (E).  Error decomposition of
 the three v6 seeds (`runs/sbatch_errors.sh`, job 1150125) is run to check that the gain sits in the
 high-bond-strain bins predicted by §7.14.
@@ -948,7 +948,7 @@ this branch).
 ## 9. Round 13 (2026-10-27): on top of v6_shell — minimal polynomial, learnable length scale, BRACE-2
 
 Reference recipe is now v6_shell (§8).  All four runs: v6_shell_s42 config, 500 epochs, seed 42
-(`input/input_3bpa_omat24_r13_*_cue.json`, job 1150169; pytest + mini runs job 1150168).
+(`research/input/input_3bpa_omat24_r13_*_cue.json`, job 1150169; pytest + mini runs job 1150168).
 500-epoch reference for seed 42 is r11_shell (4.4/11.3, 12.0/26.5, 37.7/74.1).
 
 | run | option | motivation |
@@ -958,11 +958,11 @@ Reference recipe is now v6_shell (§8).  All four runs: v6_shell_s42 config, 500
 | r13_taper | `hidden_irreps "128x0e + 64x1o + 32x2e + 16x3o"` | fewer high-l channels in the tensor product: high-l components are the first to extrapolate badly; keeps 128 scalars for the readout |
 | r13_brace2 | `in_layer_order: 2` — adds the channelwise symmetric square m_i ⊗ m_i of the aggregated message inside each layer (new Linear in/out; multiplicity must be uniform) | user question (below): a MACE-like in-layer contraction while body order still grows with depth |
 
-Implementation: `race_nnx.py` `RACE(radial_shell_scale=..., in_layer_order=...)`, param
+Implementation: `models/race.py` `RACE(radial_shell_scale=..., in_layer_order=...)`, param
 `shell_scale_raw` (n_shells × n_shells; softplus = 1 at init so the model equals v6 at step 0),
 `RACEConvolution(in_layer_order)` with `linear_sq_in` (tp_irreps → hidden), channel→batch tensor
 product `m ⊗ m` filtered to the hidden irreps, `linear_sq` (→ gated irreps) added to the increment
-before the gate.  `train_3bpa.py` config keys `radial_shell_scale`, `in_layer_order`.  Tests
+before the gate.  `training/train.py` config keys `radial_shell_scale`, `in_layer_order`.  Tests
 `tests/test_round13.py` (E(3), FD forces, init equality fixed/learnable scale, quadratic scaling of
 the square term, finite gradients with padding, tapered irreps).
 
@@ -1074,9 +1074,9 @@ config options with the v6 numerics at init (B, C exactly; A changes the recurre
 | r14_sk | `shell_sk_gate: true` | **B. Slater–Koster selection rule.**  Two-centre integrals between shells l_a, l_b contain only Y_l with \|l_a−l_b\| ≤ l ≤ l_a+l_b and l_a+l_b+l even (s–s: l=0; s–p: l=1; p–p: l=0,2).  Per layer and degree l, Y_l(r̂_ij) is scaled by 1 + Σ_(a,b) allowed c_{ab,l}·env_ab(r_ij) with the v6 shell envelopes; equivalent to an l-selective radial modulation of every TP path of degree l.  Extends the v6 radial prior to radial–angular coupling (targets the heavy-atom 3-body error v6 did not reduce).  Params `sk_coeff` (n_layers, 16, lmax+1), init 0; static mask `sk_mask`. |
 | r14_resum | `strata_resum: "aitken"` | **C. Series acceleration of the body-order series.**  The layer energies are partial sums of a slowly convergent cluster expansion; numerical analysis never sums such series naively.  Aitken/Shanks e₁ geometric-tail estimate from the last two strata, ρ = e_L/e_{L−1} saturated to \|ρ\| < 0.5, tail = e_L ρ/(1−ρ), added as an extra stratum with learnable weight λ (init 0).  Caveat (§7.2): the strata do not decay geometrically (deepest stratum ≈ 33–47 %), so the geometric tail is a weak model; λ can learn 0. |
 
-Implementation: `race_nnx.py` (`RACEConvolution.__call__(prev_features=…)`, `RACE(shell_sk_gate,
+Implementation: `models/race.py` (`RACEConvolution.__call__(prev_features=…)`, `RACE(shell_sk_gate,
 strata_resum)`, `shell_env` kept from the radial block, `sh_i` gating in the layer loop, resummation
-before the strata stack), `train_3bpa.py` keys `residual: "chebyshev"`, `shell_sk_gate`,
+before the strata stack), `training/train.py` keys `residual: "chebyshev"`, `shell_sk_gate`,
 `strata_resum`; tests `tests/test_round14.py` (E(3), FD forces with the options active, identity at
 init for B/C, selection-rule mask, Chebyshev needs ≥ 3 layers, bounded tail, finite gradients).
 
@@ -1129,7 +1129,7 @@ Learned round-14 parameters (EMA, job 1151826, `runs/sbatch_inspect_params.sh`):
 ## 11. Re-analysis of the model code against the RACE principle (user request, 2026-10-27)
 
 After rounds 11–14 every option that is a *modification* of the v6 layer came out neutral or
-worse.  This section re-reads `bam_omat24/race_nnx.py` (v6 configuration: `x_mode=species`,
+worse.  This section re-reads `race_v2/models/race.py` (v6 configuration: `x_mode=species`,
 `residual=none`, `readout_mode=linear`, 128 ch, lmax 3, 5 layers) as it is, writes down what one
 layer computes, and compares it with the published body-ordered MPNN literature (BOTNet, Batatia
 et al. 2022 "Design space of E(3)-equivariant atom-centered interatomic potentials",
@@ -1253,8 +1253,8 @@ D as a separate control on v6.
 
 ### 11.5 Implementation (2026-10-27, user: "proceed in the proposed order")
 
-Options (all default off = v6 numerics unchanged), `bam_omat24/race_nnx.py` / `train_3bpa.py` /
-`training_utils.py`:
+Options (all default off = v6 numerics unchanged), `race_v2/models/race.py` / `training/train.py` /
+`training/utils.py`:
 
 | key | values | what it does |
 |---|---|---|
@@ -1439,7 +1439,7 @@ of Σ_s |F_s|; reference force-component RMS of the sets: 300 K 961, 1200 K 1889
 | MACE L=2 | 3.0 / 8.8 | 9.7 / 21.8 | 29.8 / 62.0 |
 | **v8 / MACE** | **0.77 / 0.94** | **0.88 / 0.95** | 1.09 / 1.02 |
 
-* **v8 is promoted as the reference recipe** (`input/input_3bpa_omat24_v8_abcx64_s{42,43,44}_cue.json`
+* **v8 is promoted as the reference recipe** (`research/input/input_3bpa_omat24_v8_abcx64_s{42,43,44}_cue.json`
   = v7_abc + `x64: true`).  Every v8 seed beats every v7_abc seed on 300 K E (2.1–2.4 vs 3.6–3.7),
   600 K F (19.9–21.1 vs 20.9–24.5, one overlap) and 1200 K F (61.2–64.8 vs 66.6–75.8); 600 K E and
   300 K F overlap at one seed each but all three seeds move the same way.
@@ -1447,7 +1447,7 @@ of Σ_s |F_s|; reference force-component RMS of the sets: 300 K 961, 1200 K 1889
   8.5/20.7 vs 9.7/21.8.  1200 K forces are at parity (63.3±1.9 vs 62.0; seed 44 at 61.2 is
   below), 1200 K energy 32.6±3.3 vs 29.8 is the only clear remaining gap (seed 44: 29.0).
 * **Why float64 is worth 38 % on the 300 K energy.**  The dataset targets are not the source
-  (`data_3bpa.py` subtracts E0 in float64 before casting the residual, resolution ≪ 1 µeV).  The
+  (`data/xyz_graphs.py` subtracts E0 in float64 before casting the residual, resolution ≪ 1 µeV).  The
   gain must come from the model and gradient path: with the gate and the layer norm removed
   (A+B) the ungated linear layers propagate the float32 rounding of the message sums and of the
   per-stratum energy sums straight into the energy and its gradient, and the training signal at
@@ -1515,7 +1515,7 @@ may be blocks of orders.  Reason: every model below MACE at 1200 K (TACE ν = 3,
 through an atom-centred symmetric product, and the conditions under which r13_brace2 failed (gate,
 layer norm, dead x path, float32) no longer hold in v8.
 
-**Implementation** (`race_nnx.py`, config keys in `train_3bpa.py`):
+**Implementation** (`models/race.py`, config keys in `training/train.py`):
 * `in_layer_order: 3` — MACE symmetric contraction on the aggregated message:
   B_i = Σ_{ν=2,3} W_ν^{Z_i} · (Linear A_i)^{⊗ν}, then Linear → added to the layer increment
   (ν = 1 is the existing `linear_2`).  Descriptor `cue.descriptors.symmetric_contraction`
@@ -1544,7 +1544,7 @@ what the additions are worth; variant (b) is the RACE candidate.
 (c) `r17_nu2_all` ν = 2 (cue path) in all layers.  Promotion rule: 1200 K force −10 % on both
 seeds → 1500 ep × 3 seeds.
 
-**Stability diagnosis (jobs 1154440–1154552, `bam_omat24/diag_scales.py`: per-layer RMS / max of
+**Stability diagnosis (jobs 1154440–1154552, `race_v2/diag_scales.py`: per-layer RMS / max of
 h, A, B at initialisation, one training batch, production configs in float64).**  The first
 mini run of (a) in float32 gave NaN energies from epoch 1 (forces finite); the tests (115 passed)
 and the NaN-check run (`JAX_DEBUG_NANS`) showed no kernel fault (fused and pure-JAX paths agree
@@ -1610,7 +1610,7 @@ E meV / F meV/Å RMSE)**
 User request: "변형 결합 손실 재가중, 저LR 2단계 에너지 미세조정, 옵션 C 제한 해봐".  All three are
 config options on the v8 recipe (pytest 121 + 21 passed, jobs 1154686 / 1154712; `tests/test_round18.py`).
 
-1. **Per-atom force-loss weights** `node_weight: {mode, alpha, scale, cap}` (`train_3bpa.py`,
+1. **Per-atom force-loss weights** `node_weight: {mode, alpha, scale, cap}` (`training/train.py`,
    `training_utils._loss_terms` via `nodes['loss_weight']`): w_i = 1 + α·min(x_i/s, cap), mean 1
    over the training atoms.  x = bond strain max_j |r_ij − ⟨r_ij⟩_train| over bonded j (mean
    training geometry, bond cut 1.75 Å; the quantity of the error analysis §7.14 / §11.8) or the
@@ -1622,7 +1622,7 @@ config options on the v8 recipe (pytest 121 + 21 passed, jobs 1154686 / 1154712;
    weight up).  Runs `r18_ft_e{30,10}_s42`: from `v8_abcx64_s42` (1500 ep), 300 epochs, lr 1e-3,
    energy weight 30 / 10, force weight 10.  Compared with v8_s42 itself (2.4/8.6, 8.9/21.1,
    35.5/63.9), not with the 500-epoch reference.
-3. **Restricted basis-x** (`race_nnx.py`): `x_basis_lmax: 0` keeps only the l = 0 part of A_i, so
+3. **Restricted basis-x** (`models/race.py`): `x_basis_lmax: 0` keeps only the l = 0 part of A_i, so
    the x factor becomes a per-channel scalar gating by the local density (no angular product at
    the centre); `x_basis_layers: [...]` applies the basis-x only in the listed layers, the others
    use the per-species x (v7_ab behaviour).  Runs `r18_xl0_s{42,43}`, `r18_xl01_s42` (layers 0–1),
@@ -1697,7 +1697,7 @@ r16_abcx64 3.4/9.3, 9.6/22.6, 36.5/68.3 (two seeds).  `v8_e3k_s{42,43,44}` (3000
 
 ### 11.14 Round 19 (2026-10-28): first-order Taylor augmentation on v8 (user: "가장 좋았던 버전에다가 테스트")
 
-`taylor_aug: {"n": k, "delta": δ}` (`train_3bpa.py`): every training frame gets k displaced copies
+`taylor_aug: {"n": k, "delta": δ}` (`training/train.py`): every training frame gets k displaced copies
 r + d, each atom moved by a random vector of length δ, with the energy label E(r) − Σ_i F_i·d_i from
 the existing force labels (Cooper et al. 2020, npj Comput. Mater. 6, 54).  The copies carry no force
 loss (node weight 0, via the round-18 `nodes['loss_weight']` path); the originals get weight 1 + k so
@@ -1753,7 +1753,7 @@ distributional output, not applicable).  This is consistent with our own record:
 envelopes (fixed, smooth) helped, Gaussian radial resolution hurt, products / tail emphasis hurt.
 
 **Implementation (v8 base, all config options, `tests/test_round20.py`)**
-1. `radial_prior: {"type": gaussian|algebraic|exponential, "sigma", "p"}` (`race_nnx.py`): Bessel
+1. `radial_prior: {"type": gaussian|algebraic|exponential, "sigma", "p"}` (`models/race.py`): Bessel
    channel n is rescaled by 1/γ(n), γ_gauss = exp(σ_n² n²) (Darby: σ_n = √5 σ/r_cut, so σ = 0.5 Å →
    σ_n = 0.224, 1.0 Å → 0.447), shell channels untouched.  `radial_l2 w` (`training_utils`): uniform
    L2 on the radial MLP's first-layer weights, which with the rescaling is the Tikhonov prior
@@ -1836,7 +1836,7 @@ best checkpoints at epochs 1489–1500)**
 | v9a / TACE_max | 0.99 / 0.99 | 0.97 / 1.01 | 1.20 / 1.07 |
 | v9b / MACE | 0.85 / 0.94 | 0.84 / 0.91 | 0.98 / 0.95 |
 
-* **v9a is promoted as the reference recipe** (`input/input_3bpa_omat24_v9a_rp_s{42,43,44}_cue.json`
+* **v9a is promoted as the reference recipe** (`research/input/input_3bpa_omat24_v9a_rp_s{42,43,44}_cue.json`
   = v8 + `radial_prior: {"type": "gaussian", "sigma": 0.224}`).  Every v9a seed beats every v8 seed at
   1200 K (forces 56.8–59.1 vs 61.2–64.8, energies 26.8–29.5 vs 29.0–35.5), 600 K improves on both
   numbers, and the 300 K energy cost (+15 %) leaves it at 2.65 < MACE's 3.0.  **For the first time
@@ -1855,7 +1855,7 @@ Per layer t the stratum energy is E^(t) = readout(h_{t+1}) + x_readout_t(x_feats
 the gated MLP of the layer output, an MLP of the x factor (in x_mode "basis" a per-layer MLP of
 Linear(A_i), five of them on the same A_i) and an MLP of the layer *input* (a per-species constant in
 layer 0, and for t ≥ 1 a second readout of features that the previous layer's readout already saw).
-Options added (`race_nnx.py`, tests `tests/test_round21.py`): `x_readout` = mlp | off | layer0 |
+Options added (`models/race.py`, tests `tests/test_round21.py`): `x_readout` = mlp | off | layer0 |
 linear (species-indexed linear readout of the 0e part of x — with x = Linear(A_i) an exact 2-body
 stratum), `x_readout_norm` (layer norm on the x-readout input), `f_readout` (on/off); off/layer0 do
 not build the unused modules.
@@ -1896,7 +1896,7 @@ shift / biases; the production configs use `e0_mode: isolated`), but wrong whene
 mixed with physical E0 of other elements (multi-head / foundation fine-tuning) or compared across
 datasets.
 
-Fix in this version (`data_3bpa.py`, `train_3bpa.py`, tests `tests/test_stats.py`, 18 passed):
+Fix in this version (`data/xyz_graphs.py`, `training/train.py`, tests `tests/test_stats.py`, 18 passed):
 `fit_e0` computes the composition rank; if rank < n_species it warns and, by default
 (`e0_rank_deficient: "reference"`), keeps the reference E0 exactly while reporting the identifiable
 per-atom offset (which goes to the model `shift`); `"minnorm"` restores the old split; without a
@@ -1918,7 +1918,7 @@ regularisation auxiliary task (OC20/OC22 SOTA, faster MD17 training), not as an 
 escaping local minima.  Our Noisy Nodes test (r10, σ = 0.1 Å, w = 1e-4) was neutral; DeNS's point is
 exactly that denoising without force encoding is ill-posed off equilibrium.
 
-**Implementation** (`force_encoding: true` with `noisy_nodes: {sigma, weight}`, `race_nnx.py`): the
+**Implementation** (`force_encoding: true` with `noisy_nodes: {sigma, weight}`, `models/race.py`): the
 layer-0 input irreps become hidden-0e + hidden-mul × 1o; the 1o block is `force_enc`(F_ref) (a 1x1o →
 mul x1o Linear, forces in eV/Å) in `denoise()` and **zero in every energy / force pass**, so the
 energy model never sees reference forces (tests: energy unchanged under arbitrary reference forces,
@@ -2023,7 +2023,7 @@ Small, consistent gains (300 K E −7 %, the rest −1 %), as for v8 (§11.13). 
 
 Data: `git clone` of the BOTNet benchmark datasets works from the login node (raw/http downloads do
 not) → `/scratch/t589a02/datasets_ext/BOTNet-datasets` (3BPA incl. `test_dih.xyz`, AcAc, ethanol).
-Tool: `bam_omat24/eval_sets.py` (+ `runs/sbatch_eval_sets.sh`) evaluates a checkpoint on extra extxyz
+Tool: `race_v2/eval/eval_sets.py` (+ `runs/sbatch_eval_sets.sh`) evaluates a checkpoint on extra extxyz
 files, optionally grouped by an `atoms.info` key; energy-only files (no force labels) are supported.
 
 ### 12.1 3BPA dihedral slices (`test_dih.xyz`, 7047 frames: the first dihedral scanned 55–239°, β = 120/150/180°)
@@ -2063,7 +2063,7 @@ on this test (MACE 7.8 / 16.5, TACE 11.0 / 16.45, GRACE 7.4 / 15.3).
 The v9a recipe unchanged except the dataset facts: `atomic_numbers [1, 6, 8]`, isolated-atom
 `atom_energies` from `isolated_atoms.xyz` (H −13.5684, C −1026.8539, O −2037.7969 eV; composition rank
 1/3 → reference E0 kept, offset −… to the shift), `avg_n_neighbors 12.131` (5 Å, from the training
-set).  Configs `input/input_3bpa_omat24_acac_*`.
+set).  Configs `research/input/input_3bpa_omat24_acac_*`.
 
 | model (300 K train) | 300 K E / F | 600 K E / F | H-transfer E (15 pts, 14 meV range) | dihedral scan E (45 pts, 1.09 eV range) |
 |---|---|---|---|---|
@@ -2129,9 +2129,9 @@ the 1200 K force (57.5 vs 61.7): the radial prior / shell envelopes on strained 
 **Round 24 (user: "다 해보자", layer reduction allowed for this experiment).**  Code:
 `radial_species_mix: "neighbor" | "pair"` (`RACEConvolution.radial_mix`, per-layer (n_species[, n_species],
 n_r, n_r) identity-initialised mix of the radial channels after the prior rescaling, species passed to
-`aggregate`); `in_layer_order: 4` allowed (degrees 2, 3, 4); `bam_omat24/lbfgs_refine.py` (stage-two
+`aggregate`); `in_layer_order: 4` allowed (degrees 2, 3, 4); `race_v2/lbfgs_refine.py` (stage-two
 full-batch `optax.lbfgs` with zoom line search on the training split, same `_loss_terms`, wE/wF/L2
-flags, best-valid checkpoint); `bam_omat24/bench_speed.py` (ms per molecule, float64 and float32,
+flags, best-valid checkpoint); `race_v2/bench_speed.py` (ms per molecule, float64 and float32,
 batch 1 and 10); `runs/sbatch_py.sh`.  Tests `tests/test_round24.py` (E(3), FD forces, identity-init
 equality, species dependence, degree list).  Runs: 3BPA `g2l_nu4_s{42,43}`, `g2l_nu3_s42` (2 layers,
 ν = 4 / 3 in the features, gain 0.1, AdamW wd 1e-5, lr 5e-3, 500 ep), `v9a_mix_s42` (neighbour mix,
@@ -2140,30 +2140,30 @@ refinement (200 iterations, wF 500) of the finished rMD17 ethanol / salicylic / 
 v9a_rp_s42 checkpoints; speed benchmark of v9a_rp_s42.  Results: pending.
 
 **Open: azobenzene energy offset (rMD17).**  Only azobenzene (H, C, N) shows a 3 eV test-energy
-error with normal forces.  Bisection (`runs/diag/diag_bisect.py`): pickled and in-memory parameters
+error with normal forces.  Bisection (`research/diag/diag_bisect.py`): pickled and in-memory parameters
 identical (max diff 0), `evaluate_sharded` reproduces the training-time number with either graphdef,
 but an eager `model(batch)` on the same parameters and batch gives a −40 … −81 eV per-species-constant
 offset (growing with training), and `eval_sets` (batch 10) agrees with eager.  Eager vs jit vs
-shard_map per-stratum comparison (`runs/diag/diag_azo3.py`): pending.
+shard_map per-stratum comparison (`research/diag/diag_azo3.py`): pending.
 
-**Azobenzene resolved (2026-10-29): feature explosion, not a kernel bug.**  `runs/diag/diag_azo8.py`:
+**Azobenzene resolved (2026-10-29): feature explosion, not a kernel bug.**  `research/diag/diag_azo8.py`:
 with the cue backend the energy depends on the *program* — forward-only (eager, jit, shard_map)
 gives −81 eV, forward + grad(positions) (the train / eval step) gives target ± 2.3 eV; with the e3nn
 backend every program gives −81 eV.  Single fused TP calls agree to 1e-13 in every setting
-(`runs/diag/cue_min.py`: scalar and full input irreps, grad through positions, duplicated calls).
-`runs/diag/cue_trace.py` explains it: the feature norm grows by ~10⁵–10⁶ per layer
+(`research/diag/cue_min.py`: scalar and full input irreps, grad through positions, duplicated calls).
+`research/diag/cue_trace.py` explains it: the feature norm grows by ~10⁵–10⁶ per layer
 (Σ|h|² 5.5e3 → 6.5e6 → 5.8e12 → 2.1e18 → 6.3e22; layer outputs ~1e11 per element), so the energy
 (tens of eV) is the residue of cancelling ~1e11 terms and float64 rounding — which differs between
 programs and backends — changes it by eV.  Training fitted the rounding of its own program.  The
 linear update + basis-x product has no normalisation; a per-layer gain > 1 compounds.
-Cross-check of all other checkpoints (`runs/diag/cue_vs_e3nn.py`, program = energy + forces,
+Cross-check of all other checkpoints (`research/diag/cue_vs_e3nn.py`, program = energy + forces,
 cue vs e3nn): 3BPA v9a/v9b ×3, AcAc v9a/v9b ×3, rMD17 ×9, water, v9a_mix, g2l_nu3 all agree to
 |dE| < 1e-13 eV, |dF| < 1e-14 eV/Å; only azobenzene mismatches (80 eV / 0.14 eV/Å).  Reruns:
 `rmd17_azobenzene_v9a_s43`, `rmd17_azobenzene_v9a_lr5_s42` (lr 5e-3).  Guard to add: log the
 per-layer feature RMS and stop on growth (open).
 
 **Water (v9a, 300 ep) diagnosis.**  Test E RMSE 523 meV/frame (8.2 meV/H₂O), MAE 272; F RMSE 83.1,
-MAE 22.2 meV/Å (MACE 1.9 / 36.2).  Per-frame (`runs/diag/diag_water.py`): one atom (O 186 of test
+MAE 22.2 meV/Å (MACE 1.9 / 36.2).  Per-frame (`research/diag/diag_water.py`): one atom (O 186 of test
 frame 138, min distance 0.70 Å, max |F_ref| 16.4 eV/Å) has a 16.9 eV/Å force error; without that
 frame the test F RMSE is ≈ 41 meV/Å (= validation).  Frame force-RMSE quantiles 50/90/99 %:
 24/69/128 meV/Å.  Energy errors are systematic: the largest |dE| (0.65–1.4 eV) are low-density
@@ -2188,7 +2188,7 @@ frames (0.79–0.83 g/cm³) predicted too low.
 * *Azobenzene reruns* (`_s43`, `_lr5_s42`): broken again (valid E RMSE 3.6 / 4.3 eV at epoch ~700,
   train energy loss normal); the best-valid checkpoints are from epochs 28 / 21.  Reproducible, not
   seed luck.
-* *Feature explosion is generic* (`runs/diag/feat_norm.py`, per-node |h|² entering each edge TP,
+* *Feature explosion is generic* (`research/diag/feat_norm.py`, per-node |h|² entering each edge TP,
   forward only, 5 training frames):
 
   | run | init: layer 0 → 4 | trained: layer 0 → 4 | trained E − target |
@@ -2232,7 +2232,7 @@ method / bond-order potentials (Haydock; Pettifor, Drautz), the kernel polynomia
 (resolvent / continued fraction, RPA / MBD log-det).  Body-ordered approximation of tight-binding
 site energies with rates set by analyticity on the spectrum: Thomas, Chen, Ortner (ARMA 2022).
 
-**Per-dataset feature growth** (`runs/diag/feat_norm*.txt`, |h|² entering the layer-4 edge TP,
+**Per-dataset feature growth** (`research/diag/feat_norm*.txt`, |h|² entering the layer-4 edge TP,
 trained / init): water 4e53 / 3.7e18; malonaldehyde 1.2e30 / 2.7e8; uracil 2.5e25 / 1.3e4; ethanol
 4.6e25 / 2.7e8; paracetamol 2.3e24 / 7.9e3; salicylic 2.4e24 / 4.8e7; benzene 3.8e16 / 1.5e5;
 toluene 7.9e13 / 79; naphthalene 1.3e4 / 76; aspirin 145 / 49; 3BPA v9a 2.8e6 / 37.  The growth is
@@ -2255,12 +2255,12 @@ operator h_{t+1} = Σ_{k≤t} M^k u₀ → (1 − M)^{-1} u₀ (Green's-function
 ρ(M) < 1, infinite body order with geometric damping).  Exact resolvent (implicit solve) and closed-
 walk / log-det energies are the next step.
 
-**Code** (2026-10-29): `race_nnx.py` `x_norm`, `feature_norm`, `tie_operator`, `stratum_gain:
-"jackson"` (`_jackson_gain`), `residual: "neumann"`; `train_3bpa.py` keys; tests
+**Code** (2026-10-29): `models/race.py` `x_norm`, `feature_norm`, `tie_operator`, `stratum_gain:
+"jackson"` (`_jackson_gain`), `residual: "neumann"`; `training/train.py` keys; tests
 `tests/test_round25.py` (E(3), FD forces for chebyshev untied / tied / tied + Jackson and neumann;
 shared modules survive `nnx.split`/`merge`; validation; Jackson values; neumann partial sums
 h_{t+1} − h_t = M(h_t − h_{t−1}) to 1e-8): 10 passed, round 24: 13 passed.  Diagnostic
-`runs/diag/spectral.py` (ρ and σ_max of each M_t by power iteration).
+`research/diag/spectral.py` (ρ and σ_max of each M_t by power iteration).
 
 **Screen** (job 1173129, 3BPA, 500 ep, seed 42, reference `r20_rp05_s42` = v9a at 500 ep:
 3.93/9.69, 9.92/22.13, 29.8/60.9): `r25_xn` (x_norm only), `r25_cheb` (A untied), `r25_tied`
@@ -2268,7 +2268,7 @@ h_{t+1} − h_t = M(h_t − h_{t−1}) to 1e-8): 10 passed, round 24: 13 passed.
 `x_norm` / `feature_norm`, 1500 ep.
 
 **Correction (2026-10-29, 03:30): the azobenzene failure is an XLA GPU miscompile, not feature
-explosion.**  Bisection on `rmd17_azobenzene_xn_s42` (`runs/diag/{diag_evalpath,cue_bisect,layer_bisect,
+explosion.**  Bisection on `rmd17_azobenzene_xn_s42` (`research/diag/{diag_evalpath,cue_bisect,layer_bisect,
 node_bisect,readout_bisect}.py`): the error is one constant per molecule (−912 eV, spread 7 meV) on
 train and valid frames alike; all six cue edge-TP outputs agree to 1e-15 between the energy-only and
 the energy+forces program (and `method="naive"` gives the same result), every layer readout agrees,
@@ -2283,7 +2283,7 @@ growth is real but was not the cause).  `feature_norm` on azobenzene saturated t
 energy clip from epoch 1 (train E_LOSS = 12.5 exactly) under the same bug.
 Fix: `runs/run_cue.sh` and `runs/sbatch_py.sh` export `--xla_gpu_enable_triton_gemm=false`.  Audit of
 18 reported checkpoints (valid / test metrics and train-step loss / gradients with the flag on vs
-off, `runs/diag/audit_triton.py`, job 1173267, `runs/diag/audit_triton_{on,off}.txt`): only
+off, `research/diag/audit_triton.py`, job 1173267, `research/diag/audit_triton_{on,off}.txt`): only
 azobenzene differs; v9a_e3k s42–44, v9b_rp, AcAc v9b1500, the other nine rMD17 molecules, water,
 `r25_xn`, `r25_cheb` agree to the last printed digit (loss / gradient rel. diff ≤ 2e-12, gradient
 projection cosine 1.000000) — every reported number stands.  Cost of the flag (`bench_speed.py`,
@@ -2291,7 +2291,7 @@ projection cosine 1.000000) — every reported number stands.  Cost of the flag 
 Fixed azobenzene rerun (`rmd17_azobenzene_v9a_nt_s42`, job 1173268) trains normally: epoch 449 valid
 E / F MAE 0.93 meV / 3.07 meV/Å (the bugged run at the same epoch: E RMSE 3205 meV).  Final (1500 ep, exit 0): test_2000 E / F MAE 0.58 meV / 2.37 meV/Å (RMSE 0.86 / 3.87); valid 0.58 / 2.51.  GRACE (PRX Tab. 1, test = all remaining frames) 0.5 / 2.2.
 
-**Operator spectra** (`runs/diag/spectral.py`, 5 training frames; ρ = power-iteration growth rate,
+**Operator spectra** (`research/diag/spectral.py`, 5 training frames; ρ = power-iteration growth rate,
 σ_max via vjp; layers 1–4): v9a init ρ ≈ 1.04–1.13, σ_max ≈ 2.0 for every dataset; trained 3BPA v9a
 ρ 1.05–1.19, σ_max 2–5.9; rMD17 ethanol ρ 1.04–1.24, σ_max 2.5–8.5.  Chebyshev arms (layer_scale 0.5,
 x_norm): init ρ ≈ 0.53–0.56, σ_max ≈ 1.0; trained `r25_cheb` ρ 0.52–0.79, `r25_tied` ρ ≈ 0.91 for the
@@ -2334,7 +2334,7 @@ normalised adjacency D^{-1/2} A D^{-1/2}.  It bounds the spectrum (trained ρ < 
 the local degree |x_i| = |W_t A_i| from the operator, i.e. how dense / compressed the environment is.
 At 1200 K the strained bonds are exactly where that magnitude carries energy.  KPM itself does not
 normalise per row: it rescales the whole Hamiltonian by one global spectral bound, H~ = (H − b)/a,
-which keeps the relative magnitudes.  Two constructions (`race_nnx.py`):
+which keeps the relative magnitudes.  Two constructions (`models/race.py`):
 
 - `x_norm: "spectral"` (global, KPM-type): no per-node rescaling; each irrep block of the x projection
   W_t is divided by its operator norm σ_max([path_weight_k W_k]_k) (stacked over the input blocks
@@ -2375,7 +2375,7 @@ noise on all six numbers.  C tied + hill has the best valid (3.11 / 8.58) and 30
 only 1200 K E at v9a level; every bounded variant (rms, hill, spectral) sits at 31–34 — the
 contraction of the operator itself (ρ < 1) was the candidate cause.
 
-Spectra (`runs/diag/spectral_r25c.txt`, job 1173456; trained ρ for layers 1–4): v9a 1.14 / 1.18 / 1.16 /
+Spectra (`research/diag/spectral_r25c.txt`, job 1173456; trained ρ for layers 1–4): v9a 1.14 / 1.18 / 1.16 /
 1.05; A no-norm 0.73 / 0.78 / 0.88 / 0.52; A hill 0.60 / 0.81 / 0.67 / 0.53; A spectral 0.67 / 0.73 /
 0.86 / 0.52; C tied rms 0.86–0.87; C tied hill 0.94–0.96; C tied spectral 1.24.  The contraction
 comes from `layer_scale` 0.5 (init ρ ≈ 0.56 with or without x_norm), not from the normalisation, and
@@ -2431,7 +2431,7 @@ PRB 59, 8487); (1C) monotone variational resolvent (Winston–Kolter monDEQ, arX
 et al. arXiv 2106.14342).  Tier 3: rational readouts, scalar QEq / log-det channels, multi-pole
 resolvent, latent tight-binding.
 
-Gates measured on the existing checkpoints (`runs/diag/err25p`):
+Gates measured on the existing checkpoints (`research/diag/err25p`):
 - D1 (bias growth): harmonic soft-mode bias predicts μ_1200 ≈ 3 μ_600; measured μ_600 = −0.0…−0.5
   (v9a) / −0.8…−1.3 (tied+hill) meV against μ_1200 = −9…−12 / −15…−17 meV — the bias is strongly
   super-harmonic (large-amplitude anharmonic), so 1A can only address a small harmonic part.
@@ -2444,7 +2444,7 @@ Gates measured on the existing checkpoints (`runs/diag/err25p`):
 
 ### 12.7 Round 26 (2026-10-29): gates D3 / D6 and the bond-order scale stratum (1B)
 
-Gates on the 1500-ep checkpoints (`runs/diag/gates_1b.py`, job 1174372, `runs/diag/gates_1b.txt`):
+Gates on the 1500-ep checkpoints (`research/diag/gates_1b.py`, job 1174372, `research/diag/gates_1b.txt`):
 - D3 (model-internal magnitude): S_t = Σ_i log rms(x_i^(t)) before the per-node normalisation.
   Partial R² of the 1200 K signed energy error on S_t (5 layers) beyond the bond strain: 0.013–0.036
   for A + hill and C tied + hill (gate threshold 0.1) — fails.  At 1200 K the x magnitudes are not
@@ -2456,7 +2456,7 @@ Gates on the 1500-ep checkpoints (`runs/diag/gates_1b.py`, job 1174372, `runs/di
   the rational-readout idea (threshold 1 %).
 - 1200 K mean error (bias) of A + hill: −12.0 / −15.4 / −11.8 meV (v9a s42 −9.1).
 
-1B implementation (`race_nnx.py`, `bond_order` / `bond_order_p` / `bond_order_shape`):
+1B implementation (`models/race.py`, `bond_order` / `bond_order_p` / `bond_order_shape`):
 E_bo = −Σ_i s_Z φ(b_i)(1 + g(q_i)), b_i = (1e-6 + Σ_j β_ZZ'(r_ij)²)^½, β = Σ_{k} softplus(c_k^{ZZ'})
 e^{−α_k r} f_cut(r), α = 1, 2, 4 Å⁻¹ (c symmetrised over the pair); φ = b^p (p = 0.5 + min(softplus(π), 1),
 init 1, or fixed) or log b; g = MLP(5·n0e → 32 → 1) of the per-layer RMS-normalised 0e features, last
@@ -2466,7 +2466,7 @@ b_i against NumPy.  Screen (job 1174454; 500 ep, seed 42): A + hill + {power, p 
 D3 failing lowers the prior; the screen is the direct test.
 
 1C feasibility probe and design (`docs/RACE_1C_monotone_resolvent_design.md`, reviewed and fixed;
-`runs/diag/probe_1c.txt`, tied+hill 1500 ep): adjoint by vjp / `jax.linear_transpose` works on the cue
+`research/diag/probe_1c.txt`, tied+hill 1500 ep): adjoint by vjp / `jax.linear_transpose` works on the cue
 backend (1.9e-16); GMRES to 1e-8 in 105–114 matvecs (model: 5); max Re λ(M) = 0.89–0.92 (real), top |λ|
 0.97–0.995 (complex pair ≈ 0.19 ± 0.96i), σ_max 3.9–4.0, ‖M−Mᵀ‖_F/‖M+Mᵀ‖_F ≈ 1.0.  Truncation tail
 ‖S₅ − h*‖/‖h*‖ = 0.24 (train) / 0.24 / 0.27 / 0.32 (300 / 600 / 1200 K).  **D4 fails**: within each
@@ -2477,7 +2477,7 @@ it; the monotone non-variational class needs m₀ ≤ 0.083.  Depth sweep (job 1
 n_layers 10 / 20, 500 ep) is the cheap test; early checkpoints converge (tail 1.4–2.1 % at T10 ep 100,
 0.5–0.9 % at T20 ep 39).
 
-SOAP (`bam_omat24/soap_optax.py`, `tests/test_soap.py` 19 passed after review fixes; train_3bpa
+SOAP (`race_v2/training/soap_optax.py`, `tests/test_soap.py` 19 passed after review fixes; train_3bpa
 `optimizer: "soap"`, keys soap_b1 / soap_b2 / soap_precondition_frequency / soap_max_precond_dim /
 soap_shampoo_beta): both sides preconditioned for 6,859,368 parameters, Adam on 3,025; state 1040 MiB;
 ≈ 17–20 s/epoch vs 5 s for AMSGrad (≈ 3.5×; ~190 per-leaf matmul / eigh / QR calls).  Screen job
@@ -2515,13 +2515,13 @@ new direction.
 
 ## 13. Data parallel / multi-node, faithful DeNS, SOAP energy gauge (2026-10-29 afternoon)
 
-**Data parallel and multi-node** (`training_utils.make_sharded_train_step`, `data_nnx`, `bam_omat24/distributed.py`,
+**Data parallel and multi-node** (`training_utils.make_sharded_train_step`, `data_nnx`, `race_v2/training/distributed.py`,
 `runs/sbatch_mn_cue.sh`; tests `tests/test_data_parallel.py`).  Per-device losses are now normalised by the
 counts of the *global* batch and the gradients psum'ed (was pmean of per-device means), so N devices x b graphs
 is the single-device step on the union batch: 2 / 4 devices vs 1 device, mixed molecule sizes, max |dgrad| <
 1e-10 relative (old pmean: > 1e-3).  Eval: the last incomplete device group was filled with copies of the last
 batch and double counted on > 1 device; copies now get weight 0 (all reported numbers were single-GPU evals:
-unaffected).  Multi-process: `BAM_DISTRIBUTED=1` makes `bam_omat24/__init__.py` start jax.distributed before the
+unaffected).  Multi-process: `BAM_DISTRIBUTED=1` makes `race_v2/__init__.py` start jax.distributed before the
 model imports (their import initialises the backend); one process per node driving all its GPUs (local device
 ids passed explicitly: JAX's Slurm auto-detection would take [SLURM_LOCALID] and use GPU 0 only); global arrays
 via make_array_from_callback; rank-0 logging / checkpoints; barriers for the graph cache and the final
@@ -2554,7 +2554,7 @@ pass is the remaining untested variant.
 **SOAP energy weight and the energy gauge** (job 1175929; `docs/RACE_literature_sweep2_2026-10-29.md`).  SOAP's
 energy penalty is a constant offset in the one force-null direction (single stoichiometry: per-frame constant,
 carried by `shift`): train mean −5.95 meV (sd 1.45), test 300 K −6.09 (AMSGrad: +0.68).  Closed-form refit of
-`shift` on the training split (`gauge_refit: true`, VarPro; `runs/diag/gauge_refit.py` for old runs;
+`shift` on the training split (`gauge_refit: true`, VarPro; `research/diag/gauge_refit.py` for old runs;
 `compare_3bpa.py --gauge`), E / F after refit, 500 ep, seed 42:
 
 | run | 300 K | 600 K | 1200 K |
@@ -2572,7 +2572,7 @@ four (not 300 K E 2.02 vs 1.7, 1200 K E 27.17 vs 25.8) — one seed, 500 epochs.
 GRACE's test MAE).  Note: sweep sub-agents ran JAX on the login node (against the rule) and overwrote the
 untracked core dump `core`.
 
-**SOAP speed-up** (`bam_omat24/soap_grouped.py`, config `"soap_impl": "grouped"`; plan
+**SOAP speed-up** (`race_v2/training/soap_grouped.py`, config `"soap_impl": "grouped"`; plan
 `docs/RACE_SOAP_speedup_plan_2026-10-29.md`).  The per-leaf SOAP cost 117 ms per optimizer step amortised
 (31 ms regular, 890 ms per QR refresh every 10 steps; Adam 5.4 ms): ~196 leaves -> 496 Shampoo factors, ~1,500
 kernels per regular step and 640 cuSOLVER QR calls per refresh, i.e. launch-bound (36 GFLOP per step; FP64 ≈
@@ -2589,7 +2589,7 @@ The queued SOAP runs (r28 promotion, rMD17, AcAc) were switched to `soap_impl: g
 senders = j, receivers = i, but the model computes r = x_sender − (x_receiver + Sij·cell) = x_j − x_i − S·cell ≠
 D_ij for boundary-crossing edges.  5 Å cutoff: water frame 0 — all 7,878 boundary edges wrong (up to 130 Å);
 rattled Si 2×2×2 — 294/294 image edges wrong (up to 20 Å); primitive NaCl — 18/50.  Fixed copy
-`bam_omat24/build_pkl_v2.py` (Sij = −S, the data_3bpa convention; fairchem imported only in __main__; output
+`race_v2/data/build_pkl_v2.py` (Sij = −S, the data_3bpa convention; fairchem imported only in __main__; output
 `omat24_train_v2_*.pkl`), test `tests/test_build_pkl_v2.py`; build_pkl.py unchanged (new files not committed,
 at the user's request).  data_3bpa's periodic path (used for water) was already correct (8e-15 Å).
 

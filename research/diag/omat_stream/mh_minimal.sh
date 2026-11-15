@@ -1,8 +1,8 @@
 #!/bin/bash
-# Minimal multi-process JAX test on N nodes (no model; runs/diag/omat_stream/mh_minimal.py), to separate a JAX/NCCL
+# Minimal multi-process JAX test on N nodes (no model; research/diag/omat_stream/mh_minimal.py), to separate a JAX/NCCL
 # setup problem from a trainer problem when 4 or more processes hang (2026-11-11).
 # usage (from /scratch/t510a13/race_v2/work):
-#   $ sbatch -J mhmin -p exclusive06 --comment="field=sciai;appl=jax" --nodes=4 --ntasks-per-node=1 --exclusive --gres=gpu:4 -t 00:10:00 runs/diag/omat_stream/mh_minimal.sh
+#   $ sbatch -J mhmin -p exclusive06 --comment="field=sciai;appl=jax" --nodes=4 --ntasks-per-node=1 --exclusive --gres=gpu:4 -t 00:10:00 research/diag/omat_stream/mh_minimal.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work
@@ -17,7 +17,7 @@ for N in 2 $SLURM_NNODES; do
   echo "== $N processes  $(date +%T)"
   export MASTER_PORT=$((MASTER_PORT + 1))
   timeout 240 srun --nodes=$N --ntasks=$N --ntasks-per-node=1 --cpus-per-task=288 \
-    python -X faulthandler runs/diag/omat_stream/mh_minimal.py 2>&1 | grep -E '^\[p[0-9]+ |Timeout|backend_compile|Error|error' | sort -s -k1,1 | head -n 40
+    python -X faulthandler research/diag/omat_stream/mh_minimal.py 2>&1 | grep -E '^\[p[0-9]+ |Timeout|backend_compile|Error|error' | sort -s -k1,1 | head -n 40
   echo "   srun exit ${PIPESTATUS[0]}"
 done
 echo "done $(date +%T)"

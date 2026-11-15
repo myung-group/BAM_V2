@@ -3,10 +3,10 @@ forward+grad program of the full model, via jax.debug.callback."""
 import json, sys, io, functools
 import numpy as np, jax, jax.numpy as jnp
 from flax import nnx
-import bam_omat24.race_nnx as R
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
+import race_v2.models.race as R
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn
+from race_v2.training.utils import load_checkpoint
 jax.config.update("jax_enable_x64", True)
 LOG = []
 orig = R.cue_edge_tensor_product
@@ -17,7 +17,7 @@ def traced(irreps_in, sh_irreps, irreps_out, node_feats, sh, weights, senders, r
     return out
 R.cue_edge_tensor_product = traced
 mol = sys.argv[1]
-cfg = json.load(open(f"input/input_3bpa_omat24_rmd17_{mol}_v9a_s42_cue.json"))
+cfg = json.load(open(f"research/input/input_3bpa_omat24_rmd17_{mol}_v9a_s42_cue.json"))
 f = io.StringIO()
 an, ae, tr, va, te, st = T.build_datasets(cfg, f)
 gd, *_ = T.build_model(cfg, len(an), ae, st, f)

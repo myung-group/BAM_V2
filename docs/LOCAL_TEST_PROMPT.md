@@ -30,20 +30,20 @@ download and convert the data for its first benchmark.
    Some tests skip when HPC-only files are missing (/scratch/... paths) or when SLURM_JOB_ID is unset; that is
    expected. Report which ones skipped and why.
    If test_race_lr.py fails:
-   - find the cause in bam_omat24/long_range.py or bam_omat24/race_lr_nnx.py;
-   - fix it with the smallest change that keeps RACE (race_nnx.py) and the default code paths unchanged;
+   - find the cause in race_v2/models/long_range.py or race_v2/models/race_lr.py;
+   - fix it with the smallest change that keeps RACE (models/race.py) and the default code paths unchanged;
    - re-run the tests. Do not loosen a tolerance to make a test pass without explaining why it is physically
      justified.
    The Ewald formula was already checked independently in numpy: NaCl Madelung constant to 1e-13, alpha
    independent. A disagreement there points at the JAX transcription.
 
 3. CPU smoke training of RACE_LR (pipeline check only, not a result):
-   - Copy input/input_3bpa_omat24_abl3_full_s42_cue.json to input/input_local_racelr_smoke.json and change:
+   - Copy configs/base/race_v2_base_recipe.json to configs/smoke/cpu_race_lr_smoke.json and change:
      "model": "RACE_LR", "tp_backend": "e3nn", "x64": true, "n_layers": 2, "hidden_size": 16, "n_epochs": 3,
-     "train_path": "dataset_3BPA/train_300K.xyz", "test_paths": ["dataset_3BPA/test_300K.xyz"], a "log_file" and a
+     "train_path": "research/dataset_3BPA/train_300K.xyz", "test_paths": ["research/dataset_3BPA/test_300K.xyz"], a "log_file" and a
      "ckpt_name" under runs/local_racelr_smoke/, and "graph_cache": false.
    - Remove keys that need the GPU or HPC (soap_impl grouped is fine on CPU; if cue is requested anywhere, use e3nn).
-   - Run: JAX_PLATFORMS=cpu python -m bam_omat24.train_3bpa input/input_local_racelr_smoke.json
+   - Run: JAX_PLATFORMS=cpu python -m race_v2.training.train configs/smoke/cpu_race_lr_smoke.json
    - Check that the loss decreases and that nothing is NaN.
    - Also run the same config with "model": "RACE" for comparison. The two should differ only by the electrostatic
      stratum: same order of loss, slightly more parameters for RACE_LR. Report the time per epoch of both.
@@ -64,7 +64,7 @@ download and convert the data for its first benchmark.
        1 Bohr = 0.529177210903 Å).
      - Keep the paper's train/test split if one is given. Otherwise use a seeded random 90/10 split
        (numpy RandomState(42)) and record it.
-   - Write the converter as data_prep/convert_4ghdnnp.py, documented like the other data_prep/ scripts.
+   - Write the converter as scripts/data/convert_4ghdnnp.py, documented like the other scripts/data/ scripts.
    - Add a section "4G-HDNNP systems (RACE_LR)" to docs/DATASETS.md: URL, license, md5, the exact commands, the
      split, unit conversions, and the output md5s.
    - Sanity check per system: number of structures per charge state, energy and force ranges, and that a few
@@ -73,7 +73,7 @@ download and convert the data for its first benchmark.
 5. Report and commit:
    - Write docs/local_test_report.md (in English): environment (OS, CPU, package versions actually installed), test
      results, smoke-training numbers, data conversion summary, and anything that did not work.
-   - Commit on racev2: data_prep/convert_4ghdnnp.py, the docs changes, docs/local_test_report.md, any code fixes
+   - Commit on racev2: scripts/data/convert_4ghdnnp.py, the docs changes, docs/local_test_report.md, any code fixes
      (one commit per logical change, messages explaining why), and the smoke config.
    - Do not commit data, checkpoints, runs/ or .venv. Do not push.
    - Then tell me in Korean what passed, what failed, what you fixed, and what I need to decide.

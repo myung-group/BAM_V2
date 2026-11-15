@@ -523,7 +523,7 @@ def decode_row(raw: bytes = None, d: dict = None) -> dict:
         st = st.reshape(3, 3)[_VOIGT_I, _VOIGT_J] if st.size == 9 else st.reshape(6)
     cell = _arr(d.get("cell"), np.float64)
     # optional fields (total charge, spin, per-atom labels): ASE db key_value_pairs and data, as ase.db row.toatoms
-    # puts them in atoms.info (the OMol25 layout is to be checked with data_prep/convert_omol25.py inspect)
+    # puts them in atoms.info (the OMol25 layout is to be checked with scripts/data/convert_omol25.py inspect)
     info = {}
     for part in ("key_value_pairs", "data"):
         v = d.get(part)

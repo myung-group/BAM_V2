@@ -4,7 +4,7 @@ best; choose the lowest force RMSE; ties (< 2 %) -> the smaller model (fewer par
 listed for comparison but take no part in the rule.  Secondary (not part of the rule): mean of the last 5 epochs of
 the per-epoch validation table (energy RMSE per structure, force RMSE and MAE).
 
-    python -I runs/diag/select_size.py <run> <run> ... [--controls <run> ...]
+    python -I scripts/eval/select_size.py <run> <run> ... [--controls <run> ...]
 """
 import json
 import re

@@ -15,4 +15,4 @@ run4 atatcgcg bucky dwnt
 for m in ala3 dha stach atat atatcgcg bucky dwnt; do
   f=runs/md22T_${m}_cue/loss_md22T_${m}_cue.out
   echo "$m | $(grep -m1 -o 'n_graphs=.*avg_n_neighbors=[0-9.]*' $f) | $(grep -E '^[0-9/]+ [0-9:]+ +[0-9]+ ' $f | tail -1 | awk '{print "epoch",$3,"s/ep",$4}')"
-done | tee runs/diag/md22_prep.log
+done | tee research/diag/md22_prep.log

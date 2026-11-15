@@ -43,8 +43,8 @@
 
 - **무엇이 문제였나.** 옵티마이저 갱신은 `shard_map` 안에서 복제된 상태로 돈다(`training_utils.make_sharded_train_step`).
   그래서 GPU마다 같은 QR을 중복 계산한다. `soap_grouped.py`에는 장치별로 1/D씩 나눠 계산하고 all_gather하는 경로
-  (`_orth_partitioned`, 인자 `axis_name` / `axis_size`)가 이미 있었지만 `train_3bpa.py`가 넘기지 않아 쓰이지 않았다.
-- **수정** (커밋 `7897ce8`, `bam_omat24/train_3bpa.py` `build_model`의 SOAP 분기): 설정 키
+  (`_orth_partitioned`, 인자 `axis_name` / `axis_size`)가 이미 있었지만 `training/train.py`가 넘기지 않아 쓰이지 않았다.
+- **수정** (커밋 `7897ce8`, `race_v2/training/train.py` `build_model`의 SOAP 분기): 설정 키
   `"soap_distributed_refresh": true`이고 장치가 2개 이상이면 `axis_name='dp', axis_size=n_devices`를
   `scale_by_soap_grouped`에 넘긴다. 기본값 false. `soap_impl: "grouped"`에서만 의미가 있다.
 - **측정** (4장 한 프로세스, GPU당 64개, 200스텝 시간): 기준 58.1초, 분담 57.0초(−2.0 %), 분담 + cholqr 56.9초(−2.1 %).
@@ -65,7 +65,7 @@
 ### 3.2 원인
 
 이 모드는 `jax_enable_x64`를 켠다. 그러면 정밀도를 지정하지 않은 생성자가 float64 배열을 만들고, float32 값과 만나는 순간
-float64로 승격된다. 뿌리는 `bam_omat24/utils.py`의 네 곳이었고 거기서 모든 층으로 번졌다.
+float64로 승격된다. 뿌리는 `race_v2/models/blocks.py`의 네 곳이었고 거기서 모든 층으로 번졌다.
 
 | 위치 | 원래 코드 | 번진 범위 |
 |---|---|---|
@@ -77,7 +77,7 @@ float64로 승격된다. 뿌리는 `bam_omat24/utils.py`의 네 곳이었고 거
 ### 3.3 수정
 
 커밋 `a26057c`. 네 곳 모두 입력의 dtype을 따르게 했다(5줄). 순수 float64 실행과 순수 float32 실행의 결과는 바뀌지 않는다.
-`thole.py` / `race_polar_nnx.py`(Thole 블록)에는 고칠 것이 없었다.
+`thole.py` / `models/race_polar.py`(Thole 블록)에는 고칠 것이 없었다.
 
 ### 3.4 확인 (작업 1260206 추적, 1260218 실행)
 
@@ -151,9 +151,9 @@ cd /scratch/t510a13 && sbatch jobs/dtype_trace.sh          # CFG=<config.json> R
 
 | 항목 | 위치 |
 |---|---|
-| GPU 분담 옵션 | 커밋 `7897ce8`, `bam_omat24/train_3bpa.py` |
-| float32 승격 수정 | 커밋 `a26057c`, `bam_omat24/utils.py` |
-| SOAP 구현 (수정 없음) | `bam_omat24/soap_grouped.py`, `bam_omat24/soap_optax.py` |
+| GPU 분담 옵션 | 커밋 `7897ce8`, `race_v2/training/train.py` |
+| float32 승격 수정 | 커밋 `a26057c`, `race_v2/models/blocks.py` |
+| SOAP 구현 (수정 없음) | `race_v2/training/soap_grouped.py`, `race_v2/training/soap_optax.py` |
 | 측정 작업 스크립트 | `/scratch/t510a13/jobs/soap_profile.sh`, `f32_check.sh`, `dtype_trace.sh`, `dtype_trace.py` |
 | 측정 로그 | `/scratch/t510a13/logs/soap_prof_1258956.out`, `f32_check_1260218.out`, `dtype_trace_1260206.out` |
 | float32로 도는 첫 긴 학습 | 작업 1260633, 코드 `/scratch/t510a13/BAM_V2_run_hybrid_f32`(커밋 `a26057c`로 고정) |

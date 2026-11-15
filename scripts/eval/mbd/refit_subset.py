@@ -11,7 +11,7 @@ import numpy as np
 ap = argparse.ArgumentParser()
 ap.add_argument('--lmdb', required=True); ap.add_argument('--filters'); ap.add_argument('--n', type=int, default=20000)
 ap.add_argument('--seed', type=int, default=0); ap.add_argument('--out', required=True)
-ap.add_argument('--repo', default='/scratch/t510a13/BAM_V2_merged/bam_omat24')
+ap.add_argument('--repo', default='/scratch/t510a13/BAM_V2_merged/race_v2')
 a = ap.parse_args()
 sys.path.insert(0, a.repo)
 import stream_io as S  # noqa: E402

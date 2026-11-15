@@ -1,15 +1,15 @@
 """Spectral radius rho and operator norm sigma_max of each layer's linear map h -> M_t(R) h
 (update "linear": the layer output for fixed geometry, prev_features=None, padding nodes masked),
 by power iteration on M (rho: mean log growth of the last 10 of 40 steps) and on M^T M via vjp.
-Init and trained parameters, 5 training frames.  usage: python runs/diag/spectral.py run [run ...]"""
+Init and trained parameters, 5 training frames.  usage: python research/diag/spectral.py run [run ...]"""
 import json, sys, io
 import numpy as np, jax, jax.numpy as jnp, jraph
 import e3nn_jax as e3nn
 from flax import nnx
-import bam_omat24.race_nnx as R
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
+import race_v2.models.race as R
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn
+from race_v2.training.utils import load_checkpoint
 jax.config.update("jax_enable_x64", True)
 CAP = []
 orig = R.RACEConvolution.__call__
@@ -38,7 +38,7 @@ def spectra(model, b, nmask):
     return out
 
 for run in sys.argv[1:]:
-    cfg = json.load(open(f"input/input_3bpa_omat24_{run}_cue.json"))
+    cfg = json.load(open(f"research/input/input_3bpa_omat24_{run}_cue.json"))
     f = io.StringIO()
     an, ae, tr, va, te, st = T.build_datasets(cfg, f)
     gd, p0, *_ = T.build_model(cfg, len(an), ae, st, f)

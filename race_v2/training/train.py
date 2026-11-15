@@ -3,7 +3,7 @@
 Molecular (non-periodic) systems, single-node (one or more GPUs via JAX sharding).
 
 Usage:
-    python -m race_v2.training.train input/input_3bpa.json
+    python -m race_v2.training.train research/input/input_3bpa.json
 
 Config keys (in addition to the model hyper-parameters, see README):
     train_path, test_path | test_paths, valid_frac | valid_path (fixed validation file), atomic_numbers, atom_energies
@@ -386,7 +386,7 @@ def build_datasets(cfg: Dict, fout):
     atomic_numbers = list(_get(cfg, 'atomic_numbers', DEFAULT_ATOMIC_NUMBERS))
     atom_indices = atomic_numbers_to_indices(atomic_numbers)
     cutoff = float(_get(cfg, 'cutoff', 5.0))
-    train_path = Path(_get(cfg, 'train_path', 'dataset_3BPA/train_300K.xyz'))
+    train_path = Path(_get(cfg, 'train_path', 'research/dataset_3BPA/train_300K.xyz'))
 
     train_frames = load_frames(train_path)
     ref_e0 = np.asarray(_get(cfg, 'atom_energies', DEFAULT_ATOM_ENERGIES), dtype=np.float64)
@@ -1711,7 +1711,7 @@ def train(cfg: Dict):
 
 
 if __name__ == "__main__":
-    cfg_path = sys.argv[1] if len(sys.argv) > 1 else 'input/input_3bpa.json'
+    cfg_path = sys.argv[1] if len(sys.argv) > 1 else 'research/input/input_3bpa.json'
     with open(cfg_path) as f:
         config = json.load(f)
     train(config)

@@ -7,16 +7,16 @@ D6 (go/no-go for 3a, rational readouts): fraction of the per-layer stratum-reado
    (input of the gate) at 300 / 1200 K test frames that fall outside the per-channel [min, max] of the
    training frames, and the largest overshoot in units of the training range.
 
-usage: python runs/diag/gates_1b.py run [run ...]       (needs the XLA Triton-GEMM flag; sbatch_py.sh sets it)
+usage: python research/diag/gates_1b.py run [run ...]       (needs the XLA Triton-GEMM flag; sbatch_py.sh sets it)
 """
 import json, sys, io
 import numpy as np, jax, jax.numpy as jnp, jraph
 import e3nn_jax as e3nn
 from flax import nnx
-import bam_omat24.race_nnx as R
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
+import race_v2.models.race as R
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn
+from race_v2.training.utils import load_checkpoint
 jax.config.update("jax_enable_x64", True)
 
 XCAP, GCAP = [], []
@@ -71,7 +71,7 @@ def r2(cols, y):
 
 
 for run in sys.argv[1:]:
-    cfg = json.load(open(f"input/input_3bpa_omat24_{run}_cue.json"))
+    cfg = json.load(open(f"research/input/input_3bpa_omat24_{run}_cue.json"))
     f = io.StringIO()
     an, ae, tr, va, te, st = T.build_datasets(cfg, f)
     gd, *_ = T.build_model(cfg, len(an), ae, st, f)

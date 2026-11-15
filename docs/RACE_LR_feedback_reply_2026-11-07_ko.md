@@ -16,7 +16,7 @@ OMol25 사전학습 자체는 아직 하지 않았습니다.
 | 3.5 χ 초기화 Pauling 기본값 | **완료** | 기본값을 `"pauling"`으로 바꿨습니다. 이전 설정에는 `"chi_init": "zero"`를 명시해서 기존 결과가 그대로 재현됩니다. |
 | 3.5 원소별 에너지 보정 | **완료 (사후 보정)** | 학습 분할로 원소별 보정을 맞추는 도구를 만들었습니다(아래 2절). 학습할 때의 E0는 원래부터 원소별 최소제곱입니다. |
 | 3.5 사전학습에 전하 손실 | **준비됨** | `charge_label_key` + `charge_weight`. OMol25의 Löwdin 전하로 통일하는 것을 권하는 데 동의합니다. Mulliken은 쓰지 않습니다. |
-| 5 평가 어댑터용 `load` / `predict` | **완료** | `bam_omat24/predict.py` (아래 2절). |
+| 5 평가 어댑터용 `load` / `predict` | **완료** | `race_v2/inference/predict.py` (아래 2절). |
 | 3.1 공식 OMol25 | 대기 | Hugging Face 승인(약관 동의와 토큰)이 필요해서 사용자 계정으로만 받을 수 있습니다. 다운로드는 HANGANG 데이터 이동 노드에서 하고, 저장은 `/appsdata`에 합니다. |
 | 3.2 원소 15종 | 사전학습 때 확인 | OMol25는 83개 원소를 다룹니다. 설정의 `atomic_numbers`에 15종(H, B, C, N, O, F, Mg, Si, P, S, Cl, Ca, Zn, Br, I)이 모두 들어가는지, 각 원소의 학습 구조 수가 충분한지 변환 단계에서 셉니다. |
 | 3.3 HOMO > 0 다중 음이온 제외 | 데이터 확인 뒤 | 공식 OMol25 행에 HOMO 필드가 있는지 아직 모릅니다. 변환기의 `inspect` 모드로 확인한 뒤 필터를 넣겠습니다. |
@@ -29,7 +29,7 @@ OMol25 사전학습 자체는 아직 하지 않았습니다.
 ## 2. ctx-RACE 평가 어댑터용 인터페이스
 
 ```python
-from bam_omat24.predict import load
+from race_v2.inference.predict import load
 
 pred = load('runs/<name>/ckpt.pkl')      # 설정은 체크포인트 안에 들어 있습니다
 energies, forces = pred.predict(frames)  # energies: (n_frames,) eV 총에너지, forces: (n_atoms, 3) eV/Å의 목록
@@ -49,7 +49,7 @@ charges = pred.charges(frames)           # RACE_LR일 때만: 프레임별 (n_at
 - **원소별 보정:** 학습 분할로 한 번 맞추면 이후 `predict`에 자동으로 적용됩니다.
 
   ```bash
-  python -m bam_omat24.predict refit runs/<name>/ckpt.pkl --xyz <학습 분할.xyz>
+  python -m race_v2.inference.predict refit runs/<name>/ckpt.pkl --xyz <학습 분할.xyz>
   ```
 
 - **검증:** 학습된 탄소 사슬 체크포인트에서 `predict`가 학습 코드의 시험 결과와 정확히 같은 값(에너지 10.77 meV, 힘 9.21 meV/Å)을 냈습니다. 원소별 보정 뒤 에너지는 2.23 meV로, 분석 스크립트의 값과 같습니다.

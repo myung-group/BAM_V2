@@ -1,7 +1,7 @@
 # LAMMPS speed-up for RACEv2: notes of 2026-11-13 (deferred, nothing run)
 
 Recorded on the user's request; the project is to be taken up later. Based on reading `lammps/pair_race.cpp`,
-`lammps/racev2_pjrt.*`, `bam_omat24/export_lammps.py`, `docs/HANDOFF.md`, `docs/torch_port_scope.md` and on the
+`lammps/racev2_pjrt.*`, `race_v2/export/lammps.py`, `docs/HANDOFF.md`, `docs/torch_port_scope.md` and on the
 SevenNet paper (Park et al., JCTC 2024, arXiv:2402.03789). Measured numbers below are from the earlier documents
 (previous account); nothing was measured on 2026-11-13.
 
@@ -28,7 +28,7 @@ Halo is 3.3x slower than owner on one GPU; no timing breakdown exists. Candidate
 
 1. The backward pass recomputes every layer (`layer{i}_vjp` calls `jax.vjp` on the layer). The saved-residual
    variant (`--staged-residuals`, `RACEV2_STAGED_RESIDUALS`) and the owned-row buckets (`--staged-buckets n:e:k`,
-   `race_nnx.NODE_LIMIT`) are written but have never been run (`runs/diag/lammps_halo_res.sh` not submitted).
+   `race_nnx.NODE_LIMIT`) are written but have never been run (`research/diag/lammps_halo_res.sh` not submitted).
 2. Every staged function re-runs the prelude, so the edge radial and spherical-harmonic features are recomputed in
    each of the ~10 calls of a step.
 3. Each layer output and each cotangent is downloaded to the host as a full N x 2048 array, communicated and uploaded

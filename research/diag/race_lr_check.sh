@@ -1,7 +1,7 @@
 #!/bin/bash
 # RACE_LR unit tests (2026-11-06; written while the allocation was exhausted, not run yet): Ewald vs Madelung,
 # alpha independence, batched Ewald, Qeq optimality, model forces / rotation / total-charge dependence.  1 GPU, minutes.
-# usage: sbatch -J racelr -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 00:30:00 runs/diag/race_lr_check.sh
+# usage: sbatch -J racelr -p normal --comment="field=sciai;appl=jax" --gres=gpu:1 -t 00:30:00 research/diag/race_lr_check.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work

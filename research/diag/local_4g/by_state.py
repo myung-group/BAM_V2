@@ -1,6 +1,6 @@
 """Errors per charge state / subset of the local 4G-HDNNP runs, raw and after a per-composition gauge refit.
 
-usage: python -I runs/diag/local_4g/by_state.py   (from the repo root, after queue.sh and dump_frame_errors on the
+usage: python -I research/diag/local_4g/by_state.py   (from the repo root, after queue.sh and dump_frame_errors on the
        training subset and test.xyz of each run, see docs/local_test_report.md section 7)
 
 Gauge refit: least squares of the TRAINING residuals (e_pred - e_ref) on the element counts (minimum norm), applied

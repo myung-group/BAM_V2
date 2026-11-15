@@ -14,6 +14,6 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
 B=/scratch/t510a13/data/datasets_ext/BOTNet-datasets/dataset_3BPA
 for N in r34_zblnb_lr3e3 r34_zblnb_c110 r35_uffnb r35_uff; do [ -f runs/${N}_cue/ckpt_${N}_cue.gauge.pkl ] || continue;
-  python -m bam_omat24.dump_frame_errors input/input_3bpa_omat24_${N}_cue.json --ckpt runs/${N}_cue/ckpt_${N}_cue.gauge.pkl --per-atom --index-key none --batch-size 32 \
-    --xyz $B/test_dih.xyz --xyz dataset_3BPA/test_1200K.xyz --out runs/diag/wd/$N 2>&1 | grep -E "MAE|Error|Traceback"
+  python -m race_v2.eval.dump_frame_errors research/input/input_3bpa_omat24_${N}_cue.json --ckpt runs/${N}_cue/ckpt_${N}_cue.gauge.pkl --per-atom --index-key none --batch-size 32 \
+    --xyz $B/test_dih.xyz --xyz research/dataset_3BPA/test_1200K.xyz --out research/diag/wd/$N 2>&1 | grep -E "MAE|Error|Traceback"
 done

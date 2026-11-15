@@ -1,7 +1,7 @@
 """RACE v2 LR-POLAR: methods (with equations) and results of the OMol25 4M run -- Korean PDF.
 
 usage: python -I build_report.py <font_dir> <fig_dir> <out.pdf>
-Equations follow the code the model was trained with (BAM_V2_run_v3, commit d90bdc5); see v3_methods_formulas.md.
+Equations follow the code the model was trained with (BAM_V2_run_v3, commit d90bdc5); see methods_formulas.md.
 Numbers: final test of 2026-11-16 (final_results_notes.md).
 """
 import json
@@ -249,7 +249,7 @@ p('학습이 끝난 뒤 학습 데이터 표본으로 원자당 에너지 상수
 K.page()
 h1('3. 결과')
 h2('3.1 학습 곡선')
-fig(os.path.join(FIG, 'v3_epochs_final.png'),
+fig(os.path.join(FIG, 'loss_curves.png'),
     '에폭별 로스와 검증 오차. 위 왼쪽: 전체 로스. 위 오른쪽: 학습 로스의 항별 값. 아래: 스트림 검증(모든 도메인)과 '
     'neutral_val 테스트의 에너지·힘 MAE.')
 bl(['검증 로스는 143 에폭 무렵부터 0.00229~0.00230에서 멈췄고, 학습 로스만 계속 내려가 격차가 벌어졌다. 올라가지는 않았으므로 '
@@ -309,7 +309,7 @@ tb([['곡선', '70 에폭', '최종', 'DFT 최소점', '최종 모델'],
     ['Li<super>+</super>…Xe', '31.0', '31.5', '−9.75', '+35.9']],
    widths=[0.36, 0.14, 0.14, 0.18, 0.18],
    caption='상호작용 에너지 곡선의 MAE와 DFT 최소점 위치에서의 값 (kcal/mol).')
-fig(os.path.join(FIG, 'bench_vs_public_final.png'),
+fig(os.path.join(FIG, 'bench_vs_public.png'),
     '물리 벤치마크 곡선: DFT(검은 점), RACE v2 LR-POLAR 최종, 이전 실행(v2local), 공개 모델. 공개 모델은 6 Å 근처에서 상호작용이 끊겨 '
     '이온쌍 곡선이 평평해진다.', width=0.92)
 bl(['이온쌍과 염다리의 먼 거리 꼬리(1/r)를 정확히 따라간다. 형식전하를 고정하고 정전기를 절단 없이 계산한 결과다.',
@@ -330,7 +330,7 @@ tb([['곡선', 'DFT 최소점', '모델 최소점', '최소점 오차', 'MAE (1.
     ['Cl<super>−</super> (수소 결합)', '−13.89', '−14.01', '−0.09', '0.40', '0.87']],
    widths=[0.2, 0.15, 0.15, 0.15, 0.17, 0.18],
    caption='이온-물 상호작용 곡선 (kcal/mol). 기준은 ωB97M-V/def2-TZVPD 계산이다.')
-fig(os.path.join(FIG, 'iw_vs_public_final.png'),
+fig(os.path.join(FIG, 'ion_water_vs_public.png'),
     '이온-물 상호작용 곡선: DFT와 RACE v2 LR-POLAR 최종, 이전 실행, 공개 모델의 비교. 오른쪽 아래는 곡선별 MAE다.')
 bl(['LR-POLAR의 MAE는 0.33~1.04 kcal/mol이다. 공개 모델은 2~3 kcal/mol이고, 6 Å 밖에서 상호작용이 0이 되며, F<super>−</super>에서는 '
     '12~20 kcal/mol까지 틀린다.',
@@ -368,7 +368,7 @@ bl(['작은 분자에서는 부호와 크기를 대체로 맞추고, 제한 단�
 
 K.need(470)
 h2('3.7 이전 실행과의 비교')
-fig(os.path.join(FIG, 'v3_summary_final.png'),
+fig(os.path.join(FIG, 'summary_vs_earlier_runs.png'),
     '위: 내부 검증의 그룹별 에너지·힘 오차와 물리 벤치마크 MAE를 이전 실행과 비교. 아래: 이온-물 0.05 Å 간격 스캔. '
     '이전 실행(주황, 회색 점선)의 4.5~5 Å 계단이 LR-POLAR(파랑)에서 없어졌다.')
 
@@ -415,20 +415,20 @@ rows.append(prep_row('opoly26', 'OPoly26', 'ωB97M-V', '/appsdata/t510a13/prep/o
 rows.append(prep_row('oc25', 'OC25', 'RPBE+D3', '/appsdata/t510a13/prep/oc25_c6.0'))
 rows.append(prep_row('omol_full', 'OMol25 전체', 'ωB97M-V', '/appsdata/t510a13/prep/omol_full_c6.0'))
 tb(rows, widths=[0.15, 0.12, 0.16, 0.12, 0.17, 0.14, 0.14],
-   caption='스트림 학습용 사전처리(절단 거리 6 Å의 크기표와 원소별 기준 에너지). 결과 요약은 패키지의 data_prep/prep_results에 있다.',
+   caption='스트림 학습용 사전처리(절단 거리 6 Å의 크기표와 원소별 기준 에너지). 결과 요약은 패키지의 scripts/data/prep_results에 있다.',
    font=8.2)
 
 h1('부록. 파일 위치')
 tb([['내용', '위치'],
     ['학습 코드', '/scratch/t510a13/BAM_V2_run_v3 (커밋 d90bdc5)'],
     ['최종 체크포인트', '/appsdata/t510a13/race_runs/omol4m/omol4m_v3_polarqeq_c6_cs_ct_L5x128_r12p6_spec_hub_spinE_nbo_csloc_decL_disp_xrn3_lr1e-2_soap_g48x12_s42'],
-    ['학습 로그, 테스트 결과, 그림', 'BAM_V2_wt_thole/docs/results_omol4m_v3'],
-    ['사전처리 결과 (E0, 메타)', 'BAM_V2_wt_thole/data_prep/prep_results'],
+    ['학습 로그, 테스트 결과, 그림', 'docs/results/race_v2_lr_polar_omol25_4m (저장소 BAM_V2, 브랜치 racev2-thole-merge)'],
+    ['사전처리 결과 (E0, 메타)', 'scripts/data/prep_results'],
     ['크기표', '/appsdata/t510a13/prep, /appsdata/t510a13/omol25/prep_4M_c6'],
-    ['다음 계산 창 계획', 'BAM_V2_wt_thole/docs/PLAN_omol_full_next_window.md']],
+    ['다음 계산 창 계획', 'docs/PLAN_omol_full_next_window.md']],
    widths=[0.27, 0.73], align_right_from=-1)
-note('이름: 이 모델의 이름은 RACE v2 LR-POLAR다. 실행 폴더, 결과 폴더, 그림 파일 이름에는 학습 당시의 내부 실행 이름인 v3가 '
-     '남아 있다(예: BAM_V2_run_v3, v3_final). v2local 등은 그보다 앞선 실행의 이름이다.')
+note('이름: 이 모델의 이름은 RACE v2 LR-POLAR다. 학습 실행 폴더와 체크포인트 폴더 이름에는 학습 당시의 내부 실행 이름인 v3가 '
+     '남아 있다(예: BAM_V2_run_v3). 파이썬 패키지 이름은 race_v2(옛 이름 bam_omat24)다. v2local 등은 그보다 앞선 실행의 이름이다.')
 note('수식은 학습에 쓴 코드에서 직접 옮겼다. 표의 숫자는 2026-11-16의 최종 총 테스트(Slurm 작업 1285135~1285139, 1285153) 결과다.')
 
 K.build(OUT, 'RACE v2 LR-POLAR: 방법론과 OMol25 4M 학습 결과', footer='RACE v2 LR-POLAR 방법론과 결과 · 2026-11-16')

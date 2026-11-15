@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: sbatch -J <job> --gres=gpu:<n> -t <time> runs/diag/resume_after.sh <jobid> <run1> [<run2> ...]
+# usage: sbatch -J <job> --gres=gpu:<n> -t <time> research/diag/resume_after.sh <jobid> <run1> [<run2> ...]
 #   waits until <jobid> has left the queue, then restarts (restart: true, .last.pkl) every run whose
 #   stdout has no "exit 0"; one run per GPU, or a single run on all GPUs of the job
 #SBATCH -p normal

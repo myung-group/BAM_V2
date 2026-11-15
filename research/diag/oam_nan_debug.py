@@ -1,6 +1,6 @@
 """Locate the NaN of the OAM subset runs (oamfix_*: E_LOSS nan from epoch 1, F_LOSS frozen).
 
-    python runs/diag/oam_nan_debug.py input/input_3bpa_omat24_oamfix_salex_v2_s42_cue.json
+    python research/diag/oam_nan_debug.py research/input/input_3bpa_omat24_oamfix_salex_v2_s42_cue.json
 
 One batch of 16 training graphs; forward and loss gradient for: fixed vs bucket padding, stress loss on/off, and
 the model with single additions switched off.  Then jax_debug_nans on the first failing case for the traceback.
@@ -15,9 +15,9 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import fixed_collate_fn, default_collate_fn
-from bam_omat24.training_utils import compute_loss
+from race_v2.training import train as T
+from race_v2.data.loaders import fixed_collate_fn, default_collate_fn
+from race_v2.training.utils import compute_loss
 
 
 def nan_report(tag, out, batch):
@@ -87,7 +87,7 @@ def main():
                 grad_report('debug', graphdef, params, batch, True)
         except Exception as ex:
             tb = traceback.format_exception(ex)
-            keep = [l for l in tb if 'bam_omat24' in l or 'Error' in l or 'nan' in l.lower()]
+            keep = [l for l in tb if 'race_v2' in l or 'Error' in l or 'nan' in l.lower()]
             print(''.join(keep[-30:]))
     print('done')
 

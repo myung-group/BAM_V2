@@ -1,7 +1,8 @@
 # RACE v2 LR-POLAR (OMol25 4M) 결과 모음
 
-이름: 모델의 이름은 **RACE v2 LR-POLAR**다. 폴더, 실행, 결과 파일 이름에 남아 있는 `v3`(예: `results_omol4m_v3`,
-`v3_final`, `BAM_V2_run_v3`)는 학습 당시의 내부 실행 이름이다.
+이름: 모델의 이름은 **RACE v2 LR-POLAR**다. 학습 실행 폴더와 체크포인트 폴더 이름에 남아 있는 `v3`(예: `BAM_V2_run_v3`,
+`omol4m_v3_polarqeq_...`)는 학습 당시의 내부 실행 이름이다. 이 폴더 안의 이름은 `epoch020`, `epoch070`, `final`로 바꿨다
+(원본 평가 폴더는 `md_water/eval/v3_e20`, `v3_e70`, `v3_final`).
 
 2026-11-15~16 계산 창(exclusive06, 11/16 09:00 종료)에서 나온 결과를 패키지 안에 따로 모아 둔 폴더다.
 원본은 `/scratch/t510a13/md_water`에 있는데, `/scratch`는 15일 동안 쓰지 않으면 지워지므로 작은 결과 파일(텍스트,
@@ -23,9 +24,9 @@ JSON, 그림)만 여기로 복사했다. 체크포인트, 크기표, extxyz 표�
 
 | 폴더 | 내용 |
 |---|---|
-| `report/` | 한글 PDF와 그것을 만든 스크립트(`build_report.py`, `pdfkit.py`), 그림 스크립트, 코드에서 추출한 수식 정리(`v3_methods_formulas.md`) |
+| `report/` | 한글 PDF와 그것을 만든 스크립트(`build_report.py`, `pdfkit.py`), 그림 스크립트, 코드에서 추출한 수식 정리(`methods_formulas.md`) |
 | `training/loss_log.txt` | 학습 로그 원본(`loss.out`): 설정, 에폭별 로스 표, 16 에폭마다의 neutral_val 테스트, 최종 평가 |
-| `eval/<라벨>/` | 체크포인트별 총 테스트. 라벨은 `v3_e20`(20 에폭), `v3_e70`(70 에폭), `v3_final`(170 에폭) |
+| `eval/<라벨>/` | 체크포인트별 총 테스트. 라벨은 `epoch020`(20 에폭), `epoch070`(70 에폭), `final`(170 에폭) |
 | `official_val/` | OMol25 공식 val 표본 3.2만 개 평가(형식전하 자동 지정): 구조별 결과(`.json.gz`), 그룹별 표(`_summary.txt`), 첫 200개 |
 | `figures/` | 최종 테스트 그림: 에폭별 로스, 요약, 공개 모델(UMA, eSEN)과의 비교 |
 
@@ -82,7 +83,7 @@ JSON, 그림)만 여기로 복사했다. 체크포인트, 크기표, extxyz 표�
 
 ## 사전처리 결과
 
-데이터셋 사전처리 결과(원소별 E0, 메타, 크기표 요약)는 이 폴더가 아니라 `data_prep/prep_results/`에 따로 있다.
+데이터셋 사전처리 결과(원소별 E0, 메타, 크기표 요약)는 이 폴더가 아니라 `scripts/data/prep_results/`에 따로 있다.
 
 ## 다시 만드는 방법
 

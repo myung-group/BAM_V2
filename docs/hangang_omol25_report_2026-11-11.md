@@ -100,7 +100,7 @@ log epoch = 3,963 steps = 1/4 pass (about 19 min). Validation: 10,000 structures
 | Job | Symptom | Cause | Fix |
 |---|---|---|---|
 | 1257426 | size pass: `Resource temporarily unavailable` in vesin | vesin 0.6.2: one thread per core in each of 64 workers | default neighbour backend for molecules |
-| 1257517 | `BrokenProcessPool`, `tf_XLAEigen` thread creation failed | the loader workers imported the package (JAX): started with `python -m`, and the worker functions lived in `bam_omat24.stream_data` | workers in the top-level module `stream_worker`; no re-import of `__main__` |
+| 1257517 | `BrokenProcessPool`, `tf_XLAEigen` thread creation failed | the loader workers imported the package (JAX): started with `python -m`, and the worker functions lived in `race_v2.data.stream_data` | workers in the top-level module `stream_worker`; no re-import of `__main__` |
 | 1258661 | `LLVM ERROR: pthread_create failed` 15 s after start | tests (pytest) and four trainings at once, unpinned | tests first; every process pinned to its own cores (`taskset`) |
 
 ## 7. Thole merge, RACE_POLAR and the combined model

@@ -22,9 +22,9 @@ Any n_layers L of a tied neumann model works: the last features are then S_L = s
 are checked against layer 1, the readout of D4 is the last stratum r_{L-1}, and the partial sums T include L, 2L
 and 4L.  The last line per set is the converged-series check of design §8 Stage 1a: rho(M) < 1 and
 ||S_L - h*|| / ||h*|| <= 0.05 on every probed frame (only then does a T = L-trained model approximate a resolvent).
-usage: python runs/diag/probe_1c.py [--run r25p_ntied_hill_s42] [--ckpt PATH] [--items 1,2,3,4,5,6] [--nf 5]
+usage: python research/diag/probe_1c.py [--run r25p_ntied_hill_s42] [--ckpt PATH] [--items 1,2,3,4,5,6] [--nf 5]
        (needs --xla_gpu_enable_triton_gemm=false; runs/sbatch_py.sh sets it).  Keep each run's output under its own
-       name, e.g. > runs/diag/probe_1c_<tag>_${SLURM_JOB_ID}.txt
+       name, e.g. > research/diag/probe_1c_<tag>_${SLURM_JOB_ID}.txt
 """
 import argparse
 import io
@@ -41,10 +41,10 @@ import scipy.sparse.linalg as spla
 from scipy.linalg import solve_triangular
 from flax import nnx
 
-import bam_omat24.race_nnx as R
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
+import race_v2.models.race as R
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn
+from race_v2.training.utils import load_checkpoint
 
 jax.config.update("jax_enable_x64", True)
 
@@ -60,7 +60,7 @@ def _cap(self, *a, **k):
 R.RACEConvolution.__call__ = _cap
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--run", default="r25p_ntied_hill_s42", help="input/input_3bpa_omat24_<run>_cue.json")
+ap.add_argument("--run", default="r25p_ntied_hill_s42", help="research/input/input_3bpa_omat24_<run>_cue.json")
 ap.add_argument("--ckpt", default=None, help="checkpoint path (default: ckpt_name of the config)")
 ap.add_argument("--items", default="1,2,3,4,5,6", help="probe items to run (3 is required by 4's summary)")
 ap.add_argument("--nf", type=int, default=5, help="frames per probed set")
@@ -166,7 +166,7 @@ def fmt_c(z):
 
 
 # ----------------------------------------------------------------------------- model
-cfg = json.load(open(f"input/input_3bpa_omat24_{RUN}_cue.json"))
+cfg = json.load(open(f"research/input/input_3bpa_omat24_{RUN}_cue.json"))
 fo = io.StringIO()
 an, ae, tr, va, te, st = T.build_datasets(cfg, fo)
 gd, p0, *_ = T.build_model(cfg, len(an), ae, st, fo)

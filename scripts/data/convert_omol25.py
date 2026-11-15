@@ -2,9 +2,9 @@
 with total charge and spin, for the RACEv2 / RACE_LR pretraining pilot.
 
 usage:
-  python -I data_prep/convert_omol25.py inspect <aselmdb file or dir> [--rows 3]
+  python -I scripts/data/convert_omol25.py inspect <aselmdb file or dir> [--rows 3]
       prints the files, row counts and the key layout of the first rows (where charge / spin / partial charges are)
-  python -I data_prep/convert_omol25.py subset --train <train aselmdb dir> --eval <val aselmdb dir> --out <dir>
+  python -I scripts/data/convert_omol25.py subset --train <train aselmdb dir> --eval <val aselmdb dir> --out <dir>
       [--n-train 100000] [--n-valid 2000] [--n-test 2000] [--seed 0] [--max-atoms 350]
 
 Protocol (fair: the official splits only):
@@ -32,7 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from race_v2.data.stream_io import open_lmdb, list_row_ids, decode_value, decode_row, _arr, _scalar   # noqa: E402
 
 OPTS = {'allow_periodic': False, 'neutral_if_missing': False}

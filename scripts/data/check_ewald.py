@@ -1,10 +1,10 @@
 """Ewald settings check for a periodic dataset (RACE_LR long_range ewald_alpha / ewald_n_real / ewald_n_recip).
 
-    python -I runs/diag/check_ewald.py <periodic.xyz> [--n 20] [--seed 0] [--tol-mev 1.0]
+    python -I scripts/data/check_ewald.py <periodic.xyz> [--n 20] [--seed 0] [--tol-mev 1.0]
         [--alpha 0.3 --n-real 2 --n-recip 6]
 
 For n structures of the file: random neutral charges (normal, std 0.5 e, mean removed) with Gaussian widths = covalent
-radii, energy 1/2 q^T G q (Gaussian-charge Ewald of bam_omat24.long_range) with the given settings vs a reference
+radii, energy 1/2 q^T G q (Gaussian-charge Ewald of race_v2.models.long_range) with the given settings vs a reference
 (the same alpha with n_real + 3 and 2 n_recip, checked against a second alpha).  Then a grid over alpha / n_real /
 n_recip: the cheapest setting whose worst error is below --tol-mev, with cost = N^2 (2 n_real + 1)^3 +
 N (2 n_recip + 1)^3 for the largest structure.  Runs on CPU (JAX_PLATFORMS=cpu is fine).
@@ -30,7 +30,7 @@ def main():
     import jax
     jax.config.update('jax_enable_x64', True)
     import jax.numpy as jnp
-    from bam_omat24.long_range import ewald_matrix
+    from race_v2.models.long_range import ewald_matrix
     frames = [a for a in ase.io.read(args.xyz, ':') if a.pbc.all()]
     rng = np.random.RandomState(args.seed)
     pick = [frames[i] for i in rng.choice(len(frames), min(args.n, len(frames)), replace=False)]

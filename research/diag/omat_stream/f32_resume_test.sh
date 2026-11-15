@@ -1,12 +1,12 @@
 #!/bin/bash
 # Can a float64 SOAP run be resumed as float32 model + float64 SOAP state ("x64": false, "soap_state_dtype":
-# "float64"; utils.py fix a26057c, resume cast in train_3bpa)?  One node, one process, 4 GPUs.  The running job is
+# "float64"; models/blocks.py fix a26057c, resume cast in train_3bpa)?  One node, one process, 4 GPUs.  The running job is
 # not touched: its last checkpoint is copied into two test run folders, and each copy is continued for EPOCHS short
 # virtual epochs (STEPS steps each, same learning rate as the source run) -- first as float32 + float64 state, then
 # as float64 (control).  Compare step time (progress lines), GPU memory and the validation lines of the two logs.
 # MODES="f32_norefresh f32_cholqr f32_b32 f32_amsgrad" VALMAX=2000 EPOCHS=2: where the step time goes (see the mode list below).
 # usage (from /scratch/t510a13/race_v2/work):
-#   $ sbatch -J f32resume -p exclusive06 --comment="field=sciai;appl=jax" --nodes=1 --exclusive --gres=gpu:4 -t 01:00:00 --export=ALL,SRC=mptrj_L5x128_s42 runs/diag/omat_stream/f32_resume_test.sh
+#   $ sbatch -J f32resume -p exclusive06 --comment="field=sciai;appl=jax" --nodes=1 --exclusive --gres=gpu:4 -t 01:00:00 --export=ALL,SRC=mptrj_L5x128_s42 research/diag/omat_stream/f32_resume_test.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work
@@ -16,7 +16,7 @@ source $(conda info --base)/etc/profile.d/conda.sh
 conda activate ${BAM_ENV:-/scratch/t510a13/envs/bam_cue}
 export XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS="--xla_gpu_enable_triton_gemm=false" BAM_NEIGHBORS=ase
 export OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 BAM_PROGRESS_STEPS=50 PYTHONUNBUFFERED=1
-echo "node $SLURM_JOB_NODELIST  source $SRC  code $(git -C $(readlink -f bam_omat24)/.. rev-parse --short HEAD)  $(date '+%F %T')"
+echo "node $SLURM_JOB_NODELIST  source $SRC  code $(git -C $(readlink -f race_v2)/.. rev-parse --short HEAD)  $(date '+%F %T')"
 LAST=runs/${SRC}_cue/ckpt_${SRC}_cue.last.pkl
 until [ $(( $(date +%s) - $(stat -c %Y $LAST) )) -gt 90 ]; do sleep 15; done      # not while it is being written
 for MODE in $MODES; do
@@ -60,7 +60,7 @@ print(name, 'x64', c['x64'], 'soap_state_dtype', c.get('soap_state_dtype'), 'n_e
       'warmup epochs', c['lr_warmup_epochs'], 'source steps/epoch', per_epoch)
 PY
   LOG=$RUN/loss_${NAME}_cue.out
-  setsid python -m bam_omat24.train_3bpa runs/omat_stream/${NAME}.json > runs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${MODE}.log 2>&1 &
+  setsid python -m race_v2.training.train runs/omat_stream/${NAME}.json > runs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}_${MODE}.log 2>&1 &
   PID=$!
   until [ "$(grep -c -E '^[0-9]+/[0-9]+/[0-9]+ ' $LOG 2>/dev/null || true)" -ge $EPOCHS ] 2>/dev/null || ! kill -0 $PID 2>/dev/null; do sleep 10; done
   echo "== $MODE  $(date '+%F %T')  GPU memory used (MiB): $(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | tr '\n' ' ')"

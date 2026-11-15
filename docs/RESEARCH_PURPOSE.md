@@ -63,7 +63,7 @@ OMol25를 고른 이유:
 | 전하 손실은 한 가지 방식으로 통일 (Löwdin 권장. Mulliken은 이 기저에서 불안정) | 공식 데이터 inspect 뒤 결정 |
 | 같은 데이터·레시피의 RACE 대조군 (LR 없음) | 파일럿 설정의 arm으로 준비됨 (`race`, `race_cs`, `racelr`, `racelr_q`) |
 | HOMO > 0 다중 음이온 필터, PDB 누수 점검 | 미결. 공식 데이터 inspect 뒤 |
-| 추론 API | 구현됨 (`bam_omat24/predict.py`: `load` / `predict` / `charges` / `refit`) |
+| 추론 API | 구현됨 (`race_v2/inference/predict.py`: `load` / `predict` / `charges` / `refit`) |
 
 세부는 `docs/RACE_LR_design.md`, `docs/RACE_LR_feedback_reply_2026-11-07_ko.md`,
 `docs/RACE_LR_reply2_2026-11-07_ko.md`에 있다.
@@ -90,7 +90,7 @@ OMol25를 고른 이유:
 ## 6. 사전학습 뒤의 순서
 
 1. 무보정 평가: 새 사전학습 모델, RACE 대조군, pre_zero를 §5의 표로 함께 본다.
-   ctx-RACE 쪽 평가 코드가 `bam_omat24.predict:load`를 별도 프로세스로 부르는 어댑터를 갖고 있다. 실제 백엔드로는 아직 안 돌렸다.
+   ctx-RACE 쪽 평가 코드가 `race_v2.inference.predict:load`를 별도 프로세스로 부르는 어댑터를 갖고 있다. 실제 백엔드로는 아직 안 돌렸다.
 2. 포켓 미세조정: ctx-RACE의 A5 레시피(lr 1e-5, warmup 100, cosine, clip norm 1, EMA, 상대에너지 + ΔE_int Huber).
 3. 미세조정 뒤 KIN66 부호 오차가 음수 쪽으로 밀리는지 확인한다.
 

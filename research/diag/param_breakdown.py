@@ -2,7 +2,7 @@
 splits the parameter count into species-indexed leaves (a dimension equal to n_species) and shared leaves, per
 top-level module, plus the largest leaves.
 
-    python runs/diag/param_breakdown.py <config.json> [...]
+    python research/diag/param_breakdown.py <config.json> [...]
 """
 import collections
 import json
@@ -10,7 +10,7 @@ import sys
 
 import jax
 
-from bam_omat24 import train_3bpa as T
+from race_v2.training import train as T
 
 
 def main():

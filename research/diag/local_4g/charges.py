@@ -2,7 +2,7 @@
 charge_label_key if set). Unless the run used the charge loss, the reference charges were never used in training.
 
 usage: python -m runs.diag.local_4g.charges   is not needed; run as a file from the repo root:
-       python runs/diag/local_4g/charges.py <config.json> <ckpt.pkl> <test.xyz> <out.npz>
+       python research/diag/local_4g/charges.py <config.json> <ckpt.pkl> <test.xyz> <out.npz>
 
 Prints the per-atom correlation and RMSE of q vs Hirshfeld per subset, and writes q / Hirshfeld / subset per frame.
 """
@@ -11,11 +11,11 @@ import numpy as np
 import jax, jax.numpy as jnp, jraph
 from flax import nnx
 sys.path.insert(0, '.')
-from bam_omat24 import train_3bpa as T                                      # noqa: E402
-from bam_omat24.data_3bpa import load_frames, GraphListDataset, atomic_numbers_to_indices, preprocess_graph  # noqa
-from bam_omat24.data_nnx import BucketedDataLoader, default_collate_fn       # noqa: E402
-from bam_omat24.training_utils import load_checkpoint                        # noqa: E402
-from bam_omat24.analyze_errors import _tag_frames                            # noqa: E402
+from race_v2.training import train as T                                      # noqa: E402
+from race_v2.data.xyz_graphs import load_frames, GraphListDataset, atomic_numbers_to_indices, preprocess_graph  # noqa
+from race_v2.data.loaders import BucketedDataLoader, default_collate_fn       # noqa: E402
+from race_v2.training.utils import load_checkpoint                        # noqa: E402
+from race_v2.eval.analyze_errors import _tag_frames                            # noqa: E402
 import json
 
 cfg_path, ckpt_path, xyz, out = sys.argv[1:5]

@@ -3,7 +3,7 @@
 # Adam (soap_species_adam), cutoff 5 A, stress weight 10, batch 16, lr warmup 2 epochs.
 # Selection rule (docs/size_screening_protocol_2026-11-03.md, fixed before results, validation only):
 #   candidates = final-epoch valid E RMSE within +10 % of the best; pick the lowest valid F RMSE; ties (< 2 %) -> smaller.
-# usage: sbatch -J <job> -p normal --comment="field=sciai;appl=jax" --gres=gpu:<n> -t <time> runs/diag/size_screen.sh <EPOCHS> <TAG_PREFIX> <L>x<H> [...]
+# usage: sbatch -J <job> -p normal --comment="field=sciai;appl=jax" --gres=gpu:<n> -t <time> scripts/train/size_screen.sh <EPOCHS> <TAG_PREFIX> <L>x<H> [...]
 #   e.g. ... size_screen.sh 1 szsmk L5x192 L6x128 L5x128 L4x128     (smoke: 1 epoch, time per epoch + memory)
 #        ... size_screen.sh 30 sz100k L5x64 L5x128 L5x192 L4x128    (screening)
 #        ... size_screen.sh 30 sz100k L6x128 L5x128:amsgrad           (deeper model; optimizer control, not a size candidate)
@@ -19,7 +19,7 @@ export OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4
 EPOCHS=$1; PREFIX=$2; shift 2; SIZES=("$@")
 OUT=/scratch/t510a13/data/datasets_ext/oam_subsets_100k
 if [ ! -f $OUT/omat24_meta.json ]; then
-  python -I bam_omat24/oam_subset.py --name omat24 --train-root /scratch/t510a13/data/oam_data/omat24_train \
+  python -I race_v2/data/oam_subset.py --name omat24 --train-root /scratch/t510a13/data/oam_data/omat24_train \
     --eval-root /scratch/t510a13/data/oam_data/omat24_val --atom-ref /scratch/t510a13/data/oam_data/refs/omat24_train_ls.npz \
     --n-train 100000 --n-valid 2000 --n-test 1000 --per-shard 50 --out $OUT 2>&1 | tail -n 5
 fi
@@ -35,7 +35,7 @@ for tok in "${SIZES[@]}"; do
   elif [ -n "$opt" ] && [ "$opt" != soap ]; then OPT=(--optimizer $opt); NAME=${NAME}${opt}; fi
   if [ "$prec" = f32 ]; then X64=(); NAME=${NAME}f32; fi
   L=${s%x*}; L=${L#L}; H=${s#*x}
-  python -I runs/diag/make_oam_configs.py $OUT --tag ${PREFIX}_${NAME} --datasets omat24 --variants $VAR "${X64[@]}" "${OPT[@]}" \
+  python -I scripts/train/make_oam_configs.py $OUT --tag ${PREFIX}_${NAME} --datasets omat24 --variants $VAR "${X64[@]}" "${OPT[@]}" \
     --layers $L --hidden $H --warmup 2 --epochs $EPOCHS --seeds $SEED || exit 1
   RUNS+=(${PREFIX}_${NAME}_omat24_${VAR}_s${SEED})
 done

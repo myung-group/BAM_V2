@@ -5,7 +5,7 @@
 cd /scratch/t510a13/race_v2/work
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 T=$1; RF=${2:-}; SFX=${RF:+_refit}; W=/scratch/t510a13/probabilistic_symmetrization/bundle/scratch/t589a02/mp_data/wbm; PJ=/scratch/t510a13/envs/bam_jax/bin/python
-$PJ runs/diag/mbd/make_csv.py --relaxed runs/mbd/$T/relaxed --output runs/mbd/$T/discovery$SFX.csv.gz --model-name racev2 --refs $W/mp_elemental_ref_per_atom.npz --mp2020-cse $W/2022-10-19-wbm-computed-structure-entries.jsonl.gz --details runs/mbd/$T/details$SFX.csv.gz ${RF:+--species-refit $RF} 2>&1 | grep -E '^\[csv\] (kept|species)'
+$PJ scripts/eval/mbd/make_csv.py --relaxed runs/mbd/$T/relaxed --output runs/mbd/$T/discovery$SFX.csv.gz --model-name racev2 --refs $W/mp_elemental_ref_per_atom.npz --mp2020-cse $W/2022-10-19-wbm-computed-structure-entries.jsonl.gz --details runs/mbd/$T/details$SFX.csv.gz ${RF:+--species-refit $RF} 2>&1 | grep -E '^\[csv\] (kept|species)'
 $PJ -I - <<PY
 import pandas as pd, numpy as np, json
 s = pd.read_csv('$W/2023-12-13-wbm-summary.csv.gz').set_index('material_id')

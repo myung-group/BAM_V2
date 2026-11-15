@@ -4,10 +4,10 @@ then compare energies of (train graphdef, in-memory ema) / (new graphdef, in-mem
 import json, sys, io
 import numpy as np, jax, jax.numpy as jnp
 from flax import nnx
-import bam_omat24.train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
-cfg = json.load(open(sys.argv[1])); cfg.update(n_epochs=1, ckpt_name="runs/diag/ckpt_bisect.pkl", log_file="runs/diag/loss_bisect.out")
+import race_v2.training.train as T
+from race_v2.data.loaders import default_collate_fn
+from race_v2.training.utils import load_checkpoint
+cfg = json.load(open(sys.argv[1])); cfg.update(n_epochs=1, ckpt_name="research/diag/ckpt_bisect.pkl", log_file="research/diag/loss_bisect.out")
 cap = {}
 orig_bm, orig_sc = T.build_model, T.save_checkpoint
 def bm(*a, **k):
@@ -22,7 +22,7 @@ f = io.StringIO()
 an, ae, tr, va, te, st = T.build_datasets(cfg, f)
 va.graphs = T._cast_graphs(va.graphs, np.float64)
 gd_new, p_new, *_ = orig_bm(cfg, len(an), ae, st, f)
-ema_mem = cap["state"]["ema_params"]; ema_load = load_checkpoint("runs/diag/ckpt_bisect.pkl")["ema_params"]
+ema_mem = cap["state"]["ema_params"]; ema_load = load_checkpoint("research/diag/ckpt_bisect.pkl")["ema_params"]
 lm, ll = jax.tree.leaves(ema_mem), jax.tree.leaves(ema_load)
 print("graphdef equal:", cap["gd"] == gd_new, "| n leaves", len(lm), len(ll),
       "| max |mem-load|", max(float(np.max(np.abs(np.asarray(a) - np.asarray(b)))) for a, b in zip(lm, ll)),
@@ -41,8 +41,8 @@ print("new gd,   load ema", pred(gd_new, ema_load))
 print("train gd, init p  ", pred(cap["gd"], cap["p0"]))
 print("new gd,   init p  ", pred(gd_new, p_new))
 # the exact training eval path on the loaded params
-from bam_omat24.training_utils import make_sharded_evaluate_step, evaluate_sharded, replicate_pytree
-from bam_omat24.data_nnx import setup_mesh
+from race_v2.training.utils import make_sharded_evaluate_step, evaluate_sharded, replicate_pytree
+from race_v2.data.loaders import setup_mesh
 mesh, nd = setup_mesh()
 es = make_sharded_evaluate_step(mesh, huber_delta=10.0, loss_type="huber", periodic=False, cov_mode="scalar6", beta_nll=0.0)
 import functools

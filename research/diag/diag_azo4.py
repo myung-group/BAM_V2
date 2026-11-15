@@ -3,10 +3,10 @@ graphs, and the eager forward on the loader batch vs the sharded eval step."""
 import json, sys, io, functools
 import numpy as np, jax, jax.numpy as jnp
 from flax import nnx
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn, setup_mesh, BucketedDataLoader, MultiDeviceDataLoader
-from bam_omat24.data_3bpa import GraphListDataset
-from bam_omat24.training_utils import (load_checkpoint, make_sharded_evaluate_step, replicate_pytree, squeeze_batch,
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn, setup_mesh, BucketedDataLoader, MultiDeviceDataLoader
+from race_v2.data.xyz_graphs import GraphListDataset
+from race_v2.training.utils import (load_checkpoint, make_sharded_evaluate_step, replicate_pytree, squeeze_batch,
                                        _loss_terms)
 cfg = json.load(open(sys.argv[1])); ck = sys.argv[2]
 jax.config.update("jax_enable_x64", True)

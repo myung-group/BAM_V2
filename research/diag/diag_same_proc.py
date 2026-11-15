@@ -2,12 +2,12 @@
 import json, sys, io, runpy
 import numpy as np, jax, jax.numpy as jnp
 from flax import nnx
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
-cfg = json.load(open(sys.argv[1])); cfg.update(n_epochs=1, ckpt_name="runs/diag/ckpt_same.pkl", log_file="runs/diag/loss_same.out")
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn
+from race_v2.training.utils import load_checkpoint
+cfg = json.load(open(sys.argv[1])); cfg.update(n_epochs=1, ckpt_name="research/diag/ckpt_same.pkl", log_file="research/diag/loss_same.out")
 T.train(cfg)
-c = load_checkpoint("runs/diag/ckpt_same.pkl")
+c = load_checkpoint("research/diag/ckpt_same.pkl")
 print("logged valid E_RMSE_total", c["metrics"]["energy_rmse_total"])
 f = io.StringIO()
 an, ae, tr, va, te, st = T.build_datasets(cfg, f)

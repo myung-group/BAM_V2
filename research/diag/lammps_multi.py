@@ -1,7 +1,7 @@
 """pair_style race across ranks / GPUs: run 0 of a LiPS supercell with (1 rank owner) as the reference vs
 (1 rank ghost|halo), (N ranks ghost|halo, one GPU each); then NVE timings.  Run inside a Slurm GPU job.
 
-    python runs/diag/lammps_multi.py --serial <lmp> --mpi <lmp_mpi> --plugin <so> --export <dir> --xyz <extxyz>
+    python research/diag/lammps_multi.py --serial <lmp> --mpi <lmp_mpi> --plugin <so> --export <dir> --xyz <extxyz>
         --rep 2 2 2 --ranks 2 4 [--nodes 1] [--steps 200]
 """
 import argparse
@@ -93,7 +93,7 @@ def main():
             print('   ', l.strip(), flush=True)
         return True
 
-    # reference: 1 rank, owner mode (validated against Python, runs/diag/lammps_validate.py)
+    # reference: 1 rank, owner mode (validated against Python, research/diag/lammps_validate.py)
     inp = write_inputs(work, a.plugin, a.export, syms, 'owner', a.steps)
     env_cmd = ['bash', 'wrap.sh', a.serial, '-in', inp]
     if not run(env_cmd, 'log.owner'):

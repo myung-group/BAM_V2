@@ -1,6 +1,6 @@
 """4G-HDNNP benchmark systems (Ko, Finkler, Goedecker, Behler, Nat. Commun. 12, 398 (2021)) -> extended XYZ.
 
-usage: python -I data_prep/convert_4ghdnnp.py <raw_dir> <out_dir>
+usage: python -I scripts/data/convert_4ghdnnp.py <raw_dir> <out_dir>
   raw_dir: the directory that holds datasets.tar.gz extracted (datasets/<System>/input.data)
   out_dir: one sub-directory per system is written (carbon_chain, ag_cluster, nacl, aumgo)
 

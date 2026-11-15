@@ -3,13 +3,13 @@ vs inside value_and_grad, vs the e3nn reference; effect of edge ordering."""
 import json, sys, io
 import numpy as np, jax, jax.numpy as jnp
 import e3nn_jax as e3nn
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.race_nnx import cue_edge_tensor_product
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn
+from race_v2.models.race import cue_edge_tensor_product
 jax.config.update("jax_enable_x64", True)
 IRR_IN = sys.argv[1]
 for mol in sys.argv[2:]:
-    cfg = json.load(open(f"input/input_3bpa_omat24_rmd17_{mol}_v9a_s42_cue.json"))
+    cfg = json.load(open(f"research/input/input_3bpa_omat24_rmd17_{mol}_v9a_s42_cue.json"))
     f = io.StringIO()
     an, ae, tr, va, te, st = T.build_datasets(cfg, f)
     g0 = tr.graphs[0]
@@ -26,7 +26,7 @@ for mol in sys.argv[2:]:
     vec = jnp.asarray(b.nodes["positions"])[snd] - jnp.asarray(b.nodes["positions"])[rcv]
     sh = e3nn.spherical_harmonics(sh_irr, vec + 1e-9, normalize=True, normalization="component")
     tp_irr = e3nn.tensor_product(irr_in, sh_irr, filter_ir_out=irr_in)
-    from bam_omat24.race_nnx import _cue_descriptor
+    from race_v2.models.race import _cue_descriptor
     nw = _cue_descriptor(irr_in, sh_irr, irr_out).polynomial.inputs[0].size
     w = jnp.asarray(rng.normal(size=(n_edges, nw)))
     def agg(x, w, sh, snd, rcv):

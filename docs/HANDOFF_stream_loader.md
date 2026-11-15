@@ -9,7 +9,7 @@ Related documents:
 
 ## 1. What it is
 
-`"data_format": "stream"` in a training config makes `bam_omat24.train_3bpa` train without graphs on disk or in
+`"data_format": "stream"` in a training config makes `race_v2.training.train` train without graphs on disk or in
 memory. The default `"xyz"` path is unchanged: graphs are built once, pickled next to the xyz and held in memory.
 
 - **Workers:** forkserver processes, JAX-free. Each reads blocks of structures (extxyz by byte offset, or ASE lmdb by
@@ -70,7 +70,7 @@ XLA compiles one program per input shape. A batch of variable-size structures wo
   - A split's `"sizes": <dir>` names its size table.
   - Without it, process 0 makes `<log dir>/stream_sizes_<split>` at start.
   - For large data, make tables beforehand with many CPUs:
-    `python -I bam_omat24/stream_io.py sizes --source aselmdb:<dir> --cutoff 6.0 --out <dir> --workers 64`
+    `python -I race_v2/data/stream_io.py sizes --source aselmdb:<dir> --cutoff 6.0 --out <dir> --workers 64`
   - A table made for other sources is refused.
 - **Epochs:** `steps_per_epoch` null means one epoch = one pass over the data. A number makes virtual epochs (needed
   when one pass exceeds the 24 h wall time). The cursor (data epoch, step) is saved in every checkpoint as
@@ -91,17 +91,17 @@ XLA compiles one program per input shape. A batch of variable-size structures wo
 
 | file | role |
 |---|---|
-| `bam_omat24/graph_fields.py` | new, JAX-free: charge / spin / fragment / charge-label fields (used by both paths) |
-| `bam_omat24/neighbors.py` | `BAM_NEIGHBORS` = `ase` (default) or `vesin` |
-| `bam_omat24/stream_io.py` | readers carry the optional fields (`info`, `arrays`); `graph_arrays(..., fields)` adds `n:`/`g:` keys; aselmdb rows put `key_value_pairs` + `data` into `info`; the size table records the neighbour backend |
-| `bam_omat24/stream_plan.py` | unchanged (buckets, plan, packing) |
-| `bam_omat24/stream_data.py` | `StreamLoader` (fields, `start_step`), `StreamSteps` (cursor across data epochs), `StreamEvalSet` (every structure once; filler copies with weight 0), `stack_local`, `counts_allgather_jax` |
-| `bam_omat24/training_utils.py` | `evaluate_sharded` accepts a `StreamEvalSet` (`iter_groups`) |
-| `bam_omat24/train_3bpa.py` | `build_stream_datasets`, `stream_mode` branches (datasets, loader, checkpoint cursor, gauge refit, close) |
+| `race_v2/data/graph_fields.py` | new, JAX-free: charge / spin / fragment / charge-label fields (used by both paths) |
+| `race_v2/data/neighbors.py` | `BAM_NEIGHBORS` = `ase` (default) or `vesin` |
+| `race_v2/data/stream_io.py` | readers carry the optional fields (`info`, `arrays`); `graph_arrays(..., fields)` adds `n:`/`g:` keys; aselmdb rows put `key_value_pairs` + `data` into `info`; the size table records the neighbour backend |
+| `race_v2/data/stream_plan.py` | unchanged (buckets, plan, packing) |
+| `race_v2/data/stream_data.py` | `StreamLoader` (fields, `start_step`), `StreamSteps` (cursor across data epochs), `StreamEvalSet` (every structure once; filler copies with weight 0), `stack_local`, `counts_allgather_jax` |
+| `race_v2/training/utils.py` | `evaluate_sharded` accepts a `StreamEvalSet` (`iter_groups`) |
+| `race_v2/training/train.py` | `build_stream_datasets`, `stream_mode` branches (datasets, loader, checkpoint cursor, gauge refit, close) |
 | `tests/test_stream_train.py` | fields equal the in-memory graphs (molecule and periodic), aselmdb row fields, eval coverage (also with 2 CPU devices), resume cursor across a data-epoch boundary |
 | `tests/test_neighbors_vesin.py` | vesin pairs = ASE pairs (skips without vesin) |
-| `runs/diag/bench_stream/` | pickle vs stream speed benchmark and figures |
-| `input/stream_e2e/*.json`, `runs/stream_e2e/queue.sh` | local end-to-end check (below) |
+| `research/diag/bench_stream/` | pickle vs stream speed benchmark and figures |
+| `research/input/stream_e2e/*.json`, `research/diag/stream_e2e_queue.sh` | local end-to-end check (below) |
 
 ## 5. Verified (local PC, 2026-11-09)
 
@@ -114,7 +114,7 @@ XLA compiles one program per input shape. A batch of variable-size structures wo
 - **Speed** (report §15): see the benchmark summary there.
 - **End-to-end**, local GPU (RTX 4060 Ti, 50 % SMs).
   - **Setup:** RACE_LR + charge loss (0.1) + total charge + spin; OMol25 public subset, 10k train / 1k valid /
-    2.9k test; 5 epochs; configs `input/stream_e2e/`, runner `runs/stream_e2e/queue.sh`.
+    2.9k test; 5 epochs; configs `research/input/stream_e2e/`, runner `research/diag/stream_e2e_queue.sh`.
 
   | 5 epochs | xyz (pickle) | stream, mix_blocks 1 | stream, mix_blocks 16 (default) |
   |---|---|---|---|
@@ -137,13 +137,13 @@ XLA compiles one program per input shape. A batch of variable-size structures wo
 1. **OMol25 / OMat24 aselmdb field layout.**
    - `decode_row` takes total charge, spin and per-atom labels from the row's `key_value_pairs` / `data`.
    - Whether OMol25 rows hold `charge`, `spin` and Löwdin charges there is unknown until the files are available.
-   - Run `python -I data_prep/convert_omol25.py inspect <dir>` and adjust `decode_row` and the config keys.
+   - Run `python -I scripts/data/convert_omol25.py inspect <dir>` and adjust `decode_row` and the config keys.
    - `tests/test_stream_train.py::test_aselmdb_row_fields` is synthetic.
 2. **Several hosts** (design T5). `stack_local` uses `make_array_from_process_local_data`, and the eval weights and
    the plan counts are allgathered. Not run on more than one process. First test: 2 processes × 1 GPU against
    1 × 2 on 20 float64 steps.
 3. **HANGANG T6 throughput smoke**, about 30-60 min on one GPU node; ask the user before sbatch.
-   - Script ready (2026-11-09): `runs/diag/stream_t6/t6.sh` (usage line inside). It runs the stream tests, then the
+   - Script ready (2026-11-09): `research/diag/stream_t6/t6.sh` (usage line inside). It runs the stream tests, then the
      loader alone on the OMat24 100k subset on Lustre (`loader_bench.py`: ASE W=8, vesin W=2/4/8/16, 500 steps),
      then 2 x 250 training steps with `data_format stream` (`make_config.py` turns the in-memory sz100k config
      into a stream config) and prints the in-memory run's epoch lines for comparison.

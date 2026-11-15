@@ -1,4 +1,4 @@
-"""Korean single-message figures of the pickle vs stream benchmark (runs/diag/bench_stream/out/*.json)."""
+"""Korean single-message figures of the pickle vs stream benchmark (research/diag/bench_stream/out/*.json)."""
 import json
 import numpy as np
 import matplotlib
@@ -11,7 +11,7 @@ plt.rcParams.update({'font.family': 'Malgun Gothic', 'font.size': 12, 'axes.unic
                      'axes.edgecolor': BASE, 'axes.labelcolor': INK2, 'xtick.color': MUTED, 'ytick.color': MUTED,
                      'axes.facecolor': SURF, 'figure.facecolor': SURF, 'axes.grid': True, 'grid.color': GRID,
                      'grid.linewidth': 0.6, 'axes.spines.top': False, 'axes.spines.right': False})
-D = 'runs/diag/bench_stream/out'
+D = 'research/diag/bench_stream/out'
 SETS = [('omol10k', 'OMol 분자 1만 개\n(평균 16원자)'), ('aumgo', 'Au2/MgO 주기계 4,500개\n(110원자, 지금 코드)'),
         ('aumgo_vesin', 'Au2/MgO 주기계\n(이웃 목록 vesin)')]
 R = {k: json.load(open(f'{D}/{k}.json')) for k, _ in SETS}

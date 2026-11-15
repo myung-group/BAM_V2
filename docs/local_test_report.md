@@ -65,7 +65,7 @@ E       assert 1.7324950363217795e-09 < 1e-09
 E        +  where 1.7324950363217795e-09 = abs((-13.79222661236037 - -13.792226614092865))
 ```
 
-**Cause.** The cause is in the test, not in `long_range.py` or `race_lr_nnx.py`.
+**Cause.** The cause is in the test, not in `long_range.py` or `models/race_lr.py`.
 - `conftest.random_rotation` returns a **float32** matrix. Casting it to float64 does not make it orthogonal again:
   its error |RᵀR − I| is 4.8e-8.
 - The "rotated" geometry is therefore slightly strained, which moves the energy by about 1e-9 eV.
@@ -83,12 +83,12 @@ paths are unchanged. The Ewald, Madelung and α-independence tests passed on the
 ## 3. CPU smoke training (pipeline check only, not a result)
 
 **Configs.**
-- `input/input_local_racelr_smoke.json` is `input_3bpa_omat24_abl3_full_s42_cue.json` with the changes the prompt
+- `configs/smoke/cpu_race_lr_smoke.json` is `input_3bpa_omat24_abl3_full_s42_cue.json` with the changes the prompt
   lists: RACE_LR, e3nn, x64, 2 layers, hidden 16, 3 epochs, test_300K only, `graph_cache: false`, and logs under
   `runs/local_racelr_smoke/`.
-- `input/input_local_race_smoke.json` is the same config with `"model": "RACE"`.
+- `configs/smoke/cpu_race_smoke.json` is the same config with `"model": "RACE"`.
 - Apart from `tp_backend`, no key needed the GPU or the HPC. `soap_impl: grouped` runs on the CPU.
-- The command was `JAX_PLATFORMS=cpu python -m bam_omat24.train_3bpa input/input_local_<tag>_smoke.json`.
+- The command was `JAX_PLATFORMS=cpu python -m race_v2.training.train research/input/input_local_<tag>_smoke.json`.
 
 | | RACE_LR | RACE |
 |---|---|---|
@@ -119,7 +119,7 @@ Epoch 1 includes the JIT compilation.
   equal to the record's checksum).
 - The archive is under the 1 GB limit, so no approval was needed before downloading.
 - The archive contains only four RuNNer `input.data` files. Nothing was executed from it.
-- Our converter `data_prep/convert_4ghdnnp.py` converts Bohr / Hartree to Å / eV with CODATA 2018 factors.
+- Our converter `scripts/data/convert_4ghdnnp.py` converts Bohr / Hartree to Å / eV with CODATA 2018 factors.
 - It writes `all/train/test.xyz`, `split.json` and `e0.json` per system into `data_local/4ghdnnp/<system>/`.
 
 | system | structures (charge states) | pbc |
@@ -145,7 +145,7 @@ Epoch 1 includes the JIT compilation.
 ## 5. Follow-up: decisions taken (user: "proceed as you recommend", 2026-11-06)
 
 1. **Model charges are now returned.**
-   - The design doc said the model returns `charges`, but the shared `bam_omat24/utils.energy_forces_stress` copied
+   - The design doc said the model returns `charges`, but the shared `race_v2/utils.energy_forces_stress` copied
      only fixed keys into its aux, so `model(graph)` had no `charges` key.
    - It now passes `charges` through only when the node-energy function provides them. Every other model returns
      exactly the keys it returned before.
@@ -167,7 +167,7 @@ Epoch 1 includes the JIT compilation.
    - The defaults (α 0.3, n_real 2, n_recip 6) differ from α 0.3 / n_real 4 / n_recip 24 by 0.008 meV or less.
    - With α from 0.2 to 0.4, the energies agree to below 1e-4 meV. **Keep the defaults.**
    - **Correction (2026-11-06, later):** this holds for the smooth Hirshfeld charges only.
-     - With random charges (std 0.5 e, `runs/diag/check_ewald.py`), the defaults err by up to 1.9 meV on this cell.
+     - With random charges (std 0.5 e, `scripts/data/check_ewald.py`), the defaults err by up to 1.9 meV on this cell.
        The reciprocal sum along the 26.5 Å axis is too short.
      - α 0.3 / n_real 1 / n_recip 8 errs by at most 0.06 meV and costs less. The Au2/MgO configs use it from now on.
      - Fitted charges need not be smooth, so check with `check_ewald.py`.
@@ -197,9 +197,9 @@ the result.
 **Setup.**
 - GPU: NVIDIA RTX 4060 Ti 16 GB (driver 535, CUDA 12.2), shared with the desktop.
 - Environment: the user's conda env `bam_cue` (jax 0.12.0.1 with jax-cuda12, cuequivariance 0.13.0), run unchanged.
-  The repo's `bam_omat24` was the one imported, which was checked. That env also has an editable install of
+  The repo's `race_v2` was the one imported, which was checked. That env also has an editable install of
   another clone.
-- **Limited GPU use** (`runs/diag/local_4g/run_limited.sh`), because full GPU use had lagged the desktop:
+- **Limited GPU use** (`research/diag/local_4g/run_limited.sh`), because full GPU use had lagged the desktop:
   - CUDA MPS from a user-level daemon with its own pipe directory, at most 50 % of the SMs
     (`GPU_SM_PCT`, set it to 30 if the desktop still lags);
   - XLA with no preallocation, at most 40 % of the GPU memory;
@@ -210,17 +210,17 @@ the result.
     took 11 s.
   - Float64 on a GeForce card is slow, and float64 was kept on purpose.
   - RACE_LR and RACE use exactly the same settings. `avg_n_neighbors` is the value of each training subset.
-- Data (`data_prep/subset_4ghdnnp.py`):
+- Data (`scripts/data/subset_4ghdnnp.py`):
   - The training set is 1000 structures, 500 of each charge state or structure family. For Au2/MgO it is 100
     structures, 50 of each, because one Au2/MgO structure costs about 76 carbon-chain structures.
   - The test set is the full test split.
-  - Configs are in `input/local_4g/`. The runs used 200 epochs, and 20 for Au2/MgO, run by
-    `runs/diag/local_4g/queue.sh`.
+  - Configs are in `research/input/local_4g/`. The runs used 200 epochs, and 20 for Au2/MgO, run by
+    `research/diag/local_4g/queue.sh`.
 - Wall time: Ag3 25 min, carbon chain 37 min and NaCl 39 min per model, and Au2/MgO 6 min. No NaN occurred and
   every run exited 0.
 
 **Evaluation.**
-- Per-frame errors come from `bam_omat24.dump_frame_errors`.
+- Per-frame errors come from `race_v2.eval.dump_frame_errors`.
 - Fix: it, and `eval_sets`, now pass the config's `total_charge_key`. Before, they built every graph as neutral, so
   RACE_LR was evaluated with the wrong total charge. The trainer's own test evaluation was already correct.
   The per-frame numbers match the trainer's numbers.
@@ -228,7 +228,7 @@ the result.
   training set as well. The trainer's `gauge_refit` is a single per-atom shift, which cannot remove an offset
   between two compositions.
 - So the table also gives a **per-composition gauge refit**: a least-squares fit of the training residuals on the
-  element counts, applied to the test set (`runs/diag/local_4g/by_state.py`).
+  element counts, applied to the test set (`research/diag/local_4g/by_state.py`).
   - It uses no test labels.
   - For Ag3 (one element) it is a single shift and cannot hide a charge-state error.
 
@@ -286,7 +286,7 @@ Test split, energy RMSE in meV (raw → after the per-composition refit), force 
 
 Energy and force errors alone do not show it, because knowing the total charge already fixes most of Ag3. The
 latent Qeq charges of the trained RACE_LR checkpoints were therefore compared with the DFT Hirshfeld charges on the
-test splits (`runs/diag/local_4g/charges.py`). The Hirshfeld charges are never used in training.
+test splits (`research/diag/local_4g/charges.py`). The Hirshfeld charges are never used in training.
 
 | system | state | corr(q, Hirshfeld) | mean abs(q), model / DFT |
 |---|---|---|---|
@@ -361,18 +361,18 @@ Float64 results are unchanged: the Madelung tests still pass at 1e-7.
 - `chi_init_missing: "mean"` covers elements without a Pauling value.
 
 **Tools.**
-- `runs/diag/check_ewald.py <periodic.xyz>`: the Ewald error of given settings, and the cheapest converged setting.
-- `data_prep/convert_omol25.py`: aselmdb to extxyz subsets.
+- `scripts/data/check_ewald.py <periodic.xyz>`: the Ewald error of given settings, and the cheapest converged setting.
+- `scripts/data/convert_omol25.py`: aselmdb to extxyz subsets.
   - Modes: `inspect` shows the row layout, and `subset` samples the official train and val splits.
   - The total charge and spin are required. `--neutral-if-missing` is explicit and counted.
   - Partial charges, if present, go to `ref_charges`.
   - `--allow-periodic` keeps the cell, pbc and stress.
   - Tested on synthetic aselmdb files, molecular and periodic. The real OMol25 row layout is not seen yet.
-- `runs/diag/make_omol_configs.py`: the pilot arms.
+- `scripts/train/make_omol_configs.py`: the pilot arms.
   - Models: race, race_cs, racelr, and racelr_q.
   - Optimizers: soap_f64 and amsgrad_f32.
   - Periodic subsets get the stress loss and `--ewald`.
-- `runs/diag/make_oam_configs.py --model racelr --ewald ...`: RACE_LR on the OAM subsets.
+- `scripts/train/make_oam_configs.py --model racelr --ewald ...`: RACE_LR on the OAM subsets.
 - All arms trained one epoch on synthetic data (CPU), molecular and periodic, without NaN after the fixes above.
 
 **Blocked on the user.**
@@ -470,7 +470,7 @@ These are one-seed, reduced-budget numbers. The HPC runs at full size decide.
 
 ## 12. Physics checks with the local checkpoints (2026-11-07)
 
-Scripts and figures: `runs/diag/local_4g/{dissociation,md_nve,plot_*}.py`, `runs/diag/plot_omol_ko.py`. Figures are
+Scripts and figures: `research/diag/local_4g/{dissociation,md_nve,plot_*}.py`, `research/diag/plot_omol_ko.py`. Figures are
 in `runs/local_4g/plots/` (not in git; Korean single-message versions `ko_*.png`). One seed, reduced models.
 
 **Dissociation tail.** One atom was pulled out of Na9Cl8+ to 30 Å with the 4G NaCl checkpoint (Pauling + Hirshfeld
@@ -582,7 +582,7 @@ Reduced model as before; one seed unless stated. Figures: `runs/local_4g/plots/k
   - Both states have total charge +1, so the total-charge input cannot separate them.
   - Na8Cl8+ has an odd electron count (223, doublet) and Na9Cl8+ an even one (234, singlet).
   - RACE_LR does 34 % better than RACE, but it still fails.
-- **The spin input resolves it.** The multiplicity is taken from the electron-count parity (`data_prep/add_spin_parity.py`;
+- **The spin input resolves it.** The multiplicity is taken from the electron-count parity (`scripts/data/add_spin_parity.py`;
   this assumes the lowest multiplicity in the DFT) and fed through the charge/spin embedding.
   - The Na8Cl8+ force error drops about 20× (108 → 4.8 meV/Å), and the energy RMSE drops to 2.4 meV.
   - RACE with the embedding alone is as good as RACE_LR with it. The missing information was the electronic state,
@@ -627,10 +627,10 @@ meV/Å):
 
 ## 15. Pickle vs streaming data path: speed (2026-11-09)
 
-Question: before OMol25 / OAM pretraining with the streaming loader (`bam_omat24/stream_data.py`, not yet wired into
+Question: before OMol25 / OAM pretraining with the streaming loader (`race_v2/data/stream_data.py`, not yet wired into
 `train_3bpa`), is it slower than the pickle path (graphs built once, cached, held in memory)?
 
-Setup: `runs/diag/bench_stream/bench_stream_vs_pkl.py` (GPU limited: MPS 50 % SMs, RTX 4060 Ti; RACE float32,
+Setup: `research/diag/bench_stream/bench_stream_vs_pkl.py` (GPU limited: MPS 50 % SMs, RTX 4060 Ti; RACE float32,
 AMSGrad).
 - Both paths share the model, the step and the fixed batch shape (`stream_plan.derive_buckets`, one bucket).
 - Each path is timed for one full epoch, twice; the table shows the mean.
@@ -706,7 +706,7 @@ Findings:
 
 ## 17. Last-layer Bayesian regression on crystals (2026-11-09)
 
-`bam_omat24/bayes_lastlayer.py` now handles periodic cells.
+`race_v2/eval/bayes_lastlayer.py` now handles periodic cells.
 - **Features:** the cell enters the features.
 - **Stress:** stress is linear in the readout weights θ:
   S = S_rest + (1/V) [(∂φ/∂cell)ᵀ cell + Σ_i ∂φ/∂x_i ⊗ x_i] θ.
@@ -738,11 +738,11 @@ All force values in meV/Å.
 - **Almost all of σ is the fitted noise term.** The epistemic part is 1 meV/Å for the carbon chain and 0.16 meV/Å for AuMgO. In distribution, σ is therefore nearly constant per component. The ranking of errors is weak (Spearman 0.37), the same as the ensemble's.
 - **Next test:** out-of-distribution structures, where the epistemic term should grow.
 - **Energies:** the energy σ of AuMgO (≈ 115–170 meV, ranking negative) reflects per-composition energy offsets between the Au2/MgO subsets, which the single bias column (∝ N) cannot fit. This is the gauge problem of section 14, not the method.
-- **Cost:** about 3.3 s per 110-atom cell in float64 at 50 % of the RTX 4060 Ti. OMat24 on HANGANG: `runs/diag/bayes_lastlayer_oam.sh` (not run).
+- **Cost:** about 3.3 s per 110-atom cell in float64 at 50 % of the RTX 4060 Ti. OMat24 on HANGANG: `research/diag/bayes_lastlayer_oam.sh` (not run).
 
 ## 18. SOAP-curvature Laplace: first runs (2026-11-09)
 
-`bam_omat24/soap_laplace.py` on the SOAP-trained local checkpoints (carbon chain, AuMgO slab; periodic cells added).
+`race_v2/eval/soap_laplace.py` on the SOAP-trained local checkpoints (carbon chain, AuMgO slab; periodic cells added).
 Grid over κ (curvature weight) and λ (isotropic prior precision) on a validation subset, 8 samples, σ = sample std
 around the network (the "MAP" centre); the sample mean is also reported.
 
@@ -867,9 +867,9 @@ The V1 paper (arXiv:2510.03046, Table 4 / S6) trains on 3BPA 300 K (450 + 50 str
 3.4 / 11.7 / 37.5 meV energies; RACE-LA 18.2 / 51.0 / 171.8 and 4.8 / 15.3 / 60.8). Its uncertainty metrics
 (calibration error, OOD-detection AUROC) are given only for oBN25, which is not available locally. Here the same
 3BPA split is run with the reduced local model (hidden 64, 3 layers, lmax 2, 300 epochs, 58 min on the limited
-GPU; `input/local_3bpa/race_s42.json`), then ② and ③ on 400 structures per test set
-(`runs/local_3bpa/uq_s42/`, chain in the scratchpad; HANGANG version `runs/diag/ood/ood_3bpa_hangang.sh`;
-summary script `runs/diag/ood/ood_summary.py`).
+GPU; `research/input/local_3bpa/race_s42.json`), then ② and ③ on 400 structures per test set
+(`runs/local_3bpa/uq_s42/`, chain in the scratchpad; HANGANG version `research/diag/ood/ood_3bpa_hangang.sh`;
+summary script `research/diag/ood/ood_summary.py`).
 
 **Network (final EMA, gauge refit):** forces 10.6 / 25.7 / 75.6 meV/Å, energies 6.7 / 12.6 / 40.7 meV at
 300 / 600 / 1200 K. Better than the paper's full RACE on forces at every temperature, worse on the 300 K energy.
@@ -922,6 +922,6 @@ per temperature.
 posterior: calibrated in distribution and under-confident by a factor that grows with the extrapolation (1.7 at
 600 K, 3.6 at 1200 K), while ② is a good ranker whose σ scale is fixed by the training noise. A natural
 combination is ②'s ranking with ③'s scale, or ③ with the noise term of ② added (both omit the aleatoric floor
-differently). The same chain on the full-recipe HANGANG checkpoint (`runs/diag/ood/ood_3bpa_hangang.sh`, with the
+differently). The same chain on the full-recipe HANGANG checkpoint (`research/diag/ood/ood_3bpa_hangang.sh`, with the
 3-seed ensemble as the reference) is the next run; the paper's RACE-LA numbers (RMSE only) can be compared with the
 "F(mean)" rows of `soap_laplace.json` there.

@@ -176,23 +176,23 @@ OMat24 has about 52e9 edges per epoch.
 
 ### 3.1 What RACEv2 reads from a `jraph.GraphsTuple`
 
-* `nodes['species']` and `nodes['positions']` (`BV/bam_omat24/utils.py:299-301, 204-207`;
-  `BV/bam_omat24/race_nnx.py:1687`).
-* `senders` and `receivers` (`race_nnx.py:1694, 1747`).
+* `nodes['species']` and `nodes['positions']` (`BV/race_v2/models/blocks.py:299-301, 204-207`;
+  `BV/race_v2/models/race.py:1687`).
+* `senders` and `receivers` (`models/race.py:1694, 1747`).
 * `n_node`: nodes must be contiguous per graph, with the padding graph last. It is used by `node_graph_idx`
-  (`utils.py:259-267`) and `segment_sum(..., indices_are_sorted=True)` (`utils.py:385-390`).
+  (`models/blocks.py:259-267`) and `segment_sum(..., indices_are_sorted=True)` (`models/blocks.py:385-390`).
 * `n_edge`: edges must be contiguous per graph, because the cell is repeated per edge by `n_edge`
-  (`utils.py:213-228`; `race_nnx.py:1698-1699`).
+  (`models/blocks.py:213-228`; `models/race.py:1698-1699`).
 * Periodic graphs also need:
   * `edges['Sij']`;
   * `globals['cell']` (n_graph, 3, 3), `globals['cutoff']` (n_graph,) and `globals['volume']`
-    (`utils.py:309-336, 395-398`);
-  * `globals['stress']` for `stress_loss` (`BV/bam_omat24/training_utils.py:261-263`).
+    (`models/blocks.py:309-336, 395-398`);
+  * `globals['stress']` for `stress_loss` (`BV/race_v2/training/utils.py:261-263`).
 * The loss reads `globals['energy']` and `nodes['forces']`, plus the optional `loss_weight` entries
-  (`training_utils.py:224-243`).
+  (`training/utils.py:224-243`).
 
-The reference builder of these fields is `data_3bpa.preprocess_graph` (`BV/bam_omat24/data_3bpa.py:39-94`). Batches
-are padded by `jraph.pad_with_graphs` in `fixed_collate_fn` (`BV/bam_omat24/data_nnx.py:98-114`), which needs
+The reference builder of these fields is `data_3bpa.preprocess_graph` (`BV/race_v2/data/xyz_graphs.py:39-94`). Batches
+are padded by `jraph.pad_with_graphs` in `fixed_collate_fn` (`BV/race_v2/data/loaders.py:98-114`), which needs
 `n_nodes < n_node_pad` (the padding graph needs at least one node).
 
 **Gap.** The shard slot layout interleaves padding (§1.2), and padding atoms reuse species 0 and atom 0. Converting a
@@ -205,24 +205,24 @@ and re-batching them with jraph. Shard tensors cannot be re-labelled in place.
   (`convert_aselmdb_to_shards.py:29-31, 795-796`; `preprocess.py:331-335`). In the sample, `edge_index[0]` is sorted
   and the edge lengths are 2.35-5.79 Å [measured].
   * Note: `schema.py:33` calls row 0 "sender". That label is misleading.
-* RACEv2: receivers = i, senders = j, `Sij = −S` (`data_3bpa.py:52-55, 73, 88-92`; `BV/bam_omat24/neighbors.py:4-7`).
-  The model forms r = x_s − (x_r + Sij·cell) (`utils.py:229`), which equals D_ij.
+* RACEv2: receivers = i, senders = j, `Sij = −S` (`data/xyz_graphs.py:52-55, 73, 88-92`; `BV/race_v2/data/neighbors.py:4-7`).
+  The model forms r = x_s − (x_r + Sij·cell) (`models/blocks.py:229`), which equals D_ij.
 * **Mapping from a shard:** receivers = row 0, senders = row 1, `Sij = −cell_offsets`. The ASE full list is symmetric,
   so the opposite pairing (senders = row 0 with `Sij = +S`) gives the same edge set. Mixing the two conventions
   (senders = row 0 with `−S`) gives wrong boundary vectors. This exact bug happened before, in `build_pkl.py`
-  (`BV/bam_omat24/build_pkl_v2.py:1-13`).
+  (`BV/race_v2/data/build_pkl_v2.py:1-13`).
 * **Test:** for every edge, |r| < r_c and |r| equals the ASE distance.
 
 ### 3.3 Cutoff mismatch
 
 The shards are at 6 Å; RACEv2 OAM runs are at 5 Å (`BV/input/input_3bpa_omat24_oam64_omat24_v2_s42_cue.json`:
-`cutoff 5.0`). The per-edge radial cutoff comes from `globals['cutoff']` (`utils.py:223-228`), and the envelope is
-zero for r ≥ r_c (`utils.py:57`).
+`cutoff 5.0`). The per-edge radial cutoff comes from `globals['cutoff']` (`models/blocks.py:223-228`), and the envelope is
+zero for r ≥ r_c (`models/blocks.py:57`).
 
 * Feeding 6 Å edges with cutoff = 5 would be mostly harmless numerically, but it adds about 41% more edges (39.3 vs
   27.9 edges/atom) of wasted work and memory.
 * It also risks terms that are not multiplied by the envelope, for example the UFF pair repulsion or `layer_cutoff`
-  edges (`race_nnx.py:1688-1703, 1829`).
+  edges (`models/race.py:1688-1703, 1829`).
 * **Rule:** edges must be rebuilt at the model cutoff, or the stored edges filtered to r < r_c. Filtering is exact
   only when the stored cutoff is at least r_c and is known; the MPtrj shards do not declare theirs (§1.2).
 * The streaming design always builds the neighbour list at r_c with `neighbors.neighbor_pairs` (`neighbors.py:14-30`),
@@ -231,10 +231,10 @@ zero for r ≥ r_c (`utils.py:57`).
 ### 3.4 Energy reference (E0)
 
 * RACEv2 stores E − Σ_i E0[species_i] and trains with `l_train=True`; the model does not add E0
-  (`data_3bpa.py:8-11, 58, 66`; `utils.py:365-368`; `BV/bam_omat24/train_3bpa.py:424`).
+  (`data/xyz_graphs.py:8-11, 58, 66`; `models/blocks.py:365-368`; `BV/race_v2/training/train.py:424`).
 * The raw shards and aselmdb store raw E. **The worker subtracts E0 in float64.**
 * E0 = `atom_ref` of `/scratch/t589a02/oam_data/refs/<ds>_ls.npz` (keys `atom_ref` (89,), `species_encoding` (95,),
-  …; [measured]). These are the least-squares references of the full training split (`BV/bam_omat24/oam_subset.py:17-19,
+  …; [measured]). These are the least-squares references of the full training split (`BV/race_v2/data/oam_subset.py:17-19,
   108-114, 125`). `atom_ref` is indexed by the encoded species index (§3.5).
 * Mixing sources with different references (MPtrj + sAlex) needs one table (BAM-GAMP's "k = 1" convention,
   `convert_aselmdb_to_shards.py:826-828`) or a per-source table.
@@ -248,22 +248,22 @@ zero for r ≥ r_c (`utils.py:57`).
   (`BG/bam_jax/data/preprocess.py:226-268`; `convert_aselmdb_to_shards.py:26-28`). The encoding is Z-sorted and
   contiguous; `oam_subset.py:109-113` asserts this.
 * Do **not** use `Z_to_idx`, the identity map; it shifts every element by one slot (`preprocess.py:229-240`).
-* RACEv2: species index = rank of Z in the sorted `atomic_numbers` (`data_3bpa.py:34-36`). The OAM configs list the
+* RACEv2: species index = rank of Z in the sorted `atomic_numbers` (`data/xyz_graphs.py:34-36`). The OAM configs list the
   same 89 Z values, so the two indices coincide.
 * In general, use the lookup table `lut[enc_idx] = atom_indices[idx_to_z[enc_idx]]`, and refuse elements the run does
   not cover.
 * **Hazard.** `build_model` indexes the per-species tables (`species_radii`, `species_z`, descriptors, shell radii)
-  by the position in `cfg['atomic_numbers']` (`train_3bpa.py:456-476`), but the graphs use the sorted rank. An
+  by the position in `cfg['atomic_numbers']` (`training/train.py:456-476`), but the graphs use the sorted rank. An
   unsorted list would silently mismatch. **Assert that the list is sorted in stream mode.**
 * E0 per RACE species: `atom_energies[i] = atom_ref[species_encoding[Z_i]]`.
 
 ### 3.6 Stress
 
-* Model: Voigt order [0, 4, 8, 5, 2, 1] = xx, yy, zz, yz, xz, xy, computed as virial / V (`utils.py:392-409`). This is
+* Model: Voigt order [0, 4, 8, 5, 2, 1] = xx, yy, zz, yz, xz, xy, computed as virial / V (`models/blocks.py:392-409`). This is
   (1/V) dE/dε, verified by `BV/tests/test_oam_stress.py:73` (`test_stress_is_strain_derivative`).
-* Targets: ASE `get_stress(voigt=True)` (`data_3bpa.py:77-85`).
+* Targets: ASE `get_stress(voigt=True)` (`data/xyz_graphs.py:77-85`).
 * Shards and aselmdb use the same order and sign (§1.2). **No conversion is needed.** Units are eV/Å³ everywhere; the
-  metrics multiply by 160.2 to report GPa (`train_3bpa.py:655-657`).
+  metrics multiply by 160.2 to report GPa (`training/train.py:655-657`).
 
 ---
 
@@ -314,7 +314,7 @@ training (every host process)
 * A worker seeks to the offset, reads `natoms + 2` lines into a `StringIO` and calls
   `ase.io.read(buf, format="extxyz")`. This is O(frame).
 * Do not use `ase.io.read(path, index=k)` or `iread` from an offset; they scan the file.
-* `graph_sizes.py` reads every frame into memory (`BV/bam_omat24/graph_sizes.py:41`), which is fine only for the
+* `graph_sizes.py` reads every frame into memory (`BV/race_v2/data/graph_sizes.py:41`), which is fine only for the
   small benchmark files.
 
 **BAM-GAMP shards (optional, reader only; currently the only on-disk MPtrj source)**
@@ -329,11 +329,11 @@ training (every host process)
 
 ### 4.3 Size pass
 
-* New CLI: `python -I bam_omat24/stream_io.py sizes …`. It generalises `graph_sizes.py` (`graph_sizes.py:1-16,
+* New CLI: `python -I race_v2/data/stream_io.py sizes …`. It generalises `graph_sizes.py` (`graph_sizes.py:1-16,
   32-52`) and keeps its JAX-free import trick: it imports `neighbors` directly, because the package `__init__` imports
-  JAX and the model (`graph_sizes.py:28-29`; `BV/bam_omat24/__init__.py:9-50`).
+  JAX and the model (`graph_sizes.py:28-29`; `BV/race_v2/__init__.py:9-50`).
 * Per input file it writes `<tag>.sizes.tsv` in the existing format: header `# source`, `# cutoff`,
-  `index n_atoms n_edges` (`data_3bpa.py:280-290`), plus extra columns `file key`. `read_sizes_tsv` reads columns 1
+  `index n_atoms n_edges` (`data/xyz_graphs.py:280-290`), plus extra columns `file key`. `read_sizes_tsv` reads columns 1
   and 2, so it stays compatible.
 * At the end it writes `sizes.npz`, with dtypes `n_atoms` u16, `n_edges` u32, `file` u16/u32 and `key` u32/i64
   (about 12 B per structure, 1.2 GB for OMat24). It also writes `sizes_meta.json`, which holds:
@@ -360,12 +360,12 @@ training (every host process)
   max(batch·mean, largest+1) rounded to 64; edge pad = max(batch·mean, largest) rounded to 1024) and its
   equal-count edge quantile split (`graph_sizes.py:55-58, 100-114`). It reports the expected fill with
   `pack_fill` (`:61-70`).
-* **Default `n_buckets = 1`.** This is the current `pad_mode: fixed` behaviour (`train_3bpa.py:926-953`).
+* **Default `n_buckets = 1`.** This is the current `pad_mode: fixed` behaviour (`training/train.py:926-953`).
   * The largest OMat24 structure has 192 atoms (manifest quantiles [measured]), about 5k edges at 5 Å.
   * A budget of about 2048 nodes / 49152 edges holds about 110 average structures, with the largest about 10% of the
     budget, so next-fit fill should be about 93-95%.
   * MPtrj goes up to 444 atoms (the `N1024` slot rung [measured]), so it needs a larger budget or a second bucket.
-* `max_graphs` = graph cap per pack; the collate pads to `max_graphs + 1` graphs (`data_nnx.py:111-114`).
+* `max_graphs` = graph cap per pack; the collate pads to `max_graphs + 1` graphs (`data/loaders.py:111-114`).
 * Buckets are stored in `sizes_meta.json` or set explicitly in the config. Each bucket is one jit shape for training
   and one for evaluation.
 
@@ -385,7 +385,7 @@ training (every host process)
    * Order the host's structures as the concatenation of its blocks, each permuted internally with
      `(seed, epoch, block)`.
    * Split by bucket. Next-fit greedy packing per bucket, with one `np.searchsorted` on the cumulative sums of nodes
-     and edges per pack (exactly the `BucketedDataLoader` rule, `data_nnx.py:260-276`, but without a Python loop over
+     and edges per pack (exactly the `BucketedDataLoader` rule, `data/loaders.py:260-276`, but without a Python loop over
      structures). About 1M packs for OMat24 take about 10 s per host.
 4. **Lock-step.**
    * Per bucket, steps_b = min over hosts ⌊packs_{h,b} / n_local⌋. The per-bucket counts are found with one
@@ -403,30 +403,30 @@ training (every host process)
 ### 4.6 Workers, prefetch and multiple hosts
 
 * **Worker pool.** One per host process: `mp.get_context("forkserver")` (the parent has initialised CUDA, as
-  `data_3bpa.py:255-269` already does). The pool has W processes with a per-worker task queue; a file's blocks go to
+  `data/xyz_graphs.py:255-269` already does). The pool has W processes with a per-worker task queue; a file's blocks go to
   the worker `hash(file) % W`. Each worker keeps an LRU cache of open lmdb envs.
 * **Back-pressure.** Do not use `Pool.imap`: it consumes the whole task iterator eagerly and has no back-pressure on
   results. Keep at most 2·W blocks in flight and reassemble them by block sequence number.
-* **Worker code is JAX-free.** It lives in the top-level module `stream_io` (bam_omat24 is added to `sys.path`,
-  forkserver preload), not in the `bam_omat24.` package, so a worker does not import JAX, flax and the model.
+* **Worker code is JAX-free.** It lives in the top-level module `stream_io` (race_v2 is added to `sys.path`,
+  forkserver preload), not in the `race_v2.` package, so a worker does not import JAX, flax and the model.
 * **Worker output** is plain numpy records built by the same function as `preprocess_graph`. Factor its body out into
   a JAX-free `graph_arrays(...)` and keep `preprocess_graph` as the jraph wrapper, so both paths share one code path.
 * **Edge check.** Each record carries `n_edges`. The packer asserts that it equals the table value; a mismatch would
-  overflow the fixed shape at `data_nnx.py:111-113`.
+  overflow the fixed shape at `data/loaders.py:111-113`.
 * **Packer thread.**
-  * Builds `jraph.GraphsTuple` objects and runs `fixed_collate_fn` (`data_nnx.py:98-114`).
-  * Casts to the run dtype (replaces `_cast_graphs`, `train_3bpa.py:660-665, 748-751`).
+  * Builds `jraph.GraphsTuple` objects and runs `fixed_collate_fn` (`data/loaders.py:98-114`).
+  * Casts to the run dtype (replaces `_cast_graphs`, `training/train.py:660-665, 748-751`).
   * Stacks the n_local packs and calls `jax.make_array_from_process_local_data(NamedSharding(mesh, P('dp')), local,
     global_shape)` (as `BG/bam_jax/training/distributed.py:173-214`).
   * Pushes to a queue of depth 3-4 (as `loader.py:1003-1033`).
   * It issues no collectives.
 * **Why the stacking changes.** The current multi-process path stacks the *same* global group on every process and
-  uses `global_from_host` (`data_nnx.py:31-36, 385-395`), so every host collates every pack. That is fine for 10k
+  uses `global_from_host` (`data/loaders.py:31-36, 385-395`), so every host collates every pack. That is fine for 10k
   structures but not at OMat24 scale. Host h takes packs `[h·n_local, (h+1)·n_local)` of each step. Which pack goes
   to which device does not affect the update, because gradients are psum-ed with global counts
-  (`training_utils.py:729-762`).
-* **Mesh.** The existing 1-D 'dp' mesh over all devices is unchanged (`data_nnx.py:529-540`;
-  `BV/bam_omat24/distributed.py:43-87`).
+  (`training/utils.py:729-762`).
+* **Mesh.** The existing 1-D 'dp' mesh over all devices is unchanged (`data/loaders.py:529-540`;
+  `BV/race_v2/training/distributed.py:43-87`).
 
 ### 4.7 Throughput estimate
 
@@ -449,7 +449,7 @@ runs empty, move `fixed_collate_fn` into the workers, so they return padded arra
 
 ### 4.8 New modules (signatures)
 
-**`bam_omat24/stream_io.py`** (JAX-free; imported as a top-level module by workers and the CLI)
+**`race_v2/data/stream_io.py`** (JAX-free; imported as a top-level module by workers and the CLI)
 
 ```python
 Structure = dict  # numbers i64 (n,), positions f64 (n,3), cell f64 (3,3), pbc, energy f64, forces f64 (n,3), stress f64 (6,)
@@ -473,7 +473,7 @@ def size_pass(source_spec: dict, cutoff: float, out_dir: str, workers: int,
 def main(argv=None) -> int:   # "sizes" sub-command
 ```
 
-**`bam_omat24/stream_data.py`** (main process; jraph and JAX)
+**`race_v2/data/stream_data.py`** (main process; jraph and JAX)
 
 ```python
 @dataclass(frozen=True)
@@ -500,9 +500,9 @@ def build_stream_datasets(cfg: dict, fout, mesh, n_devices) -> tuple   # same tu
 **Evaluation.**
 
 * Every structure exactly once. Hosts with fewer packs feed a duplicate with weight 0, the same mechanism as
-  `multi_device_iterator` and `device_weights` (`data_nnx.py:443-452`; `training_utils.py:882-894, 996-999`).
+  `multi_device_iterator` and `device_weights` (`data/loaders.py:443-452`; `training/utils.py:882-894, 996-999`).
 * Generalise `device_weights(n_valid)` to an explicit per-device mask, because padding devices can sit on any host.
-* `evaluate_sharded` assumes `dataset.graphs` (`training_utils.py:969-985`). Add an `if hasattr(ds, "iter_groups")`
+* `evaluate_sharded` assumes `dataset.graphs` (`training/utils.py:969-985`). Add an `if hasattr(ds, "iter_groups")`
   branch; the accumulation in `:996-1032` is unchanged.
 
 **Reuse from BAM-GAMP-jax.**
@@ -524,9 +524,9 @@ def build_stream_datasets(cfg: dict, fout, mesh, n_devices) -> tuple   # same tu
 * *Not reused:* `plan_epoch` / `iter_planned` (their unit is a file of fixed super-batches) and
   `prepare_batch_for_step` (keyed by the schema dict).
 
-### 4.9 `train_3bpa.py` integration
+### 4.9 `training/train.py` integration
 
-New config keys (document them in the docstring, `train_3bpa.py:1-139`):
+New config keys (document them in the docstring, `training/train.py:1-139`):
 
 ```json
 "data_format": "stream",
@@ -601,11 +601,11 @@ Slurm jobs.
   * Resume at step k gives the same packs as steps k..end.
 * **T4 Model equivalence (GPU, float64, small).** Evaluate a trained checkpoint
   (`runs/oam64_omat24_v2_s42_cue/ckpt_*.pkl`) on `omat24_valid.xyz` in two ways:
-  * the in-memory path (`load_3bpa_graphs` + `evaluate_sharded`);
+  * the in-memory path (`load_xyz_graphs` + `evaluate_sharded`);
   * a `StreamEvalSet` over an extxyz source with the same structures, and over the lmdb rows of the same structures.
   * Per-structure E/F/S and the summary metrics must agree to 1e-9 relative between the xyz paths, and to
     float32-input tolerance against lmdb.
-  * Padding edges with r = 0 are zeroed (`race_nnx.py:1741-1757`), so the pack composition must not matter.
+  * Padding edges with r = 0 are zeroed (`models/race.py:1741-1757`), so the pack composition must not matter.
 * **T5 Data-parallel equivalence.** Compare 2 processes × 1 GPU against 1 process × 2 GPUs: 20 float64 steps from the
   same plan must give the same parameters. Extend `tests/test_data_parallel.py:68-98` with the
   `make_array_from_process_local_data` stacking and the generalised device mask.
@@ -642,7 +642,7 @@ Slurm jobs.
    full table for pretraining, and keep the pretraining value when fine-tuning.
 10. **Species and E0 ordering** (§3.5): assert sorted `atomic_numbers`, never use `Z_to_idx`, and map `atom_ref`
     through `species_encoding`.
-11. **Worker memory.** Workers that import `bam_omat24.*` pull in JAX and the model (`bam_omat24/__init__.py:9-50`).
+11. **Worker memory.** Workers that import `race_v2.*` pull in JAX and the model (`race_v2/__init__.py:9-50`).
     The `stream_io` top-level module avoids this, and forkserver avoids forking a CUDA process.
 12. **Evaluation exactness.** Do not copy BAM-GAMP's min-truncated validation (`trainer.py:1741-1755`); use
     weight-0 padding devices.

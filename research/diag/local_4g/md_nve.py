@@ -1,6 +1,6 @@
-"""Short NVE MD with a trained checkpoint (bam_omat24.predict.ase_calculator): energy conservation and stability.
+"""Short NVE MD with a trained checkpoint (race_v2.inference.predict.ase_calculator): energy conservation and stability.
 
-    python runs/diag/local_4g/md_nve.py <ckpt> <xyz> [--frame 0] [--steps 4000] [--dt 0.5] [--T 300] [--seed 0]
+    python research/diag/local_4g/md_nve.py <ckpt> <xyz> [--frame 0] [--steps 4000] [--dt 0.5] [--T 300] [--seed 0]
 Prints the total-energy drift (linear fit, meV/ps per atom), the RMS fluctuation of the total energy, the
 temperature, the minimum interatomic distance over the run and, for RACE_LR, the total Qeq charge.
 """
@@ -15,7 +15,7 @@ from ase.md.verlet import VelocityVerlet
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary, ZeroRotation
 
 sys.path.insert(0, '.')
-from bam_omat24.predict import ase_calculator, Predictor     # noqa: E402
+from race_v2.inference.predict import ase_calculator, Predictor     # noqa: E402
 
 
 class Runaway(Exception):

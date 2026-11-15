@@ -2,7 +2,7 @@
 over the 'dp' axis (the collective the trainer's gradient sum needs).  No model, no data loader: if this hangs with
 4 processes the problem is in the JAX / NCCL setup, not in the trainer.  Stages are printed with times.
 
-    srun --ntasks-per-node=1 --cpus-per-task=288 python -X faulthandler runs/diag/omat_stream/mh_minimal.py
+    srun --ntasks-per-node=1 --cpus-per-task=288 python -X faulthandler research/diag/omat_stream/mh_minimal.py
 (BAM_DISTRIBUTED=1, MASTER_ADDR, MASTER_PORT as for the trainer.)
 """
 import faulthandler
@@ -13,8 +13,8 @@ import time
 faulthandler.dump_traceback_later(float(os.environ.get('BAM_STACK_DUMP_SECS', 120)), repeat=True)
 here = os.path.dirname(os.path.abspath(__file__))
 for base in (os.getcwd(), os.path.join(here, '..', '..', '..')):
-    if os.path.exists(os.path.join(base, 'bam_omat24', 'distributed.py')):
-        sys.path.insert(0, os.path.join(base, 'bam_omat24'))
+    if os.path.exists(os.path.join(base, 'race_v2', 'training', 'distributed.py')):
+        sys.path.insert(0, os.path.join(base, 'race_v2', 'data'))
         break
 t0 = time.time()
 
@@ -24,7 +24,7 @@ def say(msg):
 
 
 import jax  # noqa: E402
-import distributed as D  # noqa: E402  (bam_omat24/distributed.py as a top-level module: no model import)
+import distributed as D  # noqa: E402  (race_v2/training/distributed.py as a top-level module: no model import)
 
 D.init_distributed()
 import jax.numpy as jnp  # noqa: E402

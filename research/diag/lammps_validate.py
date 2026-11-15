@@ -1,7 +1,7 @@
 """LAMMPS step 4: pair_style race vs Python on a LiPS test frame (run 0: energy, forces, pressure tensor), then a
 1 ps NVE run (energy drift, speed).  Run on a GPU node after lammps/build_lammps.sh.
 
-    python runs/diag/lammps_validate.py <lmp binary> <plugin.so> <export_dir> <config.json> <ckpt.pkl> <extxyz>
+    python research/diag/lammps_validate.py <lmp binary> <plugin.so> <export_dir> <config.json> <ckpt.pkl> <extxyz>
 """
 import os
 import re
@@ -64,7 +64,7 @@ run 4000
     a.pbc = True
     # reference: the exported function through JAX (same graph construction as the Python check) + E0
     import jax.numpy as jnp
-    from bam_omat24.export_lammps import build, make_fn, graph_inputs
+    from race_v2.export.lammps import build, make_fn, graph_inputs
     cfg, model, zs_m, e0 = build(cfg_path, ckpt, 'e3nn')
     import jax
     fn = jax.jit(make_fn(model, float(cfg.get('cutoff', 5.0)), 128, 4096))

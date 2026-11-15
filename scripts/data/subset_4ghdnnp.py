@@ -1,6 +1,6 @@
 """Balanced training subsets of the 4G-HDNNP splits (convert_4ghdnnp.py output) for local tests.
 
-usage: python -I data_prep/subset_4ghdnnp.py <out_dir of convert_4ghdnnp.py>
+usage: python -I scripts/data/subset_4ghdnnp.py <out_dir of convert_4ghdnnp.py>
 
 Per system: 500 structures of each subset label (charge state / structure family) from train.xyz, drawn with
 numpy RandomState(0).choice(indices of that label, 500, replace=False), labels in sorted order, one RandomState for

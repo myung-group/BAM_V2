@@ -15,13 +15,13 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
 D=/scratch/t510a13/data/datasets_ext/rmd17_official
 DIH=/scratch/t510a13/data/datasets_ext/BOTNet-datasets/dataset_3BPA/test_dih.xyz
-ev() { python -m bam_omat24.eval_sets input/input_3bpa_omat24_$1_cue.json --ckpt $2 $3 --tag $4 --xyz $5 2>&1 | grep -E "^set|xyz|written|Error|error"; }
+ev() { python -m race_v2.eval.eval_sets research/input/input_3bpa_omat24_$1_cue.json --ckpt $2 $3 --tag $4 --xyz $5 2>&1 | grep -E "^set|xyz|written|Error|error"; }
 (
   export CUDA_VISIBLE_DEVICES=0
   for N in r28_soap_s42 r28_soap_s43 r28_soap_lr3e3_s42 r28_soap_lr3e3_s43; do
     echo "=== dih $N gauge"; ev $N runs/${N}_cue/ckpt_${N}_cue.gauge.pkl "--group-key dihedrals --group-index 1" dihbeta_gauge $DIH
   done
-) > runs/diag/post_eval2_dih.txt 2>&1 &
+) > research/diag/post_eval2_dih.txt 2>&1 &
 MOLS=(aspirin azobenzene benzene ethanol malonaldehyde naphthalene paracetamol salicylic toluene uracil)
 for g in 1 2 3; do
   (
@@ -31,7 +31,7 @@ for g in 1 2 3; do
       m=${MOLS[$k]}; N=rmd17o_${m}_soap_s42
       echo "=== rest $N gauge"; ev $N runs/${N}_cue/ckpt_${N}_cue.gauge.pkl "" rest99k_gauge $D/$m/rest_split01.xyz
     done
-  ) > runs/diag/post_eval2_rmd17_gpu$g.txt 2>&1 &
+  ) > research/diag/post_eval2_rmd17_gpu$g.txt 2>&1 &
 done
 wait
 echo done

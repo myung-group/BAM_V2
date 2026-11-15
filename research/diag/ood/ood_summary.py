@@ -6,7 +6,7 @@ mean sigma, rms z, 95 % coverage, Spearman(|err|, sigma) over components, and th
 structure-level sigma (300 K = in-distribution, 600 K / 1200 K = out-of-distribution; the oBN25 metric of the paper,
 Table 5).  Writes a Korean figure: structure-mean force sigma vs structure force RMSE per temperature.
 
-    python runs/diag/ood/ood_summary.py --blr <dir> --lap <name>=<dir> ... --out <dir> [--sets test_300K test_600K test_1200K]
+    python research/diag/ood/ood_summary.py --blr <dir> --lap <name>=<dir> ... --out <dir> [--sets test_300K test_600K test_1200K]
 """
 import argparse
 import json

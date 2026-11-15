@@ -5,14 +5,14 @@ without XLA_FLAGS=--xla_gpu_enable_triton_gemm=false and diff.  usage: audit_tri
 import json, sys, io, functools
 import numpy as np, jax, jax.numpy as jnp
 from flax import nnx
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import default_collate_fn, setup_mesh
-from bam_omat24.training_utils import (load_checkpoint, make_sharded_evaluate_step, evaluate_sharded,
+from race_v2.training import train as T
+from race_v2.data.loaders import default_collate_fn, setup_mesh
+from race_v2.training.utils import (load_checkpoint, make_sharded_evaluate_step, evaluate_sharded,
                                        replicate_pytree, compute_loss)
 jax.config.update("jax_enable_x64", True)
 mesh, nd = setup_mesh()
 for run in sys.argv[1:]:
-    cfg = json.load(open(f"input/input_3bpa_omat24_{run}_cue.json"))
+    cfg = json.load(open(f"research/input/input_3bpa_omat24_{run}_cue.json"))
     f = io.StringIO()
     an, ae, tr, va, te, st = T.build_datasets(cfg, f)
     for ds in [tr, va] + list(te.values()):

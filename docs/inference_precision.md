@@ -1,8 +1,8 @@
 # Inference precision: when a float32-trained model must run in float64
 
 Models trained with `"x64": false` (float32 parameters, optionally a float64 SOAP state) are evaluated in float32 by
-default. Setting the environment variable `BAM_PREDICT_X64=1` makes `bam_omat24.predict.Predictor` (and everything
-built on it: `relax_wbm`, `relax_batched.RaceEvaluator`, `runs/diag/mbd/kappa.py`) enable `jax_enable_x64`, cast the
+default. Setting the environment variable `BAM_PREDICT_X64=1` makes `race_v2.inference.predict.Predictor` (and everything
+built on it: `relax_wbm`, `relax_batched.RaceEvaluator`, `scripts/eval/mbd/kappa.py`) enable `jax_enable_x64`, cast the
 parameters to float64 and feed float64 graphs. The parameters are the same numbers; only the arithmetic changes.
 
 ## Rule
@@ -37,5 +37,5 @@ Per-structure energy difference: median 1.3e-4 eV/atom; a few structures relax t
 ## Memory
 
 float64 doubles the memory. With a 7 A cutoff the largest PhononDB supercells (300-512 atoms) do not fit when several
-are batched: rerun those with a smaller batch (`APC=256` in `runs/diag/mbd/kappa.sh`; the supercells and the
+are batched: rerun those with a smaller batch (`APC=256` in `scripts/eval/mbd/kappa.sh`; the supercells and the
 displacements are unchanged, only the number of structures per GPU call).

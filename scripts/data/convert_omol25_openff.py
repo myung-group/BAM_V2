@@ -1,7 +1,7 @@
 """OMol25 ANI-2x part, as redistributed by OpenFF (Hugging Face openforcefield/descent-format-ani2x, CC BY 4.0,
 revision f1a802f2ed77d3b424ff245d9e455cf0a48ea19e) -> extxyz subsets for the local RACEv2 / RACE_LR pilot.
 
-usage: python -I data_prep/convert_omol25_openff.py <raw_dir> <out_dir> [--n-train 10000] [--n-valid 1000]
+usage: python -I scripts/data/convert_omol25_openff.py <raw_dir> <out_dir> [--n-train 10000] [--n-valid 1000]
            [--n-test 2932] [--seed 0] [--force-sign 1] [--max-rows N]
   raw_dir: descent_data/train-00000-of-00010.parquet and metadata/train-00000-of-00006.parquet (only shard 0 of each
            is used; both tables start at global row 0, and the SMILES of every used row are checked to be equal)
@@ -14,7 +14,7 @@ Atom order: the coordinates follow the atom-map numbers 1..N of the mapped SMILE
 from the bracket atom [El...:k].
 Units (descent / smee convention): coords Å, energy kcal/mol, forces kcal/mol/Å; converted with 1 kcal/mol =
 0.0433641043 eV.  The force sign is not documented in the card: --force-sign (+1 = forces as stored) is checked
-empirically (runs/diag/check_force_sign.py: only the right sign lets energies and forces be fitted together).
+empirically (scripts/data/check_force_sign.py: only the right sign lets energies and forces be fitted together).
 Energies are stored as float32 (resolution about 0.06 kcal/mol = 2.7 meV at 1e6 kcal/mol): a floor for energy errors.
 Split (fair): train / valid = disjoint RandomState(seed) samples of the official TRAIN rows of shard 0, test = the
 official VAL rows (all of them by default).  E0 = per-element least squares on train only.
@@ -114,7 +114,7 @@ def main():
                 e0_residual_std_eV=float((y - X @ e0).std()), periodic=False, stress=False,
                 ref_charges_key=['lowdin_charges'])
     import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
     ai = atomic_numbers_to_indices(Z)
     probe = frames['train'][:2000]

@@ -13,11 +13,11 @@ conda activate bam_cue
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XLA_FLAGS="--xla_gpu_enable_triton_gemm=false"
 N=qm9_u0_hill_soap_s42
-python -m bam_omat24.dump_frame_errors input/input_3bpa_omat24_${N}_cue.json --ckpt runs/${N}_cue/ckpt_${N}_cue.gauge.pkl \
+python -m race_v2.eval.dump_frame_errors research/input/input_3bpa_omat24_${N}_cue.json --ckpt runs/${N}_cue/ckpt_${N}_cue.gauge.pkl \
   --xyz /scratch/t510a13/data/datasets_ext/qm9/valid.xyz --xyz /scratch/t510a13/data/datasets_ext/qm9/test.xyz \
-  --out runs/diag/qm9/u0_s42 --batch-size 64 2>&1 | grep -v -E "warn|^W1|^I1"
+  --out research/diag/qm9/u0_s42 --batch-size 64 2>&1 | grep -v -E "warn|^W1|^I1"
 for W in water2_hill_soap_s42 water2_v9a_soap_s42; do
-python -m bam_omat24.dump_frame_errors input/input_3bpa_omat24_${W}_cue.json --ckpt runs/${W}_cue/ckpt_${W}_cue.gauge.pkl \
+python -m race_v2.eval.dump_frame_errors research/input/input_3bpa_omat24_${W}_cue.json --ckpt runs/${W}_cue/ckpt_${W}_cue.gauge.pkl \
   --xyz /scratch/t510a13/data/datasets_ext/water_xyz/train_only.xyz --xyz /scratch/t510a13/data/datasets_ext/water_xyz/test.xyz \
-  --out runs/diag/qm9/${W} --batch-size 2 --index-key none 2>&1 | grep -v -E "warn|^W1|^I1"
+  --out research/diag/qm9/${W} --batch-size 2 --index-key none 2>&1 | grep -v -E "warn|^W1|^I1"
 done

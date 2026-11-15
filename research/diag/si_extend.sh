@@ -5,7 +5,7 @@
 # Si final (siF_s42/43/44, 300 ep): if the validation force RMSE was still falling at the end, raise n_epochs
 # and continue from the .last.pkl checkpoint (restart: true).  Rule (validation only): min over the last 50
 # epochs < 0.98 x min over epochs 200-250  ->  extend by EXTRA epochs (repeatable: the rule is re-applied).
-# usage: sbatch -J siX --dependency=afterany:<siF jobid> --gres=gpu:3 -t 12:00:00 runs/diag/si_extend.sh
+# usage: sbatch -J siX --dependency=afterany:<siF jobid> --gres=gpu:3 -t 12:00:00 research/diag/si_extend.sh
 cd /scratch/t510a13/race_v2/work
 EXTRA=${EXTRA:-200}
 PY=~/.conda/envs/bam_cue/bin/python
@@ -15,7 +15,7 @@ for s in 42 43 44; do
   dec=$($PY - "$name" "$EXTRA" <<'EOF'
 import sys, re, json, numpy as np
 name, extra = sys.argv[1], int(sys.argv[2])
-cfgp = f"input/input_3bpa_omat24_{name}_cue.json"; cfg = json.load(open(cfgp))
+cfgp = f"research/input/input_3bpa_omat24_{name}_cue.json"; cfg = json.load(open(cfgp))
 rows = []
 for l in open(f"runs/{name}_cue/loss_{name}_cue.out"):
     m = re.match(r"\d\d/\d\d/\d{4} \d\d:\d\d:\d\d\s+(\d+)\s+[\d.]+\s+\|", l)
@@ -34,7 +34,7 @@ else:
     print(f"converged {ref:.2f}->{last:.2f} at {n_end}")
 EOF
 )
-  echo "$name: $dec" | tee -a runs/diag/si_extend.log
+  echo "$name: $dec" | tee -a research/diag/si_extend.log
   case "$dec" in extend*) todo+=($name);; esac
 done
 [ ${#todo[@]} -eq 0 ] && { echo "nothing to extend"; exit 0; }

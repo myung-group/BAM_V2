@@ -1,0 +1,290 @@
+{
+ "cutoff": 6.0,
+ "sources": [
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0000.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0000.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0001.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0001.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0002.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0002.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0003.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0003.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0004.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0004.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0005.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0005.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0006.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0006.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0007.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0007.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0008.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0008.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0009.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0009.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0010.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0010.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0011.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0011.aselmdb"
+   ],
+   "opts": {},
+   "n": 369776
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0012.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0012.aselmdb"
+   ],
+   "opts": {},
+   "n": 369775
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0013.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0013.aselmdb"
+   ],
+   "opts": {},
+   "n": 369775
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0014.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0014.aselmdb"
+   ],
+   "opts": {},
+   "n": 369775
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0015.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0015.aselmdb"
+   ],
+   "opts": {},
+   "n": 369775
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0016.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0016.aselmdb"
+   ],
+   "opts": {},
+   "n": 369775
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0017.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0017.aselmdb"
+   ],
+   "opts": {},
+   "n": 369775
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0018.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0018.aselmdb"
+   ],
+   "opts": {},
+   "n": 369775
+  },
+  {
+   "spec": "aselmdb:/appsdata/t510a13/oc25/train/data0019.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/oc25/train/data0019.aselmdb"
+   ],
+   "opts": {},
+   "n": 369775
+  }
+ ],
+ "ase": "3.29.0",
+ "numpy": "2.5.4",
+ "tsv": {
+  "0000_data0000": "558d11adac62c4886b0c569aa5e8bd5512f22fc3fcee24e482613254f6a152d6",
+  "0001_data0001": "0dea5c0c8c44f296d40adf8c2a0c3d083e1409e87611e4dc1d652e5762ae64d9",
+  "0002_data0002": "ee0070de90da73f7f2fc5ce6b4b6736742b2a9be712b510c177013f0b187731f",
+  "0003_data0003": "aefb25702e9850baf85f201a10c2f415381abf08fe4bb7872d00065e65268dce",
+  "0004_data0004": "425ab274ed6ec6289206ff8d21d47dd83f9c6f693b5ef93159d15a56fc80b001",
+  "0005_data0005": "17c714676cba7c2cd089d831a9dbb5f97797a91f5d6e7f4e71680051a2432488",
+  "0006_data0006": "a46852f42a3b76c34f04b83c6d26b698979d2afeb037f29732ac4eccf78d608e",
+  "0007_data0007": "8637e2e6cb49c786724ca10ef34cffd384f35a3d0ecc922f9d79da6beb13b93a",
+  "0008_data0008": "d171d455f66ee2a75ff31d4f174ddc1507358c72f01f8fe50aaa503a6b8853e1",
+  "0009_data0009": "4933559a725178aa06607cd854cda9916fb8902b81b2df006f203ff4c50c12bc",
+  "0010_data0010": "1b29b77268cdd07ad67bf2262332b5e8973e543e177851030a422cb0d3496064",
+  "0011_data0011": "be2f1e68539bc999ae33d6e575608d6633312c4d5a8678d3499b639eca4731e3",
+  "0012_data0012": "f28d67561ad0f18e4878ef93eb1b56b94873580e32841da5c11203bae55676ed",
+  "0013_data0013": "d8283c489b6ab02e55e3fbf4b22a371a2466c81c3eba64eec286496aa4c20cd3",
+  "0014_data0014": "1983ae2b03a2b5fcc6f39a2f90c307a9d2fee1144034d4a4795eaa836bdaed21",
+  "0015_data0015": "276d8e2defb32ea68b4e37d88c2b1aeb42a7c6c40c75902fb9dccb146daeadfa",
+  "0016_data0016": "5d3eb34345fcf17d952c9ff0a512563ba91042793cab6fa634e17de95937760d",
+  "0017_data0017": "6ba59e9b1dc1992e7f39c0f588c81023fd8a77ba21efb79699aadc9b41ffc69d",
+  "0018_data0018": "3a2b34166ae9d3092e8d0f08d2764ee562ebd5c262fb994a59a82096596ce140",
+  "0019_data0019": "4f3928a71be5d9ea7d09d557faa4034afa46d3aba1c096fc041d97fc38210323"
+ },
+ "neighbors": "ase",
+ "files": [
+  "/appsdata/t510a13/oc25/train/data0000.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0001.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0002.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0003.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0004.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0005.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0006.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0007.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0008.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0009.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0010.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0011.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0012.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0013.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0014.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0015.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0016.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0017.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0018.aselmdb",
+  "/appsdata/t510a13/oc25/train/data0019.aselmdb"
+ ],
+ "kinds": [
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb",
+  "aselmdb"
+ ],
+ "file_source": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19
+ ],
+ "n": 7395512,
+ "sum_atoms": 1068208517,
+ "sum_edges": 50428887472,
+ "avg_n_neighbors": 47.20884234627386,
+ "max_atoms": 300,
+ "max_edges": 35068,
+ "max_cell_volume": 58807.40625,
+ "max_cell_length": [
+  63.38137435913086,
+  78.23489379882812,
+  114.70915985107422
+ ],
+ "n_periodic": 7395512,
+ "dropped": {}
+}

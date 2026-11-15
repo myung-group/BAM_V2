@@ -2,7 +2,7 @@
 Periodic replicas of one configuration have identical per-replica energy and identical forces on equivalent atoms,
 so every run is checked against the 1-GPU run (E per base cell, max |F - F_1GPU[equivalent atom]|).
 
-    python runs/diag/lammps_weak.py --mpi <lmp_mpi> --plugin <so> --export <dir> --xyz <extxyz> --base 4 4 4 \
+    python research/diag/lammps_weak.py --mpi <lmp_mpi> --plugin <so> --export <dir> --xyz <extxyz> --base 4 4 4 \
         --runs 1:1:1x1x1 2:1:2x1x1 4:1:2x2x1 8:2:2x2x2 [--steps 200]          (ranks:nodes:replication)
 """
 import argparse

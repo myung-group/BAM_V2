@@ -372,4 +372,4 @@ class GraphListDataset:
         return self.graphs[idx]
 
 
-load_3bpa_graphs = load_xyz_graphs          # old name (the loader was never specific to 3BPA)
+load_xyz_graphs = load_xyz_graphs          # old name (the loader was never specific to 3BPA)

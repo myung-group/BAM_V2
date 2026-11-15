@@ -1,9 +1,9 @@
-"""Transfer test OMol25 -> OMat24: one table from the common evaluations (bam_omat24.eval_sets, eval_<tag>.json next
+"""Transfer test OMol25 -> OMat24: one table from the common evaluations (race_v2.eval.eval_sets, eval_<tag>.json next
 to each checkpoint) and the parameter checks of the second-stage checkpoints against the pretraining checkpoint.
 
-    PYTHONPATH=. JAX_PLATFORMS=cpu python runs/diag/transfer/collect.py --pre runs/omol/<pre run>/ckpt.pkl
+    PYTHONPATH=. JAX_PLATFORMS=cpu python research/diag/transfer/collect.py --pre runs/omol/<pre run>/ckpt.pkl
         --arms tr2_scratch tr2_cont tr2_replay tr2_frozen --omat-meta data_local/omat24_val/r300_10k/meta.json
-        [--out runs/diag/transfer/results.json]
+        [--out research/diag/transfer/results.json]
 
 Checks per arm that started from the pretraining checkpoint (EMA parameters):
   task rows    : which rows of the task table differ from zero (expected: 1 for OMat24 only, 0 and 1 with replay)
@@ -25,14 +25,14 @@ def leaves(tree):
 
 
 def main():
-    from bam_omat24.training_utils import load_checkpoint
+    from race_v2.training.utils import load_checkpoint
     ap = argparse.ArgumentParser()
     ap.add_argument('--pre', required=True)
     ap.add_argument('--arms', nargs='+', required=True)
     ap.add_argument('--omat-meta', required=True)
     ap.add_argument('--omol-z', type=int, nargs='+', default=[1, 6, 7, 8, 9, 16, 17])
     ap.add_argument('--z-max', type=int, default=94)
-    ap.add_argument('--out', default='runs/diag/transfer/results.json')
+    ap.add_argument('--out', default='research/diag/transfer/results.json')
     args = ap.parse_args()
     seen = set(args.omol_z) | {int(z) for z in json.load(open(args.omat_meta))['atomic_numbers']}
     absent = np.array([z - 1 for z in range(1, args.z_max + 1) if z not in seen])
@@ -48,7 +48,7 @@ def main():
         print(f"{name:22s} | {om['energy_mae_meV_per_atom']:9.1f} {om['force_mae_meVA']:8.1f} | "
               f"{ol['energy_mae_meV_per_atom']:9.1f} {ol['force_mae_meVA']:8.1f}")
         if arm:
-            cfg = json.load(open(f'input/transfer/{arm}.json'))
+            cfg = json.load(open(f'research/input/transfer/{arm}.json'))
             full = load_checkpoint(f'runs/transfer/{arm}/ckpt.pkl')
             ck, raw = leaves(full['ema_params']), leaves(full['params'])
             tt = next(v for k, v in ck.items() if 'task_table' in k)

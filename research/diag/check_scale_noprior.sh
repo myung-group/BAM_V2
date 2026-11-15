@@ -8,7 +8,7 @@ module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
 cd /scratch/t510a13/race_v2/work
-python - <<'EOF' | tee runs/diag/check_scale_noprior.log
+python - <<'EOF' | tee research/diag/check_scale_noprior.log
 import pickle, numpy as np, jax
 names = ['r28_soap_s42', 'r28_soap_s43', 'wF1_s43', 'w7_h64_lr1e3', 'acac_soap_s42', 'si_full_hill_soap_s42', 'lips_fu_hill_soap_s42', 'r33_zblnb_s42',
          'rmd17o_aspirin_soap_s42']

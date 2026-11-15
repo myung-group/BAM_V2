@@ -2,8 +2,8 @@
 # OMat24 pretraining with the streaming loader on N whole GPU nodes (2026-11-11, account t510a13).
 # One process per node drives its 4 GPUs (jax.distributed, BAM_DISTRIBUTED=1); restart: true in the config resumes
 # from <ckpt>.last.pkl (data cursor included), so the same command continues an interrupted run.
-# usage (from /scratch/t510a13/race_v2/work; the config is made by runs/diag/omat_stream/make_config.py):
-#   $ sbatch -J <name> -p exclusive06 --comment="field=sciai;appl=jax" --nodes=4 --ntasks-per-node=1 --exclusive --gres=gpu:4 -t <time> --export=ALL,XLA_EXTRA=--xla_gpu_shard_autotuning=false runs/diag/omat_stream/pretrain.sh <config.json>
+# usage (from /scratch/t510a13/race_v2/work; the config is made by scripts/train/omat_stream/make_config.py):
+#   $ sbatch -J <name> -p exclusive06 --comment="field=sciai;appl=jax" --nodes=4 --ntasks-per-node=1 --exclusive --gres=gpu:4 -t <time> --export=ALL,XLA_EXTRA=--xla_gpu_shard_autotuning=false scripts/train/omat_stream/pretrain.sh <config.json>
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work
@@ -18,7 +18,7 @@ conda activate ${BAM_ENV:-/scratch/t510a13/envs/bam_cue}
 export XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS="--xla_gpu_enable_triton_gemm=false ${XLA_EXTRA:-}" BAM_NEIGHBORS=ase
 export OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 NCCL_PROTO=^LL128
 export BAM_STACK_DUMP_SECS=${BAM_STACK_DUMP_SECS:-300} BAM_PROGRESS_STEPS=${BAM_PROGRESS_STEPS:-1000} PYTHONUNBUFFERED=1
-echo "nodes $SLURM_JOB_NODELIST  tasks $SLURM_NTASKS  config $CFG  code $(git -C $(readlink -f bam_omat24)/.. rev-parse --short HEAD)  $(date '+%F %T')"
+echo "nodes $SLURM_JOB_NODELIST  tasks $SLURM_NTASKS  config $CFG  code $(git -C $(readlink -f race_v2)/.. rev-parse --short HEAD)  $(date '+%F %T')"
 TPN=${TPN:-1}                      # processes per node: 1 (4 GPUs each) or 4 (one per GPU; sbatch --ntasks-per-node=4)
 if [ "${SLURM_NNODES:-1}" -gt 1 ] || [ $TPN -gt 1 ]; then
   export BAM_DISTRIBUTED=1 MASTER_ADDR=$(hostname) MASTER_PORT=$((20000 + SLURM_JOB_ID % 20000))
@@ -28,7 +28,7 @@ if [ "${SLURM_NNODES:-1}" -gt 1 ] || [ $TPN -gt 1 ]; then
   OUT=runs/slurm/${SLURM_JOB_NAME}_${SLURM_JOB_ID}.out; START_LIMIT=${START_LIMIT:-1500}; TRIES=${TRIES:-3}
   for TRY in $(seq 1 $TRIES); do
     srun --nodes=$SLURM_NNODES --ntasks=$((SLURM_NNODES * TPN)) --ntasks-per-node=$TPN --cpus-per-task=$((288 / TPN)) \
-      python -m bam_omat24.train_3bpa $CFG &
+      python -m race_v2.training.train $CFG &
     SPID=$!; T0=$(date +%s); STARTED=0
     while kill -0 $SPID 2>/dev/null; do
       if grep -q 'first training step done' $OUT 2>/dev/null; then STARTED=1; break; fi
@@ -40,6 +40,6 @@ if [ "${SLURM_NNODES:-1}" -gt 1 ] || [ $TPN -gt 1 ]; then
     scancel ${SLURM_JOB_ID}.$((TRY - 1)); wait $SPID; RC=$?; sleep 30
   done
 else
-  python -m bam_omat24.train_3bpa $CFG; RC=$?
+  python -m race_v2.training.train $CFG; RC=$?
 fi
 echo "exit $RC  $(date '+%F %T')"

@@ -1,10 +1,10 @@
 """Write runs/<run>_cue/ckpt_<run>_cue.gauge.pkl from runs/<run>_cue/gauge_refit.json (single stoichiometry:
-per-frame constant c -> per-atom shift c / N).  usage: python runs/diag/make_gauge_ckpt.py N_atoms|auto run [run ...]  (auto: atoms of the first training frame)"""
+per-frame constant c -> per-atom shift c / N).  usage: python research/diag/make_gauge_ckpt.py N_atoms|auto run [run ...]  (auto: atoms of the first training frame)"""
 import json, sys, pickle
-from bam_omat24.training_utils import load_checkpoint, save_checkpoint, gauge_shift_params
+from race_v2.training.utils import load_checkpoint, save_checkpoint, gauge_shift_params
 for run in sys.argv[2:]:
     if sys.argv[1] == "auto":
-        cfg = json.load(open(f"input/input_3bpa_omat24_{run}_cue.json"))
+        cfg = json.load(open(f"research/input/input_3bpa_omat24_{run}_cue.json"))
         n_at = int(open(cfg["train_path"]).readline())
     else:
         n_at = int(sys.argv[1])

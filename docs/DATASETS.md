@@ -6,7 +6,7 @@ Compiled 2026-11-06 from the Claude Code session transcript
 mtimes are KST = UTC+9), plus the converter scripts and READMEs on disk. Data root on HANGANG:
 `/scratch/t589a02/datasets_ext` (below: `$DS`). Repo: `/scratch/t589a02/BAM_V2`.
 
-> **In this repository:** the converter scripts `convert_*.py` named below are copied to `data_prep/` (on HANGANG they
+> **In this repository:** the converter scripts `convert_*.py` named below are copied to `scripts/data/` (on HANGANG they
 > live in `$DS = /scratch/t589a02/datasets_ext`). The processed splits themselves are in the transfer package
 > (`data_splits.tar.gz`, see `docs/HANDOFF.md`); rebuilding from the raw sources is only needed if that package is not
 > available, or to check it. The OAM subsets cannot be rebuilt without the BAM-GAMP shards (section 12), so copy the
@@ -22,13 +22,13 @@ Conventions in this file:
 - Paths are hard-coded to `/scratch/t589a02/...` in most commands. On another server, replace them with your own
   data root. `convert_md22.py` is the only converter that finds its data relative to its own location.
 - `*_omat24_cutoff_*_e0_*.pkl` files next to the xyz files are graph caches the trainer writes
-  (`bam_omat24/data_3bpa.py`). They are not data and can be deleted; they are rebuilt on first use.
+  (`race_v2/data/xyz_graphs.py`). They are not data and can be deleted; they are rebuilt on first use.
 
 ## 0. Summary
 
 | dataset dir | raw source | converter | reproducible from the record? |
 |---|---|---|---|
-| repo `dataset_3BPA/` | in git (initial commit 016cd2d); md5-identical to BOTNet-datasets `dataset_3BPA/` | none (used as is) | yes |
+| repo `research/dataset_3BPA/` | in git (initial commit 016cd2d); md5-identical to BOTNet-datasets `research/dataset_3BPA/` | none (used as is) | yes |
 | `BOTNet-datasets/dataset_3BPA/test_dih.xyz` | git clone github.com/davkovacs/BOTNet-datasets | none | yes |
 | `BOTNet-datasets/dataset_acac` | same clone | none | yes |
 | `rmd17_official` | figshare 10.6084/m9.figshare.12672038.v4 (npz + index csv, md5 recorded) | `convert_rmd17_figshare.py ... 01` | yes |
@@ -39,9 +39,9 @@ Conventions in this file:
 | `si_gap18` | Zenodo 1250555 (GAP-18 training set, md5 recorded) + Zenodo 7003068 (RSS / compression-MD tests) | inline python (verbatim below) | yes |
 | `water_xyz` | git clone github.com/BingqingCheng/ab-initio-thermodynamics-of-water | inline python (verbatim below) | yes |
 | `water_split1393` | same clone | inline python (verbatim below) | yes |
-| `oam_subsets`, `oam_subsets_100k` | BAM-GAMP-jax shards in `/scratch/t589a02/oam_data`, `/scratch/t589a02/mp_data/jax_data_v3_raw` | `bam_omat24/oam_subset.py` | subsets: yes, given the shards. Shards: **partly** (converter and options are on disk; the raw OMat24/sAlex/MPtrj downloads and the MPtrj `jax_data_v3_raw` build are NOT FOUND in transcript) |
+| `oam_subsets`, `oam_subsets_100k` | BAM-GAMP-jax shards in `/scratch/t589a02/oam_data`, `/scratch/t589a02/mp_data/jax_data_v3_raw` | `race_v2/data/oam_subset.py` | subsets: yes, given the shards. Shards: **partly** (converter and options are on disk; the raw OMat24/sAlex/MPtrj downloads and the MPtrj `jax_data_v3_raw` build are NOT FOUND in transcript) |
 | `venv_tools` | `python -m venv` from conda env `bam_cue` + pip `pyarrow numpy scikit-learn` | n/a | yes |
-| local `data_local/4ghdnnp/{carbon_chain,ag_cluster,nacl,aumgo}` | Materials Cloud 2020.137 (10.24435/materialscloud:f3-yh) `datasets.tar.gz` (md5 recorded) | `data_prep/convert_4ghdnnp.py` | yes (section 16) |
+| local `data_local/4ghdnnp/{carbon_chain,ag_cluster,nacl,aumgo}` | Materials Cloud 2020.137 (10.24435/materialscloud:f3-yh) `datasets.tar.gz` (md5 recorded) | `scripts/data/convert_4ghdnnp.py` | yes (section 16) |
 | `tm23_dl`, `zuo2020_dl` | Materials Cloud tcrks-ymp88; github materialsvirtuallab/mlearn | none (inspected only) | not used in results |
 
 ## 1. Environments used for the conversions
@@ -73,10 +73,10 @@ cd /scratch/t589a02/datasets_ext && venv_tools/bin/pip install -q scikit-learn 2
   ASE writes the extxyz headers, so the byte-level md5 of ASE-written files can change with the ASE version even when
   the data are identical.
 
-## 2. 3BPA (repo `dataset_3BPA/` and BOTNet `dataset_3BPA/test_dih.xyz`)
+## 2. 3BPA (repo `research/dataset_3BPA/` and BOTNet `research/dataset_3BPA/test_dih.xyz`)
 
 **Source.** The four training/test files are tracked in git in the repo (`git log -- dataset_3BPA` = `016cd2d Initial
-commit`; the session started from them: "데이터는 `dataset_3BPA/*.xyz`로 저장소에 포함"). Their origin before the repo
+commit`; the session started from them: "데이터는 `research/dataset_3BPA/*.xyz`로 저장소에 포함"). Their origin before the repo
 is NOT FOUND in transcript, but they are byte-identical to the BOTNet-datasets copies (md5 computed 2026-11-06):
 
 | file | md5 (repo = BOTNet clone) |
@@ -92,7 +92,7 @@ is NOT FOUND in transcript, but they are byte-identical to the BOTNet-datasets c
 BOTNet-datasets: https://github.com/davkovacs/BOTNet-datasets, cloned commit
 `29e6d467317e4b5967b7ea5cbee54de953fa0d45` (2022-08-30, "update ethanol dataset with N energy of revMD17"). Its README:
 "datasets used for the paper The Design Space of E(3)-Equivariant Atom-Centered Interatomic Potentials ... cite
-https://arxiv.org/abs/2205.06643". `dataset_3BPA/README.md`: units Å, eV, eV/Å; keys `energy`, `forces`;
+https://arxiv.org/abs/2205.06643". `research/dataset_3BPA/README.md`: units Å, eV, eV/Å; keys `energy`, `forces`;
 train_300K = 500 configs from 300 K MD. (The README names `test_dih_beta.xyz`, the file in the repo is `test_dih.xyz`.)
 
 **Download (verbatim, 2026-10-28 06:40).** Note from the session: git works on the HANGANG login node, raw http did not.
@@ -100,16 +100,16 @@ train_300K = 500 configs from 300 K MD. (The README names `test_dih_beta.xyz`, t
 ```bash
 mkdir -p /scratch/t589a02/datasets_ext && cd /scratch/t589a02/datasets_ext && timeout 300 git clone --depth 1 https://github.com/davkovacs/BOTNet-datasets 2>&1 | tail -2; ls BOTNet-datasets; ls BOTNet-datasets/dataset_3BPA BOTNet-datasets/dataset_acac 2>/dev/null; du -sh BOTNet-datasets 2>/dev/null; cd /scratch/t589a02/BAM_V2
 ```
-Result: `dataset_3BPA/ iso_atoms.xyz README.md test_1200K.xyz test_300K.xyz test_600K.xyz test_dih.xyz train_300K.xyz train_mixedT.xyz`, 44M total.
+Result: `research/dataset_3BPA/ iso_atoms.xyz README.md test_1200K.xyz test_300K.xyz test_600K.xyz test_dih.xyz train_300K.xyz train_mixedT.xyz`, 44M total.
 
 **Preprocessing.** None. Files are used as is. `test_dih.xyz`: 7047 frames × 27 atoms, header has `dihedrals="_JSON [a, b, g]"`.
 
 **Use.**
-- Training/test: every 3BPA config, e.g. the final recipe `input/input_3bpa_omat24_r37_uffw03_s4{2,3,4}_cue.json`
-  (also `v9a_rp_*`, `r28_soap_*`, `abl3_*`, ~300 configs): `train_path dataset_3BPA/train_300K.xyz`,
+- Training/test: every 3BPA config, e.g. the final recipe `research/input/input_3bpa_omat24_r37_uffw03_s4{2,3,4}_cue.json`
+  (also `v9a_rp_*`, `r28_soap_*`, `abl3_*`, ~300 configs): `train_path research/dataset_3BPA/train_300K.xyz`,
   `test_paths` = test_300K / test_600K / test_1200K, `valid_frac 0.1`. Its `atom_energies` (H, C, N, O =
   −13.587222780835477, −1029.4889999855063, −1484.9814568572233, −2041.9816003861047 eV) are the `iso_atoms.xyz` energies.
-- Dihedral slices: no training config; evaluated with `bam_omat24.eval_sets` through `runs/sbatch_eval_sets.sh`, e.g.
+- Dihedral slices: no training config; evaluated with `race_v2.eval.eval_sets` through `runs/sbatch_eval_sets.sh`, e.g.
   `sbatch runs/sbatch_eval_sets.sh dih "--group-key dihedrals --group-index 0" <run names> -- $DS/BOTNet-datasets/dataset_3BPA/test_dih.xyz`
   (`--group-index 1` = beta slices, tag `dihbeta`).
 
@@ -125,7 +125,7 @@ isolated_atoms 88727b896d5e05062468049ea5d093bb.
 
 **Preprocessing.** None.
 
-**Use.** `input/input_3bpa_omat24_acacf_uffw03_s4{2,3,4}_cue.json` (final), also `acac_soap_*`, `acac_v9a1500_*`, ...
+**Use.** `research/input/input_3bpa_omat24_acacf_uffw03_s4{2,3,4}_cue.json` (final), also `acac_soap_*`, `acac_v9a1500_*`, ...
 (19 configs): train `train_300K.xyz` (`valid_frac 0.1`), tests `test_MD_300K.xyz`, `test_MD_600K.xyz`;
 `atom_energies` = the `isolated_atoms.xyz` energies (H −13.568422178253735, C −1026.8538996116154, O −2037.796869412825 eV). `train_600K.xyz` is not used by any
 config. `test_H_transfer.xyz` and `test_dihedral.xyz` were evaluated with `runs/sbatch_eval_sets.sh` (e.g. tag
@@ -276,7 +276,7 @@ azobenzene). Header field `rmd17_index` = row in the npz.
 
 Checks recorded: ColabFit `MD17-index` equals the npz `old_indices` (dE ≈ 1e-4 eV, dpos 0, dF 2e-8 eV/Å), not the npz row.
 
-**Use.** `input/input_3bpa_omat24_rmd17f_<mol>_uffw03_s4{2,3,4}_cue.json` (final), also `rmd17o_<mol>_*`,
+**Use.** `research/input/input_3bpa_omat24_rmd17f_<mol>_uffw03_s4{2,3,4}_cue.json` (final), also `rmd17o_<mol>_*`,
 `rmdS_<mol>_L5h*`, `ablA_*` (aspirin ablations). Train `train_split01.xyz` (`valid_frac 0.05`), test `test_split01.xyz`;
 `rest_split01.xyz` is not used by any config.
 
@@ -339,7 +339,7 @@ Split: per molecule, rows sorted by ColabFit `MD17-index` (= original-MD17 index
 first 1000 → `train_1000.xyz`, next 2000 → `test_2000.xyz`. Not the official rMD17 split (that is why it was replaced
 by section 4 on 2026-10-29). Frame counts per molecule after ColabFit: 99,976–99,995 (ColabFit deduplication).
 
-**Use.** Only early runs: `input/input_3bpa_omat24_rmd17_<mol>_v9a_s42_cue.json` (+ `_fn_`, `_xn_`, `_g1_`, `_mix_`
+**Use.** Only early runs: `research/input/input_3bpa_omat24_rmd17_<mol>_v9a_s42_cue.json` (+ `_fn_`, `_xn_`, `_g1_`, `_mix_`
 variants). Not used for reported numbers.
 
 **Other rMD17 copies (not used in configs).**
@@ -450,10 +450,10 @@ test = `fu_test` (5001). Frames copied as text (no unit change). Outputs: `fu_tr
 each training set: fu_train −4.308618082853139 eV/atom).
 
 `lips/md_reference.npz` (2026-11-05) is not a split: it is the reference RDF / Li diffusivity cache written by
-`bam_omat24/md_lips_analysis.py` on its first run (`--ref $DS/lips_src/lips.xyz`, `--ref-cache $DS/lips/md_reference.npz`;
+`race_v2/eval/md_lips_analysis.py` on its first run (`--ref $DS/lips_src/lips.xyz`, `--ref-cache $DS/lips/md_reference.npz`;
 RDF over all 25,001 reference frames, D from frames `2500::25`). Delete it to have it rebuilt.
 
-**Use.** `input/input_3bpa_omat24_lipsF_fu_s4{2,3,4}_cue.json` (fu_train / fu_valid / fu_test; `atom_energies` =
+**Use.** `research/input/input_3bpa_omat24_lipsF_fu_s4{2,3,4}_cue.json` (fu_train / fu_valid / fu_test; `atom_energies` =
 e0.json value for every element, `e0_mode isolated`) and
 `lipsF_lc{10,100,1000,2500}_s4{2,3,4}` (lc*_train / lc_valid / fu_test); also `lips_*_hill_{soap,adam}_s42`, `lipsS_*`.
 
@@ -539,8 +539,8 @@ if __name__ == "__main__":
     for m in (sys.argv[1:] or list(NTRAIN)):
         convert(m)
 ```
-Run inside Slurm job `md22prep` (job 1215622, script `runs/diag/md22_prep.sh`, queued from `runs/queue_1103b.txt` as
-`-J md22prep --gres=gpu:4 -t 02:00:00 runs/diag/md22_prep.sh`) with the `bam_cue` python:
+Run inside Slurm job `md22prep` (job 1215622, script `scripts/data/md22_prep.sh`, queued from `runs/queue_1103b.txt` as
+`-J md22prep --gres=gpu:4 -t 02:00:00 scripts/data/md22_prep.sh`) with the `bam_cue` python:
 `cd /scratch/t589a02/datasets_ext && python convert_md22.py` (no arguments = all seven). Log
 (`runs/slurm/md22prep_1215622.out`):
 ```
@@ -556,7 +556,7 @@ Split: `RandomState(42).permutation(n)`, first N_train (standard MD22 sizes) →
 Validation = 5 % of train drawn by the trainer (`valid_frac`). Units kcal/mol → eV (× 0.0433641153087705). Outputs:
 `md22/<mol>/{train,test}.xyz`, `md22/<mol>/split.json` (indices into the npz).
 
-**Use.** `input/input_3bpa_omat24_md22_<short>_s4{2,3,4}_cue.json` with short = ala3, dha, stach, atat, atatcgcg,
+**Use.** `research/input/input_3bpa_omat24_md22_<short>_s4{2,3,4}_cue.json` with short = ala3, dha, stach, atat, atatcgcg,
 bucky, dwnt (`md22T_<short>` = 2-epoch timing runs).
 
 ## 8. QM9 (`qm9`, `qm9_U`, `qm9_H`, `qm9_G`, `qm9_ZPVE`, `qm9_Cv`)
@@ -715,8 +715,8 @@ def main():
 if __name__ == "__main__":
     main()
 ```
-Run inside Slurm job `qm9props` (job 1215668, `runs/diag/qm9_props_prep.sh`, queued from `runs/queue_1103b.txt` as
-`-J qm9props --gres=gpu:1 -t 00:40:00 runs/diag/qm9_props_prep.sh`). The job script (verbatim, written 2026-11-04 15:13):
+Run inside Slurm job `qm9props` (job 1215668, `scripts/data/qm9_props_prep.sh`, queued from `runs/queue_1103b.txt` as
+`-J qm9props --gres=gpu:1 -t 00:40:00 scripts/data/qm9_props_prep.sh`). The job script (verbatim, written 2026-11-04 15:13):
 ```bash
 #!/bin/bash
 #SBATCH -p normal
@@ -732,7 +732,7 @@ python -I convert_qm9_props.py qm9_src/dsgdb9nsd.xyz.tar.bz2 qm9 . | tee /scratc
 Same molecules and order as the U0 files (read from `qm9/splits_seed42.npz`). U, H, G, ZPVE in eV; Cv kept in
 cal/(mol K) in the `energy` field. Output: `qm9_<T>/{train,valid,test}.xyz` (110000 / 10000 / 10831).
 
-**Use.** U0: `input/input_3bpa_omat24_qm9F_s42_cue.json` (final; also `qm9_u0_hill_soap_s42`, `qm9_u0f*`, `qm9_u0t*`).
+**Use.** U0: `research/input/input_3bpa_omat24_qm9F_s42_cue.json` (final; also `qm9_u0_hill_soap_s42`, `qm9_u0f*`, `qm9_u0t*`).
 Other targets: `qm9F_{U,H,G,ZPVE,Cv}_s42`. Configs set `force_weight 0`; `qm9_u0_hill_soap_s42` sets
 `atom_energies` = Hartree × 27.211386245988 of [−0.500273, −37.846772, −54.583861, −75.064579, −99.718730] for
 H, C, N, O, F with `e0_mode regression`.
@@ -837,7 +837,7 @@ Result: `test_rss.xyz` 100, `test_compressionMD.xyz` 100, `train_full.xyz` 2474 
 GAP-18 frames with forces, isolated atom excluded). Labels are the `dft_energy` / `dft_forces` fields (the files also
 carry GAP-18 predictions, which are not copied).
 
-**Use.** Final: `input/input_3bpa_omat24_siF_s4{2,3,4}_cue.json` (train_full; tests test_rss + test_compressionMD;
+**Use.** Final: `research/input/input_3bpa_omat24_siF_s4{2,3,4}_cue.json` (train_full; tests test_rss + test_compressionMD;
 `atom_energies` [−158.54496821], `e0_mode isolated`), also `si_full_hill_*`, `siS_*`, `ablS_*`. Split studies:
 `si_strat_hill_{soap,adam}_s42`, `si_extrap_hill_{soap,adam}_s42`.
 
@@ -917,7 +917,7 @@ EOF
 ```
 Result: `train_only` 1290, `valid` 144 (`RandomState(42).permutation(1434)`, first `int(1434 × 0.9)` = 1290).
 
-**Use.** Final: `input/input_3bpa_omat24_wFu1_s4{2,3,4}_cue.json` (train_only / valid / test + test_noout); also
+**Use.** Final: `research/input/input_3bpa_omat24_wFu1_s4{2,3,4}_cue.json` (train_only / valid / test + test_noout); also
 `w3_*` … `w7_*`, `wF1_*`, `wS_*` (31 configs). Early runs `water_v9a_s42`, `water2_*` use `train.xyz` with
 `valid_frac 0.1` (this is the split `train_only`/`valid` reproduce).
 
@@ -955,12 +955,12 @@ Result: `check orig 383 dE 2.69e-05 eV, dF max 6.52e-06 eV/A, cell diff 5.3e-06`
 Units here use B = 0.529177, HA = 27.211386 (rounded constants, not `ase.units`), hence the 2.7e-5 eV / frame
 difference to `water_xyz`.
 
-**Use.** Final: `input/input_3bpa_omat24_wFu2_s4{2,3,4}_cue.json` (train_first1393, `valid_frac 0.05`, test
+**Use.** Final: `research/input/input_3bpa_omat24_wFu2_s4{2,3,4}_cue.json` (train_first1393, `valid_frac 0.05`, test
 test_last200); also `wF2_*`, `w8_s1393_*`.
 
 ## 12. OAM subsets (`oam_subsets`, `oam_subsets_100k`)
 
-**Subset script.** `bam_omat24/oam_subset.py` (repo, written 2026-11-05 13:59, committed in c91167e, unchanged since):
+**Subset script.** `race_v2/data/oam_subset.py` (repo, written 2026-11-05 13:59, committed in c91167e, unchanged since):
 ```python
 """Random subsets of the OAM training data (OMat24, MPtrj, sAlex) as extended XYZ for RACEv2 screening runs.
 
@@ -968,7 +968,7 @@ Reads the packed super-batch shards of BAM-GAMP-jax (``bam_jax.data.schema``: on
 super-batches with positions, species index, cell, raw DFT energy, forces, stress) and writes
 ``<out>/<name>_{train,valid,test}.xyz`` plus ``<out>/<name>_meta.json``.
 
-    python -m bam_omat24.oam_subset --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
+    python -m race_v2.data.oam_subset --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
         --eval-root /scratch/t589a02/oam_data/omat24_val --atom-ref /scratch/t589a02/oam_data/refs/omat24_train_ls.npz \
         --n-train 10000 --n-valid 1000 --n-test 1000 --out /scratch/t589a02/datasets_ext/oam_subsets
 
@@ -1111,9 +1111,9 @@ if __name__ == '__main__':
 ```
 
 **10k subsets** (`oam_subsets`: omat24 / mptrj / salex, 10000 train / 1000 valid / 1000 test each, seed 0,
-per-shard 50, cutoff 5.0 for the neighbour count). Built in the Slurm job `runs/diag/oam_smoke.sh` (written 2026-11-05
+per-shard 50, cutoff 5.0 for the neighbour count). Built in the Slurm job `research/diag/oam_smoke.sh` (written 2026-11-05
 14:05; submitted as `sbatch -J oam_smoke -p normal --comment="field=sciai;appl=jax" --gres=gpu:3 -t 03:00:00
-runs/diag/oam_smoke.sh`, files dated 2026-11-05 23:16 KST). The data part of that script (verbatim):
+research/diag/oam_smoke.sh`, files dated 2026-11-05 23:16 KST). The data part of that script (verbatim):
 ```bash
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
@@ -1122,13 +1122,13 @@ export OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4
 OUT=/scratch/t589a02/datasets_ext/oam_subsets
 N_TRAIN=${N_TRAIN:-10000}
 set -x
-python -I bam_omat24/oam_subset.py --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
+python -I race_v2/data/oam_subset.py --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
   --eval-root /scratch/t589a02/oam_data/omat24_val --atom-ref /scratch/t589a02/oam_data/refs/omat24_train_ls.npz \
   --n-train $N_TRAIN --n-valid 1000 --n-test 1000 --out $OUT > $OUT.omat24.log 2>&1 &
-python -I bam_omat24/oam_subset.py --name mptrj --train-root /scratch/t589a02/mp_data/jax_data_v3_raw/train \
+python -I race_v2/data/oam_subset.py --name mptrj --train-root /scratch/t589a02/mp_data/jax_data_v3_raw/train \
   --eval-root /scratch/t589a02/mp_data/jax_data_v3_raw/valid --atom-ref /scratch/t589a02/oam_data/refs/mptrj_raw_ls.npz \
   --n-train $N_TRAIN --n-valid 1000 --n-test 1000 --out $OUT > $OUT.mptrj.log 2>&1 &
-python -I bam_omat24/oam_subset.py --name salex --train-root /scratch/t589a02/oam_data/salex_train \
+python -I race_v2/data/oam_subset.py --name salex --train-root /scratch/t589a02/oam_data/salex_train \
   --eval-root /scratch/t589a02/oam_data/salex_val --atom-ref /scratch/t589a02/oam_data/refs/salex_train_ls.npz \
   --n-train $N_TRAIN --n-valid 1000 --n-test 1000 --out $OUT > $OUT.salex.log 2>&1 &
 wait
@@ -1139,12 +1139,12 @@ salex 16.5, −5.303, 85, 33.7. Outputs `<name>_{train,valid,test}.xyz` and `<na
 per-element least-squares reference energies of the full training split, used as `atom_energies`).
 
 **100k subset** (`oam_subsets_100k`: OMat24 only, 100000 train / 2000 valid / 1000 test, seed 0, per-shard 50).
-Built by `runs/diag/size_screen.sh` on its first run (job `szsmk`, 2026-11-05 22:08 UTC; files 2026-11-06 07:12 KST).
+Built by `scripts/train/size_screen.sh` on its first run (job `szsmk`, 2026-11-05 22:08 UTC; files 2026-11-06 07:12 KST).
 Data part (verbatim from the script on disk):
 ```bash
 OUT=/scratch/t589a02/datasets_ext/oam_subsets_100k
 if [ ! -f $OUT/omat24_meta.json ]; then
-  python -I bam_omat24/oam_subset.py --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
+  python -I race_v2/data/oam_subset.py --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
     --eval-root /scratch/t589a02/oam_data/omat24_val --atom-ref /scratch/t589a02/oam_data/refs/omat24_train_ls.npz \
     --n-train 100000 --n-valid 2000 --n-test 1000 --per-shard 50 --out $OUT 2>&1 | tail -n 5
 fi
@@ -1152,8 +1152,8 @@ fi
 Its `avg_n_neighbors` (26.965) equals the 10k value, because both draw with seed 0 from the same shuffled shard list
 and the count uses the first 500 training graphs.
 
-**Use.** 10k: `input/input_3bpa_omat24_oam64_{omat24,mptrj,salex}_{v1,v2}_s42_cue.json` and `oam{c6,f50,spa,sw*,...}_*`
-(15 configs per dataset; made by `runs/diag/make_oam_configs.py $DS/oam_subsets --tag <tag> ...`). 100k:
+**Use.** 10k: `research/input/input_3bpa_omat24_oam64_{omat24,mptrj,salex}_{v1,v2}_s42_cue.json` and `oam{c6,f50,spa,sw*,...}_*`
+(15 configs per dataset; made by `scripts/train/make_oam_configs.py $DS/oam_subsets --tag <tag> ...`). 100k:
 `sz100k_L{4,5,6}x{64,128,192}_omat24_v2_s42`, `szsmk_*` (made by `make_oam_configs.py` inside `size_screen.sh`).
 
 **Where the shards come from.**
@@ -1354,7 +1354,7 @@ Not hashed (large; rebuild and compare frame counts): `rmd17_official/*/rest_spl
    `refs/*_ls.npz` fits, and the whole MPtrj `jax_data_v3_raw` pipeline are NOT FOUND in transcript. The subset step
    is reproducible only from the existing shards; copy `oam_data/{omat24,salex}_{train,val}`, `oam_data/refs`,
    `mp_data/jax_data_v3_raw`, or simply the finished `oam_subsets*` xyz + meta files.
-2. Repo `dataset_3BPA/`: its pre-repo origin is NOT FOUND in transcript, but the files equal the BOTNet copies byte for
+2. Repo `research/dataset_3BPA/`: its pre-repo origin is NOT FOUND in transcript, but the files equal the BOTNet copies byte for
    byte, so re-downloading BOTNet-datasets reproduces them.
 3. No md5 was recorded at download time for MD22, ColabFit rMD17, the Zenodo 7003068 tarball, the water repo file,
    and the BOTNet files; the md5s above were computed on 2026-11-06 from the files on disk.
@@ -1388,7 +1388,7 @@ accurate electrostatics including non-local charge transfer", Nat. Commun. 12, 3
 | datasets/AuMgO/input.data | 77130000 | 90112426e0825a0cc35be36bed3321a6 |
 
 The archive holds only the four RuNNer `input.data` files, so there is no script to run. The format and the units
-are described in the docstring of `data_prep/convert_4ghdnnp.py`.
+are described in the docstring of `scripts/data/convert_4ghdnnp.py`.
 
 **Commands:**
 
@@ -1398,7 +1398,7 @@ for f in files_description.md readme.txt datasets.tar.gz; do
   curl -sfL -o $f "https://archive.materialscloud.org/records/bk6kw-4b895/files/$f?download=1"; done
 md5sum * > md5sums.txt
 tar xzf datasets.tar.gz --no-same-owner --no-same-permissions && md5sum datasets/*/input.data >> md5sums.txt
-cd ../../.. && python -I data_prep/convert_4ghdnnp.py data_local/4ghdnnp/raw data_local/4ghdnnp
+cd ../../.. && python -I scripts/data/convert_4ghdnnp.py data_local/4ghdnnp/raw data_local/4ghdnnp
 ```
 The environment was the repo `.venv` (Python 3.12.15, ase 3.29.0, numpy 2.5.4). The conversion takes about 15 s.
 
@@ -1493,12 +1493,12 @@ a4fcd2c32eb623e9b6aa8096639fbb6e  aumgo/test.xyz
 875b924c3df0de2ae7a07d6e0e18f7f4  aumgo/e0.json
 ```
 
-**Training subsets for local tests (`data_prep/subset_4ghdnnp.py`, 2026-11-06).**
+**Training subsets for local tests (`scripts/data/subset_4ghdnnp.py`, 2026-11-06).**
 - Each system gets 500 structures of each subset label from `train.xyz`, drawn with RandomState(0) and written to
   `train_sub1000.xyz` and `subset_sub1000.json`.
 - Au2/MgO also gets 50 of each, drawn from that file, in `train_sub100.xyz`.
 - The test split is not subsampled.
-- Command: `python -I data_prep/subset_4ghdnnp.py data_local/4ghdnnp`. md5 of the outputs:
+- Command: `python -I scripts/data/subset_4ghdnnp.py data_local/4ghdnnp`. md5 of the outputs:
 
 ```
 20314c6a67f43dbe504a2610df3a5c18  ag_cluster/train_sub1000.xyz
@@ -1532,7 +1532,7 @@ The archive holds these two files only. It was listed before extraction and extr
 **Subset `data_local/omat24_val/r300_10k`.**
 
 ```
-python -I data_prep/convert_omol25.py subset \
+python -I scripts/data/convert_omol25.py subset \
   --train data_local/omat24_val/rattled-300-subsampled_dl/rattled-300-subsampled \
   --eval  data_local/omat24_val/rattled-300-subsampled_dl/rattled-300-subsampled \
   --out data_local/omat24_val/r300_10k --n-train 10000 --n-valid 1000 --n-test 2000 --seed 0 \
@@ -1550,11 +1550,11 @@ python -I data_prep/convert_omol25.py subset \
 | valid.xyz | 1000 | 99213d1bd4be4d5b6b09b57984ecb5d2 |
 | test.xyz | 2000 | 73aaf1860e075d8223a61c594a635235 |
 
-**Transfer set `data_local/transfer_omol_omat`** (`runs/diag/transfer/prepare.py`).
+**Transfer set `data_local/transfer_omol_omat`** (`research/diag/transfer/prepare.py`).
 
 ```
-python -I runs/diag/transfer/prepare.py --omol data_local/omol25_openff/sub10k --omat data_local/omat24_val/r300_10k \
-  --pre input/omol/tr_u94_race_cs_amsgrad_f32_s42.json
+python -I research/diag/transfer/prepare.py --omol data_local/omol25_openff/sub10k --omat data_local/omat24_val/r300_10k \
+  --pre research/input/omol/tr_u94_race_cs_amsgrad_f32_s42.json
 ```
 
 - OMol25 side: `data_local/omol25_openff/sub10k` (the ANI-2x part redistributed by OpenFF, `docs/local_test_report.md`),

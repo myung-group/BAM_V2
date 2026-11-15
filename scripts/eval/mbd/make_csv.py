@@ -1,4 +1,4 @@
-"""Matbench Discovery discovery CSV from the JSONL results of bam_omat24/relax_wbm.py (2026-11-11).
+"""Matbench Discovery discovery CSV from the JSONL results of race_v2/inference/relax_wbm.py (2026-11-11).
 
 Same computation as BAM-GAMP-jax scripts/make_submission_csv.py, whose functions are imported: the model's final
 energy (uncorrected DFT scale) replaces the energy of WBM's DFT ComputedStructureEntry, the relaxed structure

@@ -2,7 +2,7 @@
 SOAP vs AMSGrad, reporting the first step whose loss, gradient, update or parameters are not finite, with the
 offending leaves, and the energies of real vs padding graphs at that step.
 
-    python runs/diag/oam_step_debug.py input/input_3bpa_omat24_<run>_cue.json [n_steps] [name:key=val,key=val ...]
+    python research/diag/oam_step_debug.py research/input/input_3bpa_omat24_<run>_cue.json [n_steps] [name:key=val,key=val ...]
 variants default: soap (config as is) and amsgrad; values are parsed as JSON when possible.
 """
 import functools
@@ -17,9 +17,9 @@ import jraph
 import optax
 from flax import nnx
 
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_nnx import BucketedDataLoader, fixed_collate_fn
-from bam_omat24.training_utils import compute_loss
+from race_v2.training import train as T
+from race_v2.data.loaders import BucketedDataLoader, fixed_collate_fn
+from race_v2.training.utils import compute_loss
 
 
 def bad_leaves(tree, n=5):

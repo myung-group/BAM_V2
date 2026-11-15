@@ -67,7 +67,7 @@
 2. **"w0.3"은 가중치가 아닙니다.** `pair_repulsion_switch_width = 0.3 Å`(sigmoid 폭)이고 scale은 1.0, switch는 1.25×(R_i+R_j)입니다. 논문에서 "weight 0.3"으로 쓰면 오기입니다.
 3. **UFF/ZBL pair repulsion은 외부 경험적 prior입니다.** 규칙상 허용되지만, NN-xTB를 같은 이유로 제외하고 있으므로 반드시 공개하고 recipe A(prior 없음)를 함께 보여야 합니다.
 4. **recipe를 열별로 섞으면 안 됩니다.** ZBL은 dih E에서, UFF는 T-set에서 가장 좋습니다. 열마다 가장 좋은 recipe를 골라 한 행을 만드는 것은 cherry-picking입니다.
-5. **seed와 split.** 3 seed이고, split_seed는 42로 고정했습니다(train_3bpa.py:332). 따라서 std에는 초기화 분산만 들어 있습니다. 반면 TACE는 seed 1개(std 없음), GRACE와 ICTP는 5회입니다.
+5. **seed와 split.** 3 seed이고, split_seed는 42로 고정했습니다(training/train.py:332). 따라서 std에는 초기화 분산만 들어 있습니다. 반면 TACE는 seed 1개(std 없음), GRACE와 ICTP는 5회입니다.
 6. **dihedral set 크기.** 7047개로 일치한다고 확인된 것은 TACE뿐입니다. MACE, GRACE, SpinGTP는 개수를 밝히지 않았으므로 "reference가 set 크기를 명시하지 않음"으로 표기해야 합니다.
 
 **(c) 정정된 SOTA 비교표** (RMSE, E는 분자당 total meV, F는 meV/Å)

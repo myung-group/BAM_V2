@@ -1,7 +1,7 @@
 """OMat24 streaming config from an in-memory OAM config (2026-11-11): train_path / valid_path / test_paths are
 replaced by stream sources (raw aselmdb trees) with pre-made size tables.
 
-usage: python -I runs/diag/omat_stream/make_config.py <base.json> <out.json> --name <run name> \
+usage: python -I scripts/train/omat_stream/make_config.py <base.json> <out.json> --name <run name> \
            --train aselmdb:<dir> --train-sizes <dir> --valid aselmdb:<dir> --valid-sizes <dir> \
            [--steps-per-epoch 250] [--epochs 2] [--workers 8] [--valid-max 2000] [--set key=<json> ...]
 """

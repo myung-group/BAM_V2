@@ -1,7 +1,7 @@
 #!/bin/bash
-# JAX reference data for the PyTorch port (racev2_torch/tools/dump_jax_reference.py), one GPU, a few minutes.
+# JAX reference data for the PyTorch port (race_v2_torch/tools/dump_jax_reference.py), one GPU, a few minutes.
 # usage (from /scratch/t510a13/race_v2/work):
-#   $ sbatch -J torchref -p exclusive06 --comment="field=sciai;appl=jax" --nodes=1 --exclusive --gres=gpu:4 -t 00:30:00 --exclude=node[0449-0484,0499-0576] --export=ALL,REFS="<ckpt>:<tag> <ckpt>:<tag>" runs/diag/torch_port/dump_ref.sh
+#   $ sbatch -J torchref -p exclusive06 --comment="field=sciai;appl=jax" --nodes=1 --exclusive --gres=gpu:4 -t 00:30:00 --exclude=node[0449-0484,0499-0576] --export=ALL,REFS="<ckpt>:<tag> <ckpt>:<tag>" research/diag/torch_port_dump_ref.sh
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd /scratch/t510a13/race_v2/work
@@ -14,7 +14,7 @@ echo "node $(hostname)  code $(git -C /scratch/t510a13/BAM_V2_merged rev-parse -
 rc=0
 for r in ${REFS:?ckpt:tag list}; do
   CK=${r%%:*}; TG=${r##*:}
-  python /scratch/t510a13/BAM_V2_merged/racev2_torch/tools/dump_jax_reference.py --ckpt $CK --out runs/torch_port/ref_$TG \
+  python /scratch/t510a13/BAM_V2_merged/race_v2_torch/tools/dump_jax_reference.py --ckpt $CK --out runs/torch_port/ref_$TG \
     --val /scratch/t510a13/data/mptrj_lmdb/val --n 12 || rc=1
 done
 echo "exit $rc  $(date '+%F %T')"

@@ -486,7 +486,7 @@ def test_predict_api_and_species_refit(tmp_path, frame):
     graphdef, params, *_ = T.build_model({**cfg, 'learning_rate': 1e-3}, 4, ATOM_ENERGIES, stats, io.StringIO())
     ck = tmp_path / 'ckpt.pkl'
     save_checkpoint({'config': cfg, 'ema_params': params}, str(ck))
-    frames = load_frames(T.Path(__file__).resolve().parents[1] / 'dataset_3BPA' / 'train_300K.xyz')[:6]
+    frames = load_frames(T.Path(__file__).resolve().parents[1] / 'research' / 'dataset_3BPA' / 'train_300K.xyz')[:6]
     for i, a in enumerate(frames):
         a.info['charge'] = [0, 1, -1, 0, 1, 0][i]
     p = load(ck)
@@ -532,7 +532,7 @@ def test_predict_atom_budget_batches(tmp_path):
     _, params, *_ = T.build_model(cfg, 4, ATOM_ENERGIES, stats, io.StringIO())
     ck = tmp_path / 'ckpt.pkl'
     save_checkpoint({'config': cfg, 'ema_params': params}, str(ck))
-    mol = load_frames(T.Path(__file__).resolve().parents[1] / 'dataset_3BPA' / 'train_300K.xyz')[:3]
+    mol = load_frames(T.Path(__file__).resolve().parents[1] / 'research' / 'dataset_3BPA' / 'train_300K.xyz')[:3]
     big = []
     for k, q in enumerate([0, 1]):                          # two "complexes" of 37 molecules (999 atoms), 12 A apart
         a = ase.Atoms()

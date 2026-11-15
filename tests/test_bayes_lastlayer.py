@@ -11,7 +11,7 @@ from test_race_lr import _periodic_lr_model
 
 
 def test_periodic_design_rows_are_exact(x64):
-    from bam_omat24 import bayes_lastlayer as B
+    from race_v2.eval import bayes_lastlayer as B
     base = _cell(1)
     model, _ = as_float64(_periodic_lr_model({"ewald_alpha": 0.5, "ewald_n_real": 2, "ewald_n_recip": 6}), _graph(base))
     model0, n_ro = B.zero_readout(model)

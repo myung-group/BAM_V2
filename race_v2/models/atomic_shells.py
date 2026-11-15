@@ -2,7 +2,7 @@
 solver, used once to tabulate the radial extent and energy of the valence shells of
 every element (Z = 1 .. 94):
 
-    bam_omat24/atomic_shells.json  = { "26": { "config": {"1s": 2, ...},
+    race_v2/models/atomic_shells.json  = { "26": { "config": {"1s": 2, ...},
                                                "shells": { "s": {"n": 4, "occ": 2, "r_mean": 3.2, "r_peak": 2.6, "eps": -0.19},
                                                            "p": {...}, "d": {...}, "f": null },
                                                "n_valence": 8 }, ... }
@@ -25,12 +25,12 @@ shift.  Density mixing 0.3, converged to 1e-7 Ha in the eigenvalues.  Checks aga
 NIST LDA atomic reference data (spin-unpolarised, PZ81): H 1s -0.233471, He 1s -0.570425,
 Ar 3p -0.3822 Ha, and the hydrogenic U 1s -4232 Ha.
 
-Pure numpy / scipy (no JAX): run it as a script (``python -I bam_omat24/atomic_shells.py``),
-not through the package (``bam_omat24/__init__`` imports JAX, which must not run on the
+Pure numpy / scipy (no JAX): run it as a script (``python -I race_v2/models/atomic_shells.py``),
+not through the package (``race_v2/__init__`` imports JAX, which must not run on the
 login node).
 
 Usage:
-    python -I bam_omat24/atomic_shells.py [--zmax 94] [--out bam_omat24/atomic_shells.json]
+    python -I race_v2/models/atomic_shells.py [--zmax 94] [--out race_v2/models/atomic_shells.json]
 """
 import argparse
 import json
@@ -194,7 +194,7 @@ class Atom:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--zmax", type=int, default=94)
-    ap.add_argument("--out", default="bam_omat24/atomic_shells.json")
+    ap.add_argument("--out", default="race_v2/models/atomic_shells.json")
     ap.add_argument("--n-grid", type=int, default=3000)
     args = ap.parse_args()
     table = {}

@@ -9,7 +9,7 @@ from flax import nnx
 from conftest import make_model, as_float64, pad_single
 from test_equivariance import _check_e3, TOL
 from test_round11_shells import SHELLS
-from bam_omat24.training_utils import compute_loss
+from race_v2.training.utils import compute_loss
 
 TAPER = "16x0e + 8x1o + 4x2e"
 

@@ -1,9 +1,9 @@
-"""Training script for the 3BPA benchmark with the ``bam_omat24`` RACE model.
+"""Training script for the 3BPA benchmark with the ``race_v2`` RACE model.
 
 Molecular (non-periodic) systems, single-node (one or more GPUs via JAX sharding).
 
 Usage:
-    python -m bam_omat24.train_3bpa input/input_3bpa.json
+    python -m race_v2.training.train input/input_3bpa.json
 
 Config keys (in addition to the model hyper-parameters, see README):
     train_path, test_path | test_paths, valid_frac | valid_path (fixed validation file), atomic_numbers, atom_energies
@@ -78,7 +78,7 @@ Config keys (in addition to the model hyper-parameters, see README):
     global_batch_size: graphs per optimizer step, split over the devices (overrides batch_size =
                        graphs per device; multi-GPU / multi-node data parallel, review §13)   (default null)
     report_final_ema : bool, also evaluate the final-epoch EMA parameters (summary 'final_ema') (default false)
-    soap_impl        : "reference" (per-leaf bam_omat24/soap_optax.py) | "grouped" (bam_omat24/soap_grouped.py:
+    soap_impl        : "reference" (per-leaf race_v2/training/soap_optax.py) | "grouped" (race_v2/training/soap_grouped.py:
                        same maths, same-shape leaves batched; opt_state layout differs)  (default "reference")
     soap_orth        : "householder" | "cholqr" (grouped only; regularised shifted CholeskyQR3)  (default householder)
     matmul_precision : null | "highest" | "high" | "default": jax_default_matmul_precision (float32 runs: "highest"
@@ -129,7 +129,7 @@ Config keys (in addition to the model hyper-parameters, see README):
     hidden_irreps    : explicit irreps string (e.g. full parity); default hidden_size*s2_irreps(lmax)
     beta_nll         : beta for beta-NLL (gauss_nll only)     (default 0.0)
     model            : "RACE" (default) | "RACE_LR" (+ charge equilibration and long-range electrostatics,
-                       race_lr_nnx.py; options in "long_range": ewald_alpha, ewald_n_real, ewald_n_recip, head_hidden,
+                       models/race_lr.py; options in "long_range": ewald_alpha, ewald_n_real, ewald_n_recip, head_hidden,
                        chi_scale, hard_init) | "Nequip"
     total_charge_key : extxyz info key of the total charge per structure (RACE_LR; default none = neutral)
     fragment_key     : per-atom integer array of fragment ids (e.g. "is_ligand"); with "fragment_charges_key" (info list
@@ -141,8 +141,8 @@ Config keys (in addition to the model hyper-parameters, see README):
                        structure, for mixed datasets; missing = 0).  Default none = task 0.
     charge_label_key : extxyz per-atom array of reference charges, e.g. "hirshfeld_charges" (RACE_LR; default none)
     dipole_weight    : weight of the graph-dipole loss (RACE_POLAR; stream option "dipole": true; (e A)^2; default 0)
-    polar            : options of "model": "RACE_POLAR" (Thole-type polarizable electrostatics; bam_omat24/thole.py
-                       POLAR_DEFAULTS, race_polar_nnx.py).  For periodic stream data the reciprocal-space budget
+    polar            : options of "model": "RACE_POLAR" (Thole-type polarizable electrostatics; race_v2/models/thole.py
+                       POLAR_DEFAULTS, models/race_polar.py).  For periodic stream data the reciprocal-space budget
                        (max_cell_length, max_cell_volume) is taken from the size tables.
     charge_weight    : weight of the charge loss mean_i (q_i - q_ref_i)^2 in e^2 (needs charge_label_key; default 0 =
                        latent charges, no charge labels used)
@@ -171,7 +171,7 @@ Config keys (in addition to the model hyper-parameters, see README):
                        Multi-dataset training (2026-11-11; docs/HANDOFF_multidataset_thole.md): a source may be a
                        dict {"path": "aselmdb:<dir>", "name", "max_frames_per_shard", "subset_seed", "meta_dir",
                        "task", "task_rules", "energy_key", "charge_label_key", "charge_label_scale", "dipole"}
-                       (bam_omat24/stream_io.py module docstring), with the stream options
+                       (race_v2/data/stream_io.py module docstring), with the stream options
                          mixed (false): periodic and open-boundary structures in one batch (globals 'pbc',
                                   'stress_w'; needs "periodic": true), dipole (false): dipole labels,
                          atom_energies_by_task: {task: E0 file | list | {Z: E0}} (default: atom_energies)
@@ -211,17 +211,17 @@ import sys
 import functools
 import os
 
-from bam_omat24.data_nnx import (BucketedDataLoader, MultiDeviceDataLoader, setup_mesh, default_collate_fn,
+from race_v2.data.loaders import (BucketedDataLoader, MultiDeviceDataLoader, setup_mesh, default_collate_fn,
                                  fixed_collate_fn, to_host)
-from bam_omat24.distributed import init_distributed
-from bam_omat24.data_3bpa import (
-    load_3bpa_graphs, load_frames, fit_e0, compute_dataset_stats, species_counts, e0_rank,
+from race_v2.training.distributed import init_distributed
+from race_v2.data.xyz_graphs import (
+    load_xyz_graphs, load_frames, fit_e0, compute_dataset_stats, species_counts, e0_rank,
     split_train_valid, GraphListDataset, atomic_numbers_to_indices,
 )
-from bam_omat24.nequip_nnx import Nequip
-from bam_omat24.logger import Logger
-from bam_omat24.race_nnx import RACE
-from bam_omat24.training_utils import (
+from race_v2.models.nequip import Nequip
+from race_v2.training.logger import Logger
+from race_v2.models.race import RACE
+from race_v2.training.utils import (
     replicate,
     replicate_pytree,
     unreplicate_pytree,
@@ -279,8 +279,8 @@ COVALENT_RADII = {1: 0.31, 2: 0.28, 3: 1.28, 4: 0.96, 5: 0.84, 6: 0.76, 7: 0.71,
                   83: 1.48, 84: 1.40, 85: 1.50, 86: 1.50, 87: 2.60, 88: 2.21, 89: 2.15, 90: 2.06, 91: 2.00,
                   92: 1.96, 93: 1.90, 94: 1.87, 95: 1.80, 96: 1.69}
 
-# Valence-shell table from the spherical LDA atom solver (bam_omat24/atomic_shells.py)
-SHELL_TABLE_PATH = Path(__file__).with_name('atomic_shells.json')
+# Valence-shell table from the spherical LDA atom solver (race_v2/models/atomic_shells.py)
+SHELL_TABLE_PATH = Path(__file__).resolve().parent.parent / 'models' / 'atomic_shells.json'
 BOHR_A = 0.529177210903
 SHELL_L = "spdf"
 
@@ -419,7 +419,7 @@ def build_datasets(cfg: Dict, fout):
     gl = dict(use_cache=bool(_get(cfg, 'graph_cache', True)), n_workers=_graph_workers(cfg),
               charge_key=_get(cfg, 'total_charge_key', None), charge_label_key=_get(cfg, 'charge_label_key', None),
               spin_key=_get(cfg, 'total_spin_key', None), fragments=fragments_of(cfg), task=_get(cfg, 'task', None))
-    all_graphs = load_3bpa_graphs(train_path, atomic_numbers, atom_energies, cutoff,
+    all_graphs = load_xyz_graphs(train_path, atomic_numbers, atom_energies, cutoff,
                                   frames=train_frames, **gl)
     if not bool(_get(cfg, 'periodic', False)) and any('cell' in g.globals for g in all_graphs[:1000]):
         # periodic graphs (pbc in the xyz) with a molecular model ignore the image shifts and the cell: stop
@@ -429,7 +429,7 @@ def build_datasets(cfg: Dict, fout):
     if valid_path:
         # fixed validation file (benchmark split); every frame of train_path is used for training
         train_graphs = all_graphs
-        valid_graphs = load_3bpa_graphs(valid_path, atomic_numbers, atom_energies, cutoff, **gl)
+        valid_graphs = load_xyz_graphs(valid_path, atomic_numbers, atom_energies, cutoff, **gl)
     else:
         train_graphs, valid_graphs = split_train_valid(
             all_graphs, float(_get(cfg, 'valid_frac', 0.1)), seed=int(_get(cfg, 'split_seed', 42))
@@ -440,7 +440,7 @@ def build_datasets(cfg: Dict, fout):
         tp = _get(cfg, 'test_path', None)
         test_paths = [tp] if tp else []
     test_sets = {
-        Path(p).stem: GraphListDataset(load_3bpa_graphs(p, atomic_numbers, atom_energies, cutoff, **gl))
+        Path(p).stem: GraphListDataset(load_xyz_graphs(p, atomic_numbers, atom_energies, cutoff, **gl))
         for p in test_paths
     }
 
@@ -494,7 +494,7 @@ def _stream_split(v) -> Dict:
 
 def _stream_table(spec: Dict, name: str, cutoff: float, workers: int, log_dir: Path, rank0: bool):
     """Size table of one split: read, or made by process 0 (size pass) when missing; refuses a stale table."""
-    from bam_omat24 import stream_io as S, stream_plan as SP
+    from race_v2.data import stream_io as S, stream_plan as SP
     d = Path(spec.get('sizes') or (log_dir / f'stream_sizes_{name}'))
     if rank0 and not (d / 'sizes_meta.json').exists():
         S.size_pass(list(spec['sources']), cutoff, d, workers=workers, block=256)
@@ -557,8 +557,8 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
     """data_format "stream": size tables, buckets, statistics from a sample, the training StreamLoader and the
     evaluation sets (stream_data.StreamEvalSet).  Returns (atomic_numbers, atom_energies, train loader, valid set,
     test sets, stats, buckets); stats['steps_per_epoch'] = steps of one (virtual) epoch."""
-    from bam_omat24 import stream_io as S, stream_plan as SP
-    from bam_omat24.stream_data import StreamLoader, StreamEvalSet, _to_graph, _cast
+    from race_v2.data import stream_io as S, stream_plan as SP
+    from race_v2.data.stream_data import StreamLoader, StreamEvalSet, _to_graph, _cast
     sc = dict(_get(cfg, 'stream', {}) or {})
     atomic_numbers = [int(z) for z in _get(cfg, 'atomic_numbers', DEFAULT_ATOMIC_NUMBERS)]
     if atomic_numbers != sorted(atomic_numbers):
@@ -606,7 +606,7 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
     if _get(cfg, 'model', 'RACE') == 'RACE_POLAR':
         pol = dict(_get(cfg, 'polar', {}) or {})
         if pol.get('charge_constraint', 'graph') == 'electrode':
-            from bam_omat24.thole import POLAR_DEFAULTS
+            from race_v2.models.thole import POLAR_DEFAULTS
             fields['groups'] = int(pol.get('max_groups', POLAR_DEFAULTS['max_groups']))
         if pol.get('slab_correction'):
             fields['slab'] = True
@@ -624,7 +624,7 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
             raise ValueError("long_range charge_nbo_head needs charge_weight > 0 (and charge_label_key)")
         fields['charge_nbo_labels'] = {'key': _get(cfg, 'charge_nbo_label_key', 'nbo_charges')}
     if lr_opts.get('ct_mode', 'global') == 'conductance':
-        # integer reference charges per molecule for the distance-limited charge transfer (race_lr_nnx, ct_solve)
+        # integer reference charges per molecule for the distance-limited charge transfer (models.race_lr, ct_solve)
         fields['formal_charges'] = {'label_keys': list(lr_opts.get('ct_label_keys', ['nbo_charges', 'lowdin_charges'])),
                                     'bond_factor': float(lr_opts.get('ct_bond_factor', 1.2))}
     if lr_opts.get('cs_local') is not None:
@@ -647,7 +647,7 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
     n = len(table['n_atoms'])
     m = min(n, int(sc.get('stats_sample', 2000)))
     rows = np.sort(np.random.default_rng(seed).choice(n, m, replace=False))
-    from bam_omat24.graph_fields import field_keys
+    from race_v2.data.graph_fields import field_keys
     ik, ak = field_keys(**{k: v for k, v in fields.items() if k not in ('mixed', 'dipole', 'opt_charge_labels', 'groups',
                                                                          'slab', 'quadrupole', 'spin_labels',
                                                                          'charge_nbo_labels')})
@@ -671,7 +671,7 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
                                 workers=workers, seed=seed, block_rows=int(sc.get('block_rows', 128)), shuffle=True,
                                 dtype=dtype, fields=fields, mix_blocks=int(sc.get('mix_blocks', 16)),
                                 e0_tables=e0_tables)
-    from bam_omat24.stream_data import counts_allgather_jax
+    from race_v2.data.stream_data import counts_allgather_jax
     plan0 = train_loader.plan(0, jax.process_index(), jax.process_count(), counts_allgather_jax)
     stats['steps_per_epoch'] = int(sc.get('steps_per_epoch') or len(plan0.steps))
     cell_tables = [meta]        # largest cell over every split (RACE_POLAR reciprocal budget)
@@ -781,11 +781,11 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         model = Nequip(**common)
     else:
         race_cls, lr_kw = RACE, {}
-        if model_type == 'RACE_LR':      # RACEv2 + charge equilibration + long-range electrostatics (race_lr_nnx.py)
-            from bam_omat24.race_lr_nnx import RACE_LR
+        if model_type == 'RACE_LR':      # RACEv2 + charge equilibration + long-range electrostatics (models/race_lr.py)
+            from race_v2.models.race_lr import RACE_LR
             race_cls, lr_kw = RACE_LR, dict(long_range=_get(cfg, 'long_range', None))
-        elif model_type == 'RACE_POLAR':  # RACEv2 + Thole-type polarizable electrostatics (race_polar_nnx.py)
-            from bam_omat24.race_polar_nnx import RACE_POLAR
+        elif model_type == 'RACE_POLAR':  # RACEv2 + Thole-type polarizable electrostatics (models/race_polar.py)
+            from race_v2.models.race_polar import RACE_POLAR
             race_cls, lr_kw = RACE_POLAR, dict(long_range=_get(cfg, 'long_range', None),
                                                polar=_polar_config(cfg, stats))
         model = race_cls(**common, **lr_kw,
@@ -892,7 +892,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
                      else optax.adamw(lr, weight_decay=wd))
     elif opt_name == 'soap':
         # SOAP (arXiv:2409.11321): Adam in the eigenbasis of Shampoo's L, R factors
-        from bam_omat24.soap_optax import scale_by_soap, soap_leaf_summary
+        from race_v2.training.soap_optax import scale_by_soap, soap_leaf_summary
         soap_sb = _get(cfg, 'soap_shampoo_beta', None)
         soap_kw = dict(
             b1=float(_get(cfg, 'soap_b1', 0.95)),
@@ -904,7 +904,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         soap_impl = _get(cfg, 'soap_impl', 'reference')
         if soap_impl == 'grouped':
             # same maths, same-shape leaves batched (docs/RACE_SOAP_speedup_plan_2026-10-29.md)
-            from bam_omat24.soap_grouped import scale_by_soap_grouped
+            from race_v2.training.soap_grouped import scale_by_soap_grouped
             sp_adam = _get(cfg, 'soap_species_adam', False)
             if sp_adam not in (False, True, 'any_axis', None):
                 raise ValueError(f"soap_species_adam must be false, true or 'any_axis', got {sp_adam!r}")
@@ -1108,7 +1108,7 @@ def _barrier(name: str):
 
 def train(cfg: Dict):
     # multi-node data parallel (review §13): one JAX process per node or per GPU, launched by srun with
-    # BAM_DISTRIBUTED=1 (bam_omat24/__init__.py starts jax.distributed); no-op for a single process
+    # BAM_DISTRIBUTED=1 (race_v2/__init__.py starts jax.distributed); no-op for a single process
     init_distributed()
     if os.environ.get("BAM_STACK_DUMP_SECS"):
         # debugging hangs (e.g. a multi-process collective): print every thread's stack periodically
@@ -1144,7 +1144,7 @@ def train(cfg: Dict):
     ema_warmup = bool(_get(cfg, 'ema_warmup', False))
     # batch_size = graphs per device; global_batch_size (optional) = graphs per optimizer step, split
     # over the devices (the single-device run with batch_size = global_batch_size is the same
-    # algorithm, training_utils.make_sharded_train_step)
+    # algorithm, training.utils.make_sharded_train_step)
     gbs = _get(cfg, 'global_batch_size', None)
     if gbs is not None:
         if int(gbs) % n_devices:
@@ -1173,7 +1173,7 @@ def train(cfg: Dict):
             raise ValueError(f"dens decay must be 'linear' or 'none', got {dens_cfg['decay']!r}")
         if dens_cfg['noisy_ef'] and loss_type != 'huber':
             # the corrupted atoms are dropped from the force loss through nodes['loss_weight'], which
-            # only the 'huber' branch of training_utils._loss_terms applies
+            # only the 'huber' branch of training.utils._loss_terms applies
             raise ValueError("dens noisy_ef=true needs loss_type='huber'")
     # loss weights passed to the step each epoch (loss schedule, DeNS weight decay) -> no re-JIT
     dynamic_weights = use_schedule or bool(dens_cfg)
@@ -1392,7 +1392,7 @@ def train(cfg: Dict):
     step = replicate(jnp.array(int(ckpt.get('step', 0)) if start_epoch > 0 else 0), mesh)
 
     if stream_mode:
-        from bam_omat24.stream_data import StreamSteps
+        from race_v2.data.stream_data import StreamSteps
         cursor = tuple(ckpt.get('data_cursor', (0, 0))) if start_epoch > 0 else (0, 0)
         stream_steps = StreamSteps(stream_loader, mesh, cursor)
         n_stream = int(stats['steps_per_epoch'])
@@ -1417,8 +1417,8 @@ def train(cfg: Dict):
             ne_ = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in all_g])
             ntr = np.array([int(np.asarray(g.n_node).reshape(-1)[0]) for g in train_dataset.graphs])
             etr = np.array([int(np.asarray(g.n_edge).reshape(-1)[0]) for g in train_dataset.graphs])
-            # readable size tables of every split next to the log (index, n_atoms, n_edges), see data_3bpa.write_sizes_tsv
-            from bam_omat24.data_3bpa import write_sizes_tsv, graph_sizes
+            # readable size tables of every split next to the log (index, n_atoms, n_edges), see data.xyz_graphs.write_sizes_tsv
+            from race_v2.data.xyz_graphs import write_sizes_tsv, graph_sizes
             log_dir = Path(_get(cfg, 'log_file', 'runs/x/log.out')).parent
             log_dir.mkdir(parents=True, exist_ok=True)
             for nm, ds in [('train', train_dataset), ('valid', valid_dataset)] + list(test_sets.items()):

@@ -1,5 +1,5 @@
 """Streaming data pipeline, JAX-free parts (stream_io, stream_plan) and the equivalence with the in-memory graphs
-(docs/stream_loader_design.md tests T2, T3).  The last test imports data_3bpa (jraph -> JAX): run it on a compute node."""
+(docs/stream_loader_design.md tests T2, T3).  The last test imports data.xyz_graphs (jraph -> JAX): run it on a compute node."""
 import os
 import sys
 from pathlib import Path
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'bam_omat24'))
+sys.path.insert(0, str(ROOT / 'race_v2' / 'data'))
 import stream_io as S  # noqa: E402
 import stream_plan as P  # noqa: E402
 
@@ -44,7 +44,7 @@ def test_size_pass_matches_graph_sizes_tool(tmp_path):
     p = _small(tmp_path, MOL, 60)
     meta = S.size_pass([f'extxyz:{p}'], 5.0, tmp_path / 'sz', workers=2, block=16)
     t = P.load_size_table(tmp_path / 'sz', 5.0)
-    r = subprocess.run([sys.executable, '-I', str(ROOT / 'bam_omat24' / 'graph_sizes.py'), str(p), '--cutoff', '5.0',
+    r = subprocess.run([sys.executable, '-I', str(ROOT / 'race_v2' / 'data' / 'graph_sizes.py'), str(p), '--cutoff', '5.0',
                         '--workers', '1', '--out-dir', str(tmp_path / 'gs')], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     d = np.loadtxt(tmp_path / 'gs' / f'{p.stem}.sizes.tsv', comments='#', skiprows=3, dtype=np.int64, ndmin=2)
@@ -93,12 +93,12 @@ def test_plan_covers_every_structure_once(n_buckets):
 
 
 def test_graph_arrays_equal_preprocess_graph():
-    """T2: needs data_3bpa (imports jraph / JAX) -> compute node."""
+    """T2: needs data.xyz_graphs (imports jraph / JAX) -> compute node."""
     pytest.importorskip('jraph')
     if os.environ.get('SLURM_JOB_ID') is None:
         pytest.skip('imports JAX: run inside a Slurm job')
     import ase.io
-    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
+    from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
     for src in [MOL] + ([PER] if PER.exists() else []):
         frames = ase.io.read(str(src), index=':50')
         zs = sorted({int(z) for a in frames for z in a.numbers})
@@ -125,9 +125,9 @@ def test_stream_loader_batches_equal_in_memory(tmp_path):
     if os.environ.get('SLURM_JOB_ID') is None:
         pytest.skip('imports JAX: run inside a Slurm job')
     import ase.io
-    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
-    from bam_omat24.data_nnx import fixed_collate_fn
-    from bam_omat24.stream_data import StreamLoader
+    from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
+    from race_v2.data.loaders import fixed_collate_fn
+    from race_v2.data.stream_data import StreamLoader
     src = PER if PER.exists() else MOL
     p = _small(tmp_path, src, 120)
     S.size_pass([f'extxyz:{p}'], 5.0, tmp_path / 'sz', workers=2, block=32)

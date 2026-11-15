@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from conftest import ATOMIC_NUMBERS  # noqa: F401
-from bam_omat24.train_3bpa import COVALENT_RADII  # noqa: F401  (imports train_3bpa before the x64 fixture)
+from race_v2.training.train import COVALENT_RADII  # noqa: F401  (imports training.train before the x64 fixture)
 from test_race_polar_qeq import _polar_model, _perturbed, _with_params_of, KW, IDX, FIELDS, CUTOFF  # noqa: E402
 
 CS = {'cs_encoding': 'table', 'cs_layers': 'all', 'cs_species_gate': True}
@@ -25,8 +25,8 @@ def _st(numbers, pos, charge=0, spin=1, arrays=None):
 
 def _batch(sts, fields=None, extra_nodes=3, extra_edges=11):
     import jraph
-    from bam_omat24 import stream_io as S
-    from bam_omat24.stream_data import _to_graph, _cast
+    from race_v2.data import stream_io as S
+    from race_v2.data.stream_data import _to_graph, _cast
     gs = []
     for st in sts:
         d = _cast(S.graph_arrays(st, IDX, np.zeros(4), CUTOFF, dict(fields or FIELDS)), np.float64)
@@ -45,7 +45,7 @@ def _jt(b):
 def _lr_model(seed, local=True):
     """RACE_LR with the conditioning only (no Qeq stratum: no Coulomb / polarisation between fragments), cs params noisy"""
     from flax import nnx
-    from bam_omat24.race_lr_nnx import RACE_LR
+    from race_v2.models.race_lr import RACE_LR
     lr = {'qeq': False, 'charge_spin_embedding': True, 'n_tasks': 2, **CS, 'cs_local': LOCAL if local else None}
     return _perturbed(RACE_LR(**KW, rngs=nnx.Rngs(seed), long_range=lr), seed, noise=0.5, parts=('cs_', 'task'))
 
@@ -60,7 +60,7 @@ def _compact(seed, n=5):
 
 def test_options():
     from flax import nnx
-    from bam_omat24.race_lr_nnx import RACE_LR
+    from race_v2.models.race_lr import RACE_LR
     with pytest.raises(ValueError):                    # needs the charge / spin embedding
         RACE_LR(**KW, rngs=nnx.Rngs(0), long_range={'qeq': True, 'cs_local': LOCAL})
     with pytest.raises(ValueError):                    # beyond the cutoff
@@ -163,7 +163,7 @@ def test_forces_in_the_switch_region(x64):
 
 
 def test_formal_spins_rules():
-    from bam_omat24.graph_fields import formal_spins
+    from race_v2.data.graph_fields import formal_spins
     from ase import Atoms
     from ase.neighborlist import neighbor_list
 
@@ -198,7 +198,7 @@ def test_formal_spins_rules():
 
 
 def test_stream_fields_carry_s0():
-    from bam_omat24 import stream_io as S
+    from race_v2.data import stream_io as S
     _, _, AB = _fragments(20.0)
     d = S.graph_arrays(AB, IDX, np.zeros(4), CUTOFF, dict(FIELDS, formal_charges=FC))
     assert np.allclose(d['n:q0'], [1 / 3] * 3 + [-1 / 3] * 3)

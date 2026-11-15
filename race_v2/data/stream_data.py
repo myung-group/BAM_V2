@@ -1,5 +1,5 @@
 """Streaming loader of the pickle-free pipeline, main-process side (docs/stream_loader_design.md section 4.6).
-Single host for now; multi-host stacking (make_array_from_process_local_data) and the train_3bpa integration
+Single host for now; multi-host stacking (make_array_from_process_local_data) and the training.train integration
 (data_format "stream") are the next steps (docs/HANDOFF.md).
 
     loader = StreamLoader(sources, table, buckets, atomic_numbers, atom_energies, cutoff, n_local=1, workers=8)
@@ -8,8 +8,8 @@ Single host for now; multi-host stacking (make_array_from_process_local_data) an
     loader.close()
 
 Workers (forkserver, JAX-free: stream_io imported as a top-level module) read blocks of structures and build the
-graph arrays (stream_io.graph_arrays = data_3bpa.preprocess_graph); the main thread packs them in the planned order
-(stream_plan.plan_data_epoch) with data_nnx.fixed_collate_fn.  At most 2 * workers blocks are in flight.  Every
+graph arrays (stream_io.graph_arrays = data.xyz_graphs.preprocess_graph); the main thread packs them in the planned order
+(stream_plan.plan_data_epoch) with data.loaders.fixed_collate_fn.  At most 2 * workers blocks are in flight.  Every
 structure's edge count is checked against the size table (a mismatch would overflow the fixed shape).
 """
 from __future__ import annotations
@@ -61,7 +61,7 @@ class StreamLoader:
         self.block_rows, self.shuffle, self.dtype, self.mix_blocks = block_rows, shuffle, dtype, int(mix_blocks)
         if list(atomic_numbers) != sorted(atomic_numbers):
             raise ValueError("stream mode needs a sorted atomic_numbers list (species index = sorted rank)")
-        _SW.clean_main()                         # children: no re-import of train_3bpa (JAX) as __main__
+        _SW.clean_main()                         # children: no re-import of training.train (JAX) as __main__
         self.pool = cf.ProcessPoolExecutor(
             max_workers=workers, mp_context=S_worker_context(), initializer=_worker_init,
             initargs=(meta['kinds'], meta['files'], list(atomic_numbers), list(atom_energies), float(cutoff),
@@ -113,7 +113,7 @@ class StreamLoader:
     def iter_epoch(self, data_epoch, host=0, n_hosts=1, counts_allgather=None, start_step=0, plan=None):
         """Yield (bucket, [n_local padded GraphsTuple]) per planned step of this host, from step start_step on (resume:
         the earlier steps are skipped without reading their structures)."""
-        from bam_omat24.data_nnx import fixed_collate_fn
+        from race_v2.data.loaders import fixed_collate_fn
         pl = plan if plan is not None else self.plan(data_epoch, host, n_hosts, counts_allgather)
         steps = pl.steps[int(start_step):]
         need = []
@@ -146,10 +146,10 @@ def _cast(d, dtype):
 
 def stack_local(batches, mesh):
     """The n_local padded batches of this process (one per local device, same shape) -> one global array sharded over
-    the 'dp' mesh axis.  One process: data_nnx.stack_batches_for_devices.  Several processes: every process gives
+    the 'dp' mesh axis.  One process: data.loaders.stack_batches_for_devices.  Several processes: every process gives
     only its own devices' batches (make_array_from_process_local_data); untested on several hosts (design T5)."""
     import jax
-    from bam_omat24.data_nnx import stack_batches_for_devices
+    from race_v2.data.loaders import stack_batches_for_devices
     if jax.process_count() == 1:
         return stack_batches_for_devices(batches, mesh)[0]
     from jax.sharding import NamedSharding, PartitionSpec
@@ -227,7 +227,7 @@ class StreamEvalSet:
     exactly once per pass, in file order, packed into the training buckets (plus one extra bucket for structures that
     fit none of them).  Every host computes the same packs (deterministic) and takes packs host, host + n_hosts, ...
     of each bucket; a device without a pack in a group gets a copy of the bucket's first pack with weight 0 (as
-    training_utils.evaluate_sharded does for the in-memory sets).
+    training.utils.evaluate_sharded does for the in-memory sets).
 
         ev = StreamEvalSet(table, buckets, atomic_numbers, atom_energies, cutoff, n_local, workers, dtype, fields)
         for batch, weights in ev.iter_groups(mesh): ...      # sharded batch, (n_devices,) weights over 'dp'
@@ -267,7 +267,7 @@ class StreamEvalSet:
     def iter_groups(self, mesh):
         import jax
         from jax.sharding import NamedSharding, PartitionSpec
-        from bam_omat24.data_nnx import fixed_collate_fn
+        from race_v2.data.loaders import fixed_collate_fn
         sh = NamedSharding(mesh, PartitionSpec('dp'))
         order = []          # (bucket, pack) in reading order: per bucket, groups of n_local own packs + the filler
         for k, ps in enumerate(self.mine):

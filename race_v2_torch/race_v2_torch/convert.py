@@ -1,13 +1,13 @@
-"""JAX RACEv2 checkpoint -> racev2_torch model file, without JAX.
+"""JAX RACEv2 checkpoint -> race_v2_torch model file, without JAX.
 
 Sources:
-  * a pickled training checkpoint (bam_omat24 ``save_checkpoint``: dict with 'ema_params', 'params', 'config', ...),
+  * a pickled training checkpoint (race_v2 ``save_checkpoint``: dict with 'ema_params', 'params', 'config', ...),
     read with a stub unpickler: flax / jax classes become stubs, jax arrays are rebuilt as numpy arrays;
   * or a ``params.npz`` (keys = ``jax.tree_util.keystr`` of the nnx.Param paths, written by
     tools/dump_jax_reference.py) + ``config.json``.
 
-    python -m racev2_torch.convert --ckpt runs/<run>/ckpt_<run>.pkl --out model.pt [--which ema_params]
-    python -m racev2_torch.convert --npz ref_dir/params.npz --config ref_dir/config.json --out model.pt
+    python -m race_v2_torch.convert --ckpt runs/<run>/ckpt_<run>.pkl --out model.pt [--which ema_params]
+    python -m race_v2_torch.convert --npz ref_dir/params.npz --config ref_dir/config.json --out model.pt
 
 The variance heads (frc_logvar, energy_logvar, stress_logvar) and the unused per-species x projection (x_linear, x_mode
 basis) are not converted.  Every other parameter must match a torch parameter of the same path and shape.
@@ -174,7 +174,7 @@ def convert(out, ckpt=None, npz=None, config=None, which='ema_params') -> Tuple[
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument('--ckpt', help='pickled bam_omat24 checkpoint (.pkl)')
+    g.add_argument('--ckpt', help='pickled race_v2 checkpoint (.pkl)')
     g.add_argument('--npz', help='params.npz of tools/dump_jax_reference.py')
     ap.add_argument('--config', help='config.json (required with --npz; overrides the checkpoint config)')
     ap.add_argument('--which', default='ema_params', help="checkpoint entry: ema_params (default, as predict.py) or params")

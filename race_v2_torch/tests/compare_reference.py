@@ -1,9 +1,9 @@
-"""Compare racev2_torch with a JAX reference dump (tools/dump_jax_reference.py) intermediate by intermediate.
+"""Compare race_v2_torch with a JAX reference dump (tools/dump_jax_reference.py) intermediate by intermediate.
 
-    racev2_torch/tools/tpy racev2_torch/tests/compare_reference.py <ref_dir> [--frames 0,3,5] [--save model.pt]
+    race_v2_torch/tools/tpy race_v2_torch/tests/compare_reference.py <ref_dir> [--frames 0,3,5] [--save model.pt]
 
 <ref_dir>: config.json, params.npz, static.json, constants.npz, frame_XX.npz.  The params are converted with
-racev2_torch.convert (params.npz path); every frame is evaluated on the exact padded graph stored in the dump
+race_v2_torch.convert (params.npz path); every frame is evaluated on the exact padded graph stored in the dump
 (nodes / edges / Sij / cell / cutoff / volume as used by JAX), and the max abs differences of every stored
 quantity are printed over the real nodes / edges / graphs (padding excluded).  Energies exclude E0, as in the dump
 (model built with l_train=True by predict.Predictor).
@@ -19,8 +19,8 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from racev2_torch import o3  # noqa: E402
-from racev2_torch.convert import build_from_params, load_params_npz  # noqa: E402
+from race_v2_torch import o3  # noqa: E402
+from race_v2_torch.convert import build_from_params, load_params_npz  # noqa: E402
 
 torch.set_default_dtype(torch.float64)
 ap = argparse.ArgumentParser()
@@ -61,7 +61,7 @@ cg_w = max(float(np.abs(o3.clebsch_gordan(*map(int, k.split('_')[1:])) - c[k]).m
 print(f"  {'clebsch_gordan (all)':22s} max|d| {cg_w:10.3e}")
 worst['clebsch_gordan'] = cg_w
 cmp('spherical_harmonics', o3.spherical_harmonics(3, torch.as_tensor(c['sh_vectors'])), c['sh_component_normalize'])
-from racev2_torch.model import ChannelwiseProduct  # noqa: E402
+from race_v2_torch.model import ChannelwiseProduct  # noqa: E402
 tp = ChannelwiseProduct(o3.Irreps('3x0e+3x1o+3x2e+3x3o'))
 print(f"  tp_example irreps: torch {tp.irreps_out} jax {c['tp_example_out_irreps']}")
 cmp('tp_example (x product)', tp(torch.as_tensor(c['tp_example_m']), torch.as_tensor(c['tp_example_x'])),
@@ -171,12 +171,12 @@ for fp in files:
 # ------------------------------------------------------------------------------------------- ASE calculator
 if (ref / 'frames.extxyz').exists():
     import ase.io
-    from racev2_torch.calculator import RACEv2Calculator
+    from race_v2_torch.calculator import RACEv2Calculator
     frames = ase.io.read(ref / 'frames.extxyz', ':')
     calc = RACEv2Calculator(model, jax_compat=True, edge_chunk=a.edge_chunk)
     print("ASE calculator (own neighbour list; geometry = the positions of the stored graph and the extxyz cell, "
           "since frames.extxyz is not bit-identical to them; E0 float64 added to the reference as predict.py does):")
-    from racev2_torch.calculator import neighbor_graph
+    from race_v2_torch.calculator import neighbor_graph
     for fp in files:
         fi = int(fp.stem.split('_')[1])
         z = np.load(fp)

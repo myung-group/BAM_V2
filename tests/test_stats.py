@@ -3,7 +3,7 @@ import ase
 import jraph
 import numpy as np
 
-from bam_omat24.data_3bpa import compute_dataset_stats, fit_e0, atomic_numbers_to_indices
+from race_v2.data.xyz_graphs import compute_dataset_stats, fit_e0, atomic_numbers_to_indices
 
 
 def _synthetic_graphs(rng, n_graphs=60, n_species=4, e0=(-1.0, -10.0, -20.0, -30.0),

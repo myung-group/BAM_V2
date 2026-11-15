@@ -1,6 +1,6 @@
 """build_pkl_v2.preprocess_graph: every periodic edge has the minimum-image length the model sees.
 
-The model computes r = x_sender - (x_receiver + Sij . cell) (bam_omat24/utils.py,
+The model computes r = x_sender - (x_receiver + Sij . cell) (race_v2/models/blocks.py,
 compute_node_edge_features); the edge length must equal matscipy's distance for the same pair.
 """
 import numpy as np
@@ -9,7 +9,7 @@ from ase.build import bulk
 from ase.calculators.singlepoint import SinglePointCalculator
 import matscipy.neighbours
 
-from bam_omat24.build_pkl_v2 import preprocess_graph
+from race_v2.data.build_pkl_v2 import preprocess_graph
 
 
 def _with_calc(atoms):

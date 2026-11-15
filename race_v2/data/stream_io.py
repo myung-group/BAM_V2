@@ -1,15 +1,15 @@
 """JAX-free readers and size pass for the streaming (pickle-free) data pipeline (docs/stream_loader_design.md).
 
-Run as a stand-alone script or import as a top-level module (``sys.path.insert(0, <bam_omat24 dir>)``; the package
-``bam_omat24/__init__`` imports JAX and the model, which worker processes must not do):
+Run as a stand-alone script or import as a top-level module (``sys.path.insert(0, <race_v2/data dir>)``; the package
+``race_v2/__init__`` imports JAX and the model, which worker processes must not do):
 
-    python -I bam_omat24/stream_io.py sizes --source extxyz:<file.xyz> [--source aselmdb:<dir> ...] \
+    python -I race_v2/data/stream_io.py sizes --source extxyz:<file.xyz> [--source aselmdb:<dir> ...] \
         --cutoff 5.0 --out <sizes_dir> [--workers 0]
 
 Size pass: one neighbour search per structure (the same ``neighbors.neighbor_pairs`` as the training graphs) and the
 result written as
   <sizes_dir>/<tag>.sizes.tsv   readable, one line per structure: index, n_atoms, n_edges, file, key
-                                (read_sizes_tsv of data_3bpa reads columns 1-2, so it stays compatible)
+                                (read_sizes_tsv of data.xyz_graphs reads columns 1-2, so it stays compatible)
   <sizes_dir>/sizes.npz         the same columns for fast loading (n_atoms, n_edges, file_index, key)
   <sizes_dir>/sizes_meta.json   cutoff, sources (file list per source), N, sums, avg_n_neighbors of the full split,
                                 ase / numpy versions, sha256 of each TSV
@@ -49,7 +49,7 @@ fields['mixed'] (periodic and open-boundary structures in one batch) every graph
 flag globals 'pbc' (1 = periodic) and 'stress_w' (1 = the row has a stress label); an open-boundary structure gets
 zero shifts and a placeholder box.
 
-``graph_arrays`` turns a structure into the per-graph numpy arrays of ``data_3bpa.preprocess_graph`` (same edge
+``graph_arrays`` turns a structure into the per-graph numpy arrays of ``data.xyz_graphs.preprocess_graph`` (same edge
 convention, dtypes and energy reference), so the streaming and the in-memory paths build identical graphs
 (tests/test_stream_io.py checks this).
 """
@@ -245,7 +245,7 @@ def local_groups(electrode_mask, charge_group, fixed_charge, max_groups: int):
 
 def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fields: dict = None,
                  opts: dict = None, e0_tables: dict = None) -> dict:
-    """Arrays of one training graph, identical to data_3bpa.preprocess_graph(targets=True, **fields):
+    """Arrays of one training graph, identical to data.xyz_graphs.preprocess_graph(targets=True, **fields):
     nodes species i32 / positions f32 / forces f32, receivers = i, senders = j, edges Sij = -S (f32, periodic),
     globals energy = E - sum E0 (f32 of a float64 difference), cell / cutoff / volume / stress (periodic).
     fields: charge_key / spin_key / charge_label_key / fragments (graph_fields.extra_fields); their arrays are
@@ -590,7 +590,7 @@ class AselmdbSource:
 # ----------------------------------------------------------------------------------------------- size pass
 def worker_context():
     """forkserver context for the reader / graph workers, with the fork server started in an environment without
-    GPUs.  A worker re-imports the main module (``python -m bam_omat24.train_3bpa`` -> the bam_omat24 package -> JAX):
+    GPUs.  A worker re-imports the main module (``python -m race_v2.training.train`` -> the race_v2 package -> JAX):
     with the parent's environment every worker would create a CUDA context (GPU memory per worker, and a crash when
     the GPU is full; seen 2026-11-11) or join jax.distributed.  Workers only need numpy."""
     import multiprocessing as mp

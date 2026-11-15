@@ -1,4 +1,4 @@
-"""bam_omat24.formal_assign: integer formal charges per molecule from the bonds (no labels), and
+"""race_v2.data.formal_assign: integer formal charges per molecule from the bonds (no labels), and
 graph_fields.formal_charges(auto=True) that uses them for structures of several molecules."""
 import os
 import sys
@@ -6,7 +6,7 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'bam_omat24'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'race_v2', 'data'))
 from formal_assign import assign_formal_charges  # noqa: E402
 from graph_fields import formal_charges  # noqa: E402
 

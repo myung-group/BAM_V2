@@ -49,7 +49,7 @@ NAME=opoly26 TRAIN=/appsdata/t510a13/opoly26/train VALID=/appsdata/t510a13/opoly
   sbatch --exclude=node[0449-0484,0499-0576] jobs/dataset_prep.sh
 ```
 
-- `dataset_prep.sh`: 크기표(`bam_omat24/stream_io.py sizes`, 64 프로세스)와 E0 적합(`omol4m_e0.py`)을 차례로 돈다.
+- `dataset_prep.sh`: 크기표(`race_v2/data/stream_io.py sizes`, 64 프로세스)와 E0 적합(`omol4m_e0.py`)을 차례로 돈다.
 - 메모리 주의: 크기표는 프로세스 하나가 aselmdb 파일 하나를 통째로 메모리에 올린다(`stream_io.py`의
   `_count_task`). 파일이 큰 OMol25 전체(파일당 평균 7 GB, 최대 10.5 GB, 80개)는 GPU 1개 몫(195 GB)으로는
   메모리 부족으로 죽는다(작업 1284770). `--gres=gpu:4`(780 GB)로 제출해야 한다.

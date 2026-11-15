@@ -8,7 +8,7 @@ from flax import nnx
 
 from conftest import make_model, as_float64, pad_single
 from test_equivariance import _check_e3, TOL
-from bam_omat24.training_utils import compute_loss
+from race_v2.training.utils import compute_loss
 
 V8 = dict(update="linear", readout_mode="gated", message_norm="avg", avg_n_neighbors=16.7, x_mode="basis")
 

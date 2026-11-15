@@ -5,8 +5,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from bam_omat24.soap_optax import scale_by_soap
-from bam_omat24.soap_laplace import sample_params, leaf_specs
+from race_v2.training.soap_optax import scale_by_soap
+from race_v2.eval.soap_laplace import sample_params, leaf_specs
 
 
 def _run_soap(n_steps=12, seed=0):
@@ -47,7 +47,7 @@ def test_sampler_limits_and_shapes():
 
 def test_ggn_diag_exact_and_hutchinson():
     """GGN diagonal in a rotated basis: the exact mode equals the dense Jacobian result, Hutchinson converges to it."""
-    from bam_omat24.soap_laplace import ggn_diag
+    from race_v2.eval.soap_laplace import ggn_diag
     rng = np.random.default_rng(1)
     params = {'w': jnp.asarray(rng.normal(size=(3, 4))), 'v': jnp.asarray(rng.normal(size=(4,)))}
     leaves, treedef = jax.tree.flatten(params)             # v (adam), w (soap)

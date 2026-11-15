@@ -1,5 +1,5 @@
 """MPtrj (MPtrj_2022.9_full.json, figshare 23713842 v2, md5 50ead5f27f9a4f6beb7564c4188f1e9f) -> lmdb shards that
-bam_omat24/stream_io.AselmdbSource reads (zlib JSON rows with integer keys, as ASE's lmdb backend stores them).
+race_v2/stream_io.AselmdbSource reads (zlib JSON rows with integer keys, as ASE's lmdb backend stores them).
 
     python -I data_prep/convert_mptrj.py <MPtrj_2022.9_full.json> <out_dir> [--val-frac 0.05] [--seed 0] [--shards 32]
 

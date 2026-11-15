@@ -17,7 +17,7 @@ Three curvatures for nu (docs/local_test_report.md sections 18-19):
     n_train * nu + lam; --kappa-times-ntrain makes the kappa grid relative to n_train (kappa = 1 is the untempered
     posterior).
 
-    python -m bam_omat24.soap_laplace <config.json> --ckpt <ckpt.pkl> --out <dir> [--samples 16]
+    python -m race_v2.eval.soap_laplace <config.json> --ckpt <ckpt.pkl> --out <dir> [--samples 16]
         [--kappa 1e3 1e4 1e5 1e6] [--lam 1e2 1e3 1e4]      (grid; chosen on validation NLL)
 """
 from __future__ import annotations
@@ -57,7 +57,7 @@ def per_leaf_state(cfg, params, st, n_species):
     import jax
     leaves, treedef = jax.tree.flatten(params)
     if 'adam_mu' in st._fields:      # grouped layout
-        from bam_omat24.soap_grouped import soap_grouped_build
+        from race_v2.training.soap_grouped import soap_grouped_build
         kw = dict(b1=float(cfg.get('soap_b1', 0.95)), b2=float(cfg.get('soap_b2', 0.95)),
                   precondition_frequency=int(cfg.get('soap_precondition_frequency', 10)),
                   max_precond_dim=int(cfg.get('soap_max_precond_dim', 10000)),
@@ -72,14 +72,14 @@ def per_leaf_state(cfg, params, st, n_species):
 
 
 def leaf_specs(cfg, leaves):
-    from bam_omat24.soap_optax import _spec
+    from race_v2.training.soap_optax import _spec
     import jax.numpy as jnp
     max_dim = int(cfg.get('soap_max_precond_dim', 10000))
     specs = [_spec(jnp.shape(x), jnp.result_type(x), max_dim, False) for x in leaves]
     if cfg.get('soap_species_adam', False):
         n_sp = len(cfg['atomic_numbers'])
-        from bam_omat24.soap_optax import _Spec
-        from bam_omat24.soap_grouped import is_species_table
+        from race_v2.training.soap_optax import _Spec
+        from race_v2.training.soap_grouped import is_species_table
         any_axis = cfg.get('soap_species_adam') == 'any_axis'
         specs = [_Spec('adam') if (sp.kind == 'soap' and is_species_table(jnp.shape(x), n_sp, any_axis))
                  else sp for sp, x in zip(specs, leaves)]
@@ -241,8 +241,8 @@ def main():
     t_start = time.time()
     import jax
     from flax import nnx
-    from bam_omat24.training_utils import load_checkpoint
-    from bam_omat24.bayes_lastlayer import build, calib, load_xyz_graphs, collate
+    from race_v2.training.utils import load_checkpoint
+    from race_v2.eval.bayes_lastlayer import build, calib, load_xyz_graphs, collate
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     cfg, load, model, zs, e0, tr, va, te = build(a.config, a.ckpt)
     ck = load_checkpoint(a.ckpt)
@@ -328,7 +328,7 @@ def main():
     n_train = len(tr)
 
     if a.recollect:
-        from bam_omat24.training_utils import compute_loss
+        from race_v2.training.utils import compute_loss
         t0 = time.time()
         train = [tr[i] for i in range(len(tr))]
         idx = np.sort(np.random.default_rng(a.seed).choice(len(train), min(a.recollect, len(train)), replace=False))

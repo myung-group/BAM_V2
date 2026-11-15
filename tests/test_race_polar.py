@@ -1,4 +1,4 @@
-"""RACE_POLAR (RACEv2 + Thole-type polarizable electrostatics, bam_omat24/race_polar_nnx.py): rotation behaviour,
+"""RACE_POLAR (RACEv2 + Thole-type polarizable electrostatics, race_v2/models/race_polar.py): rotation behaviour,
 forces and stress against finite differences, total charge, and independence of the graphs of a mixed (periodic +
 open-boundary) batch.  The electrostatics themselves are checked against BAM-torch in tests/test_thole.py."""
 import numpy as np
@@ -8,9 +8,9 @@ import pytest
 from flax import nnx
 
 from conftest import ATOMIC_NUMBERS, ATOM_ENERGIES
-from bam_omat24.train_3bpa import COVALENT_RADII  # noqa: F401  (imports train_3bpa before the x64 fixture)
-from bam_omat24 import stream_io as S
-from bam_omat24.stream_data import _to_graph, _cast
+from race_v2.training.train import COVALENT_RADII  # noqa: F401  (imports training.train before the x64 fixture)
+from race_v2.data import stream_io as S
+from race_v2.data.stream_data import _to_graph, _cast
 
 CUTOFF = 5.0
 IDX = {z: i for i, z in enumerate(ATOMIC_NUMBERS)}
@@ -18,7 +18,7 @@ FIELDS = dict(charge_key='charge', spin_key='spin', mixed=True, task=0)
 
 
 def _model(periodic, seed=0, polar=None, noise=0.3):
-    from bam_omat24.race_polar_nnx import RACE_POLAR
+    from race_v2.models.race_polar import RACE_POLAR
     import jax.numpy as jnp
     pol = {'max_cell_length': 9.0, 'max_cell_volume': 450.0, 'cg_tolerance': 1e-12, 'cg_max_iterations': 200,
            'multipole_init_scale': 1.0, 'max_polarizability_per_element': {'H': 1.0}, **(polar or {})}
@@ -169,7 +169,7 @@ def test_open_boundary_model_and_supercell(x64):
 
 def test_dipole_and_charge_loss_terms(x64):
     import jax.numpy as jnp
-    from bam_omat24.training_utils import compute_loss
+    from race_v2.training.utils import compute_loss
     st = _structure('m', 9)
     f = dict(FIELDS, dipole=True, opt_charge_labels=True)
     st['info']['multipoles'] = [[0.0] * 3, [0.3, -0.2, 0.1], [0.0] * 6]
@@ -286,7 +286,7 @@ def test_phase2_groups_contact_slab(x64):
         assert abs(fd - s_model[v]) < 5e-6 * max(1.0, abs(fd)), (v, fd, s_model[v])
 
     # dipole loss: the slab contributes its normal component only, the molecules all three
-    from bam_omat24.training_utils import compute_loss
+    from race_v2.training.utils import compute_loss
     gd, pr = nnx.split(model, nnx.Param)
     kw = dict(energy_weight=1.0, force_weight=1.0, stress_weight=0.0, huber_delta=10.0, periodic=True)
     _, aux = compute_loss(gd, pr, batch, dipole_weight=1.0, **kw)

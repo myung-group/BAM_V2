@@ -14,10 +14,10 @@ jax.config.update("jax_enable_x64", False)
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from bam_omat24.data_3bpa import (  # noqa: E402
+from race_v2.data.xyz_graphs import (  # noqa: E402
     preprocess_graph, load_frames, atomic_numbers_to_indices,
 )
-from bam_omat24.race_nnx import RACE  # noqa: E402
+from race_v2.models.race import RACE  # noqa: E402
 
 ATOMIC_NUMBERS = [1, 6, 7, 8]
 ATOM_ENERGIES = [-13.587222780835477, -1029.4889999855063,

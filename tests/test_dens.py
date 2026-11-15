@@ -13,8 +13,8 @@ from jax.sharding import Mesh
 from conftest import make_model, as_float64, random_rotation
 from test_equivariance import _transform, TOL
 from test_round24 import V9, _fd_forces
-from bam_omat24.data_nnx import stack_batches_for_devices, default_collate_fn
-from bam_omat24.training_utils import make_sharded_train_step, replicate, replicate_pytree, to_host
+from race_v2.data.loaders import stack_batches_for_devices, default_collate_fn
+from race_v2.training.utils import make_sharded_train_step, replicate, replicate_pytree, to_host
 
 HILL = dict(**V9, residual="chebyshev", layer_scale=0.5, x_norm="hill")
 Sched = namedtuple("Sched", "scale")

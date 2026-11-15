@@ -1,4 +1,4 @@
-"""Equivalence of bam_omat24.soap_grouped (shape-grouped SOAP) vs bam_omat24.soap_optax.scale_by_soap.
+"""Equivalence of race_v2.training.soap_grouped (shape-grouped SOAP) vs race_v2.training.soap_optax.scale_by_soap.
 
 Protocol (identical to tests/test_soap.py's seeded comparison): step 0 is run with the current
 implementation, its state is converted to the grouped layout (exact reshapes), then both run
@@ -12,8 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from bam_omat24.soap_optax import ScaleBySoapState, scale_by_soap          # noqa: E402
-from bam_omat24.soap_grouped import (ScaleBySoapGroupedState, convert_opt_state,  # noqa: E402
+from race_v2.training.soap_optax import ScaleBySoapState, scale_by_soap          # noqa: E402
+from race_v2.training.soap_grouped import (ScaleBySoapGroupedState, convert_opt_state,  # noqa: E402
                                 soap_grouped_build)
 
 SHAPES = {**{f"sq{i}": (12, 12) for i in range(9)},            # many same-shape leaves
@@ -121,7 +121,7 @@ def test_cholqr_close_on_well_conditioned(x64):
 def test_species_tables_use_adam(x64):
     """adam_leading_dim: leaves with leading dim == n_species are plain Adam; the others are unchanged SOAP."""
     import optax
-    from bam_omat24.soap_grouped import scale_by_soap_grouped
+    from race_v2.training.soap_grouped import scale_by_soap_grouped
     key = jax.random.PRNGKey(0)
     k1, k2, k3 = jax.random.split(key, 3)
     params = {'table': jax.random.normal(k1, (5, 3, 4), jnp.float64), 'shared': jax.random.normal(k2, (6, 7), jnp.float64)}
@@ -142,7 +142,7 @@ def test_species_adam_any_axis_keeps_absent_species(x64):
     """adam_any_axis: a table with the species on a trailing axis, shape (3, 2, n_species), goes to Adam too, and the
     entries of species that never get a gradient stay exactly at their initial value; with the leading-dim rule the
     same leaf is rotated by SOAP and they drift (the reason for the option)."""
-    from bam_omat24.soap_grouped import scale_by_soap_grouped
+    from race_v2.training.soap_grouped import scale_by_soap_grouped
     n_sp, present = 9, np.array([0, 3, 4, 7])
     key = jax.random.PRNGKey(1)
     params = {'hill': jnp.zeros((3, 2, n_sp), jnp.float64), 'shared': jnp.zeros((6, 7), jnp.float64)}

@@ -9,8 +9,8 @@ import e3nn_jax as e3nn
 from flax import nnx
 import pytest
 
-from bam_omat24.linear_nnx import Linear
-# imported here, not inside the tests: importing train_3bpa (via test_oam_stress) switches jax_enable_x64 off,
+from race_v2.models.linear import Linear
+# imported here, not inside the tests: importing training.train (via test_oam_stress) switches jax_enable_x64 off,
 # which inside a test would undo the x64 fixture and compare float32 (TF32) results
 from conftest import as_float64                                     # noqa: E402
 from test_oam_stress import _model, _cell, _graph, _f64            # noqa: E402

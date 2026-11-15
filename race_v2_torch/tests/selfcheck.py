@@ -1,4 +1,4 @@
-"""Checks of racev2_torch that need no JAX reference (login-node size: a few small structures, single thread).
+"""Checks of race_v2_torch that need no JAX reference (login-node size: a few small structures, single thread).
 
   1. Clebsch-Gordan tensors (l <= 3) and spherical harmonics against e3nn-torch (wigner_3j, spherical_harmonics
      'component'), whose conventions coincide with e3nn-jax.
@@ -6,7 +6,7 @@
   3. With a converted model: invariance of E under rotation / translation / permutation, equivariance of F and
      stress, F = -dE/dx and stress = (1/V) dE/d(strain) by central finite differences, supercell extensivity.
 
-    racev2_torch/tools/tpy racev2_torch/tests/selfcheck.py --model model.pt
+    race_v2_torch/tools/tpy race_v2_torch/tests/selfcheck.py --model model.pt
 """
 import argparse
 import math
@@ -18,7 +18,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from racev2_torch import o3  # noqa: E402
+from race_v2_torch import o3  # noqa: E402
 
 torch.set_default_dtype(torch.float64)
 ap = argparse.ArgumentParser()
@@ -60,8 +60,8 @@ print(f"  c_silu(grid normalspace(1_000_001)) = {c!r}, Gauss-Hermite integral {c
 report("|c_grid - c_integral| / c (expected ~2e-5: JAX uses the grid value)", abs(c - c_int) / c, 1e-4)
 
 if a.model:
-    from racev2_torch import RACEv2
-    from racev2_torch.calculator import RACEv2Calculator
+    from race_v2_torch import RACEv2
+    from race_v2_torch.calculator import RACEv2Calculator
     import ase
     from ase.build import bulk
     print(f"3. model checks with {a.model}")

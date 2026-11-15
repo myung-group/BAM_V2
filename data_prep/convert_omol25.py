@@ -13,7 +13,7 @@ Protocol (fair: the official splits only):
   test.xyz              : uniform sample of the official VAL split (the OMol25 test labels are not public)
   e0.json / meta.json   : per-element reference energies from a least-squares fit on train.xyz only, element list,
                           avg_n_neighbors (5 A, trainer graph code), counts per (charge, spin), md5 of the outputs
-The aselmdb files are read as data (LMDB + zlib JSON rows, bam_omat24.stream_io readers); nothing is executed.
+The aselmdb files are read as data (LMDB + zlib JSON rows, race_v2.data.stream_io readers); nothing is executed.
 Units: OMol25 stores eV and eV/A (fairchem); the converter does not rescale.  Total charge -> info["charge"] (int),
 spin multiplicity 2S+1 -> info["spin"] (int).  The location of these two fields in the rows is searched in this
 order: row top level, row["data"], row["key_value_pairs"]; a row without them stops the conversion (no default is
@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bam_omat24.stream_io import open_lmdb, list_row_ids, decode_value, decode_row, _arr, _scalar   # noqa: E402
+from race_v2.data.stream_io import open_lmdb, list_row_ids, decode_value, decode_row, _arr, _scalar   # noqa: E402
 
 OPTS = {'allow_periodic': False, 'neutral_if_missing': False}
 STATS = {'neutral_default': 0}
@@ -162,7 +162,7 @@ def md5(p):
 
 def subset(args):
     import ase.io
-    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
+    from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     tr_files, ev_files = files_of(args.train), files_of(args.eval)

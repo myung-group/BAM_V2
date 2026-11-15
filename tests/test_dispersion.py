@@ -12,7 +12,7 @@ DISP = {'dispersion': True}
 
 
 def _model(seed=0, polar=None, lr=None):
-    from bam_omat24.race_polar_nnx import RACE_POLAR
+    from race_v2.models.race_polar import RACE_POLAR
     return _perturbed(RACE_POLAR(**KW, rngs=nnx.Rngs(seed), long_range={**LR, 'qeq_block': 12, **(lr or {})},
                                  polar={**POLAR, **DISP, **(polar or {})}), seed)
 
@@ -49,7 +49,7 @@ def _reference(model, st, alpha):
 
 
 def test_dispersion_options():
-    from bam_omat24.race_polar_nnx import RACE_POLAR
+    from race_v2.models.race_polar import RACE_POLAR
     with pytest.raises(ValueError):                    # needs the per-graph blocks of qeq_block
         RACE_POLAR(**KW, rngs=nnx.Rngs(0), long_range=dict(LR), polar={**POLAR, **DISP})
     with pytest.raises(ValueError):
@@ -122,7 +122,7 @@ def test_dispersion_float32_gradients_finite():
     (pre-flight 2026-11-15: a 0 / (0 + 1e-30) on the padding gave NaN parameter gradients in float32)"""
     import jax
     import jax.numpy as jnp
-    from bam_omat24.race_polar_nnx import RACE_POLAR
+    from race_v2.models.race_polar import RACE_POLAR
     sts = [_molecule(1), _molecule(2, n=6)]
     res = {}
     for disp in (False, True):

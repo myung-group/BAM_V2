@@ -8,7 +8,7 @@ from flax import nnx
 
 from conftest import make_model, as_float64, random_rotation, pad_single
 from test_equivariance import _check_e3, TOL
-from bam_omat24.training_utils import compute_loss, _loss_terms
+from race_v2.training.utils import compute_loss, _loss_terms
 
 
 def _energy(model, graph):

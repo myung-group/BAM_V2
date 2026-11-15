@@ -1,0 +1,3 @@
+#!/bin/bash
+# Compatibility alias (2026-11-16): racev2_torch/tools/tpy -> race_v2_torch/tools/tpy
+exec "$(dirname "$(dirname "$(dirname "$(readlink -f "$0")")")")/race_v2_torch/tools/tpy" "$@"

@@ -1,6 +1,6 @@
 """Per-frame energy / force errors of a checkpoint on extxyz files -> .npz for offline analysis.
 
-    python -m bam_omat24.dump_frame_errors <train config json> --ckpt <pkl> --xyz <file.xyz> [--xyz ...]
+    python -m race_v2.eval.dump_frame_errors <train config json> --ckpt <pkl> --xyz <file.xyz> [--xyz ...]
            --out <prefix> [--batch-size 32] [--index-key qm9_index]
 
 Writes <prefix>_<file stem>.npz with, per frame (file order): e_pred, e_ref (eV, both after the config's
@@ -14,12 +14,12 @@ import numpy as np
 import jax, jax.numpy as jnp, jraph
 from flax import nnx
 
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_3bpa import load_frames, GraphListDataset, atomic_numbers_to_indices
-from bam_omat24.data_nnx import BucketedDataLoader, default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
-from bam_omat24.eval_sets import _frames_to_graphs
-from bam_omat24.analyze_errors import _tag_frames
+from race_v2.training import train as T
+from race_v2.data.xyz_graphs import load_frames, GraphListDataset, atomic_numbers_to_indices
+from race_v2.data.loaders import BucketedDataLoader, default_collate_fn
+from race_v2.training.utils import load_checkpoint
+from race_v2.eval.eval_sets import _frames_to_graphs
+from race_v2.eval.analyze_errors import _tag_frames
 
 
 def main():

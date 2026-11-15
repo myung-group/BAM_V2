@@ -1,7 +1,7 @@
 """RACE_POLAR: RACEv2 with Thole-type polarizable electrostatics (2026-11-11; docs/HANDOFF_multidataset_thole.md).
 
 JAX port of the "polar" block of BAM-torch (bam_ufo/model/thole.py, TholeElectrostaticsBlock, mode "pbc_split");
-the electrostatics are in bam_omat24/thole.py.  RACE and RACE_LR are unchanged; this subclass of RACE_LR (for its
+the electrostatics are in race_v2/models/thole.py.  RACE and RACE_LR are unchanged; this subclass of RACE_LR (for its
 charge / spin embedding and task table; the Qeq stratum stays off) adds one physical stratum:
 
     E = sum_i [ local RACEv2 strata + repulsion ]_i + E_elec({q_i, mu_i, Theta_i, alpha_i})
@@ -16,7 +16,7 @@ Heads on the (normalised) last-layer node features h_i, as in the torch block:
 Feature normalisation "smooth": every irrep type is multiplied by rsqrt(1 + mean square / scale^2) per atom.
 
 Config: "model": "RACE_POLAR", "polar": {thole.POLAR_DEFAULTS; for periodic data "max_cell_length" and
-"max_cell_volume" (or "k_grid" and "n_k") size the reciprocal sums: train_3bpa fills them from the stream size
+"max_cell_volume" (or "k_grid" and "n_k") size the reciprocal sums: training.train fills them from the stream size
 tables}, "long_range": {"charge_spin_embedding": true, "n_tasks": N} as for RACE_LR (qeq is forced off).
 "polar": {"charges": "qeq"} (2026-11-11) = RACE_LR's charge equilibration + this block: q_i are the Qeq charges
 (long_range options chi_init, qeq_block, fragments; the heads q^raw and f are unused), Qeq adds only its on-site
@@ -62,11 +62,11 @@ import jraph
 import numpy as np
 from flax import nnx
 
-from bam_omat24 import thole
-from bam_omat24.linear_nnx import Linear as e3nn_nnx_Linear
-from bam_omat24.race_lr_nnx import RACE_LR
-from bam_omat24.race_nnx import _dense
-from bam_omat24.training_utils import _traceless_symmetric_from_2e
+from race_v2.models import thole
+from race_v2.models.linear import Linear as e3nn_nnx_Linear
+from race_v2.models.race_lr import RACE_LR
+from race_v2.models.race import _dense
+from race_v2.training.utils import _traceless_symmetric_from_2e
 
 
 @functools.lru_cache(maxsize=8)
@@ -192,7 +192,7 @@ class RACE_POLAR(RACE_LR):
     # ---------------------------------------------------------------------------------------------- dispersion
     def _dispersion(self, positions, cells, alpha, species, data, node_graph, node_mask, n_graphs, pbc, dt):
         """(N,) per-atom C6 dispersion energies (polar.dispersion; half of every pair on each atom)."""
-        from bam_omat24.long_range import sr_switch
+        from race_v2.models.long_range import sr_switch
         p = self.polar
         B = int(self.lr['qeq_block'])
         N = positions.shape[0]

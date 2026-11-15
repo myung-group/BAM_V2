@@ -461,13 +461,13 @@ def soap_leaf_summary(params, max_precond_dim: int = 10000, precondition_1d: boo
 __doc__ = (__doc__ or '') + '''
 Integration
 -----------
-In ``bam_omat24/train_3bpa.py`` ``build_model``, add this branch to the
+In ``race_v2/training/train.py`` ``build_model``, add this branch to the
 ``if opt_name == 'amsgrad': ... elif ...`` chain (before the final
 ``else: raise ValueError``).  ``chain`` already starts with
 ``optax.clip_by_global_norm`` (clip first, on the raw gradient); the cosine
 ``scale_by_schedule`` is appended after it by the existing code, and the
 ``reduce_on_plateau`` scale is applied after ``optimizer.update`` in
-``training_utils``.  The decay follows the ``adamw`` branch exactly: the global
+``training.utils``.  The decay follows the ``adamw`` branch exactly: the global
 decoupled decay ``wd`` is chained right after the SOAP scaling in both cases, and
 with ``stratum_weight_decay`` set the existing block then appends the per-layer
 (or ``scope='all'``) decays and ``scale_by_learning_rate(lr)`` itself.  ``params``
@@ -475,7 +475,7 @@ with ``stratum_weight_decay`` set the existing block then appends the per-layer
 
     elif opt_name == 'soap':
         # SOAP (arXiv:2409.11321): Adam in the eigenbasis of Shampoo's L, R factors
-        from bam_omat24.soap_optax import scale_by_soap, soap_leaf_summary
+        from race_v2.training.soap_optax import scale_by_soap, soap_leaf_summary
         soap_sb = _get(cfg, 'soap_shampoo_beta', None)
         soap_kw = dict(
             b1=float(_get(cfg, 'soap_b1', 0.95)),

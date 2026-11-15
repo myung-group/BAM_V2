@@ -22,7 +22,7 @@ positions, novelty, strain, per-frame energies) so that several runs (seeds) can
 be compared with ``analyze_errors_compare.py`` (bias / variance split, ensemble).
 
 Usage:
-    python -m bam_omat24.analyze_errors <train config json> [--ckpt path] [--out prefix]
+    python -m race_v2.eval.analyze_errors <train config json> [--ckpt path] [--out prefix]
 """
 import argparse
 import functools
@@ -37,10 +37,10 @@ import jraph
 import numpy as np
 from flax import nnx
 
-from bam_omat24.data_3bpa import GraphListDataset
-from bam_omat24.data_nnx import BucketedDataLoader, default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
-from bam_omat24 import train_3bpa as T
+from race_v2.data.xyz_graphs import GraphListDataset
+from race_v2.data.loaders import BucketedDataLoader, default_collate_fn
+from race_v2.training.utils import load_checkpoint
+from race_v2.training import train as T
 
 SPECIES_NAMES = {1: "H", 6: "C", 7: "N", 8: "O"}
 BOND_CUT = 1.75   # Å, bonded pair threshold on the mean training geometry
@@ -267,7 +267,7 @@ def main():
 
     cfg = json.load(open(args.config))
     if cfg.get("x64"):
-        jax.config.update("jax_enable_x64", True)      # train_3bpa switches x64 off on import
+        jax.config.update("jax_enable_x64", True)      # training.train switches x64 off on import
     ckpt_path = args.ckpt or cfg.get("ckpt_name", "ckpt_best.pkl")
     ckpt = load_checkpoint(ckpt_path)
     params = ckpt["params"] if args.raw else ckpt["ema_params"]

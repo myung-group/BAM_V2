@@ -8,7 +8,7 @@ from flax import nnx
 
 from conftest import make_model, as_float64, pad_single
 from test_equivariance import _check_e3, TOL
-from bam_omat24.training_utils import compute_loss
+from race_v2.training.utils import compute_loss
 
 RADII = [0.31, 0.76, 0.71, 0.66]                      # H, C, N, O covalent radii (A)
 GAUSS = {"centers": np.linspace(0.9, 2.3, 8).tolist(), "width": 0.15}

@@ -1,6 +1,6 @@
 """Optional per-graph fields of the training graphs (total charge, spin, per-fragment charges, reference charges),
-JAX-free so that the in-memory path (data_3bpa.preprocess_graph) and the streaming workers (stream_io.graph_arrays)
-build them with the same code.  Importable as ``bam_omat24.graph_fields`` or as a top-level module.
+JAX-free so that the in-memory path (data.xyz_graphs.preprocess_graph) and the streaming workers (stream_io.graph_arrays)
+build them with the same code.  Importable as ``race_v2.data.graph_fields`` or as a top-level module.
 
     nodes, glob = extra_fields(info, arrays, n_atoms, charge_key=..., spin_key=..., charge_label_key=...,
                                fragments=(fragment_key, fragment_charges_key, n_fragments), task=...)
@@ -30,7 +30,7 @@ def extra_fields(info, arrays, n_atoms: int, charge_key: Optional[str] = None, s
                  charge_label_key: Optional[str] = None, fragments: Optional[Sequence] = None, task=None,
                  charge_label_optional: bool = False, charge_label_scale: float = 1.0):
     """charge_label_optional: a structure without the labels gets NaN labels instead of an error; the charge loss
-    skips NaN labels (training_utils.masked_charge_loss), so such a structure still trains energy and forces."""
+    skips NaN labels (training.utils.masked_charge_loss), so such a structure still trains energy and forces."""
     info = info or {}
     nodes, glob = {}, {}
     if task is not None and task is not False:   # task index (RACE_LR task table); only when asked
@@ -102,7 +102,7 @@ def field_keys(charge_key=None, spin_key=None, charge_label_key=None, fragments=
 
 
 # ----------------------------------------------------------------------------------------- formal charges (RACE_LR ct)
-# Covalent radii (Cordero et al. 2008), A; the same table as train_3bpa.COVALENT_RADII (copied: this module is JAX-free)
+# Covalent radii (Cordero et al. 2008), A; the same table as training.train.COVALENT_RADII (copied: this module is JAX-free)
 _COV_RADII = {1: 0.31, 2: 0.28, 3: 1.28, 4: 0.96, 5: 0.84, 6: 0.76, 7: 0.71, 8: 0.66, 9: 0.57,
                   10: 0.58, 11: 1.66, 12: 1.41, 13: 1.21, 14: 1.11, 15: 1.07, 16: 1.05, 17: 1.02,
                   18: 1.06, 19: 2.03, 20: 1.76, 21: 1.70, 22: 1.60, 23: 1.53, 24: 1.39, 25: 1.39,
@@ -168,7 +168,7 @@ def formal_charges(numbers, positions, src, dst, total_charge: float, info=None,
         try:
             from formal_assign import assign_formal_charges
         except ImportError:
-            from bam_omat24.formal_assign import assign_formal_charges
+            from race_v2.data.formal_assign import assign_formal_charges
         qa, _ = assign_formal_charges(numbers, positions, src, dst, Q, shift_vectors, bond_factor, multiplicity)
         v, source = qa.astype(np.float64), 'auto'
     if v is None:

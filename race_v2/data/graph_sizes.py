@@ -2,13 +2,13 @@
 readable text, plus a summary and the padded shapes a run would use.  No JAX; run inside a Slurm job (not on a login
 node) for large files.
 
-    python -I bam_omat24/graph_sizes.py <file.xyz> [<file.xyz> ...] --cutoff 5.0 [--workers 32] [--batch-size 16]
+    python -I race_v2/data/graph_sizes.py <file.xyz> [<file.xyz> ...] --cutoff 5.0 [--workers 32] [--batch-size 16]
         [--out-dir DIR] [--buckets 4]
 
 For every input <stem>.xyz it writes DIR/<stem>.sizes.tsv (columns index, n_atoms, n_edges; same format as the
 sizes_<split>.tsv that a pad_mode "fixed" training run writes next to its log) and DIR/<stem>.sizes_summary.txt:
   * quantiles of atoms and edges per structure,
-  * the pad_mode "fixed" budgets of train_3bpa.py (nodes: max(batch * mean, largest + 1) rounded up to 64; edges:
+  * the pad_mode "fixed" budgets of training/train.py (nodes: max(batch * mean, largest + 1) rounded up to 64; edges:
     max(batch * mean, largest) rounded up to 1024) and the fraction of the padded edge slots that hold real edges
     when the structures are packed greedily in random order,
   * the same for --buckets size classes (equal-count split by edges per structure; one padded shape per class).
@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from neighbors import count_edges  # noqa: E402  (no package import: bam_omat24/__init__ pulls in JAX)
+from neighbors import count_edges  # noqa: E402  (no package import: race_v2/__init__ pulls in JAX)
 
 
 def _count_chunk(args):

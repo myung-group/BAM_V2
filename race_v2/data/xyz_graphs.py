@@ -1,11 +1,11 @@
-"""3BPA (molecular, non-periodic) data pipeline for the ``bam_omat24`` RACE model.
+"""3BPA (molecular, non-periodic) data pipeline for the ``race_v2`` RACE model.
 
 * extended-XYZ -> ``jraph.GraphsTuple`` (no cell, no stress, ``edges=None``)
 * optional per-species E0 linear regression (``fit_e0``)
 * dataset statistics for model initialisation (``compute_dataset_stats``)
 * on-disk pickle cache keyed by cutoff and the E0 used
 
-Energy convention (same as ``bam_omat24.build_pkl``): the stored graph energy is
+Energy convention (same as ``race_v2.data.build_pkl``): the stored graph energy is
 ``E_total - sum_i E0[species_i]`` so the model is trained with ``l_train=True``
 and *does not* add isolated atom energies itself.
 """
@@ -24,8 +24,8 @@ import matscipy.neighbours
 import numpy as np
 from tqdm import tqdm
 
-from bam_omat24.neighbors import neighbor_pairs
-from bam_omat24.graph_fields import extra_fields
+from race_v2.data.neighbors import neighbor_pairs
+from race_v2.data.graph_fields import extra_fields
 
 
 # =============================================================================
@@ -312,7 +312,7 @@ def read_sizes_tsv(path) -> Tuple[np.ndarray, np.ndarray]:
     return d[:, 1], d[:, 2]
 
 
-def load_3bpa_graphs(
+def load_xyz_graphs(
     xyz_path: str | Path,
     atomic_numbers: Sequence[int],
     atom_energies: Sequence[float],
@@ -370,3 +370,6 @@ class GraphListDataset:
 
     def __getitem__(self, idx: int) -> jraph.GraphsTuple:
         return self.graphs[idx]
+
+
+load_3bpa_graphs = load_xyz_graphs          # old name (the loader was never specific to 3BPA)

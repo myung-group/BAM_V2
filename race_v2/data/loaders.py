@@ -549,7 +549,7 @@ if __name__ == "__main__":
 
     mesh, n_devices = setup_mesh()
 
-    train_path = Path('/home/willow/Python/BAM-nequip-main/bam_omat24')
+    train_path = Path('/home/willow/Python/BAM-nequip-main/race_v2')
     train_files_pkl = natsorted(list(train_path.glob('*.pkl')))
 
     rngs = nnx.Rngs(42)

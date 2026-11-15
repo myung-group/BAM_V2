@@ -10,7 +10,7 @@ from flax import nnx
 from conftest import make_model, as_float64, pad_single
 from test_equivariance import _check_e3, TOL
 from test_round11_shells import SHELLS
-from bam_omat24.training_utils import compute_loss
+from race_v2.training.utils import compute_loss
 
 SK = dict(radial_shells=True, species_shell_radii=SHELLS, shell_sk_gate=True)
 

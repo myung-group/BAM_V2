@@ -10,8 +10,8 @@ from ase.calculators.singlepoint import SinglePointCalculator
 import matscipy.neighbours
 
 from conftest import make_model, as_float64, random_rotation
-from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
-from bam_omat24.utils import compute_node_edge_features
+from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
+from race_v2.models.blocks import compute_node_edge_features
 from test_round11_shells import SHELLS
 
 ZS = [1, 6, 7, 8]

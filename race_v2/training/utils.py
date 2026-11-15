@@ -19,9 +19,9 @@ import pickle
 import jraph
 import numpy as np
 
-from bam_omat24.data_nnx import (Dataset, BucketedDataLoader, MultiDeviceDataLoader, to_host,
+from race_v2.data.loaders import (Dataset, BucketedDataLoader, MultiDeviceDataLoader, to_host,
                                  global_from_host)
-from bam_omat24.utils import node_graph_idx
+from race_v2.models.blocks import node_graph_idx
 
 
 # =============================================================================
@@ -611,7 +611,7 @@ def compute_loss(
         if results.get('charge_nbo_t') is not None and 'ref_charges_nbo' in batch.nodes:
             # RACE_LR charge_nbo_head: the redistribution applied to the charge labels vs the NBO labels (atoms of
             # structures with both labels; NaN labels = none)
-            from bam_omat24.race_lr_nnx import RACE_LR
+            from race_v2.models.race_lr import RACE_LR
             qdt = results['charges'].dtype
             rl = batch.nodes['ref_charges'].astype(qdt)
             has = jnp.isfinite(rl)
@@ -670,7 +670,7 @@ def compute_loss(
             sp_loss = mom + cor + sgn
         if results.get('spin_nbo_t') is not None and 'ref_spins_nbo' in batch.nodes:
             # RACE_LR spin_nbo_head: the redistribution applied to the Lowdin labels vs the NBO labels
-            from bam_omat24.race_lr_nnx import RACE_LR
+            from race_v2.models.race_lr import RACE_LR
             nwn = nw * batch.nodes['ref_spins_nbo_w'].astype(sdt)
             pn = RACE_LR.spin_redistribute(ref, results['spin_nbo_t'].astype(sdt), batch)
             sp_loss = sp_loss + jnp.sum(nwn * (pn - batch.nodes['ref_spins_nbo'].astype(sdt)) ** 2) / jnp.maximum(

@@ -1,7 +1,7 @@
 """WBM-style relaxation of many structures with a RACEv2 checkpoint (Matbench Discovery protocol: FIRE, at most 500
 steps, fmax 0.05 eV/A on the FrechetCellFilter gradient), batched over structures (relax_batched.py).
 
-    python -m bam_omat24.relax_wbm --ckpt runs/<name>_cue/ckpt_<name>_cue.pkl \
+    python -m race_v2.inference.relax_wbm --ckpt runs/<name>_cue/ckpt_<name>_cue.pkl \
         --input <2024-08-04-wbm-initial-atoms.extxyz.zip | file.extxyz> --out-dir <dir> \
         [--shard 0 --num-shards 8] [--limit N] [--max-structures 64] [--groups 2] [--host-workers 16]
 
@@ -61,8 +61,9 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     here = os.path.dirname(os.path.abspath(__file__))
-    if here not in sys.path:
-        sys.path.insert(0, here)
+    for d in (os.path.join(os.path.dirname(here), 'data'), here):       # stream_worker is in race_v2/data
+        if d not in sys.path:
+            sys.path.insert(0, d)
     import relax_batched as RB                   # top-level module: the host workers must stay JAX-free
     import stream_worker
     stream_worker.clean_main()                   # spawned workers do not re-import this (JAX) module

@@ -8,9 +8,9 @@ from ase.calculators.singlepoint import SinglePointCalculator
 from flax import nnx
 
 from conftest import as_float64
-from bam_omat24.race_nnx import RACE, UFF_VDW
-from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
-from bam_omat24.train_3bpa import element_shell_radii, COVALENT_RADII
+from race_v2.models.race import RACE, UFF_VDW
+from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
+from race_v2.training.train import element_shell_radii, COVALENT_RADII
 
 ZS = [3, 8, 26, 78]                     # Li, O, Fe, Pt: light, anion, 3d and 5d metal
 OAM_Z = list(range(1, 84)) + list(range(89, 95))   # H..Bi and Ac..Pu (species_encoding of the OAM shards)
@@ -98,7 +98,7 @@ def test_stress_is_strain_derivative(x64):
 
 def test_fixed_shape_packing_covers_every_graph_once():
     """pad_mode "fixed": every batch has one shape and every graph is used exactly once per epoch."""
-    from bam_omat24.data_nnx import BucketedDataLoader, fixed_collate_fn
+    from race_v2.data.loaders import BucketedDataLoader, fixed_collate_fn
     import functools
     rng = np.random.RandomState(3)
     graphs = []
@@ -137,7 +137,7 @@ def test_many_padding_edges_leave_real_outputs_unchanged(x64):
     must equal those of a lightly padded batch, and every graph energy must be finite (no nan from the padding).
     Compared in float64: in float32 (TF32 matmuls) the two batch shapes differ by ~5e-6 eV/A in the forces through
     the summation order alone (job 1222875)."""
-    from bam_omat24.data_nnx import fixed_collate_fn
+    from race_v2.data.loaders import fixed_collate_fn
     gs = [_f64(_graph(_cell(s))) for s in (4, 5, 6)]
     n_n = sum(int(g.n_node[0]) for g in gs); n_e = sum(int(g.n_edge[0]) for g in gs)
     light = fixed_collate_fn(gs, 3, n_node_pad=n_n + 1, n_edge_pad=n_e)

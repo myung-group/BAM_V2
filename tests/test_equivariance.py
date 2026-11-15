@@ -6,7 +6,7 @@ import pytest
 from flax import nnx
 
 from conftest import make_model, pad_single, random_rotation, as_float64
-from bam_omat24.training_utils import compute_loss, _traceless_symmetric_from_2e
+from race_v2.training.utils import compute_loss, _traceless_symmetric_from_2e
 import e3nn_jax as e3nn
 
 # Measured on a 3BPA frame (2 layers, 16 channels): float64 -> dE ~ 1e-9, dF ~ 2e-8;
@@ -66,7 +66,7 @@ def test_energy_forces_e3_float32(graph, x_mode):
 
 
 def test_2e_to_tensor_is_equivariant():
-    """B(D(R) b) == R B(b) R^T  for the e3nn-jax 2e convention used in training_utils."""
+    """B(D(R) b) == R B(b) R^T  for the e3nn-jax 2e convention used in training.utils."""
     rng = np.random.RandomState(0)
     b = rng.normal(size=(7, 5)).astype(np.float32)
     R = random_rotation(3)

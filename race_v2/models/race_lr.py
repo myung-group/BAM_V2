@@ -1,5 +1,5 @@
 """RACE_LR: RACEv2 with charge-dependent long-range electrostatics (2026-11-06; docs/RACE_LR_design.md).
-RACE itself (race_nnx.py) is unchanged; this subclass adds one physical stratum:
+RACE itself (models/race.py) is unchanged; this subclass adds one physical stratum:
 
     E = sum_i [ local RACEv2 strata + repulsion ]_i  +  E_Qeq({q_i})
 
@@ -7,7 +7,7 @@ RACE itself (race_nnx.py) is unchanged; this subclass adds one physical stratum:
     q = argmin_q  chi . q + 1/2 q^T A q   s.t.  sum_i q_i = Q_graph   (charge equilibration, one linear solve)
     A_ij = Gaussian-charge Coulomb (direct sum, or Ewald for periodic graphs), A_ii = J_i + K / (sqrt(pi) sigma_i)
 
-The total charge Q of each graph comes from data.globals['charge'] (0 if absent; train_3bpa reads it from the extxyz
+The total charge Q of each graph comes from data.globals['charge'] (0 if absent; training.train reads it from the extxyz
 info key given by cfg "total_charge_key").  Charges are latent: trained from energies and forces only (no charge
 labels), as in latent-charge / 4G-HDNNP-type models.  Forces and stress follow from autodiff through the linear
 solve.  Config: "model": "RACE_LR", "long_range": {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6,
@@ -16,7 +16,7 @@ solve.  Config: "model": "RACE_LR", "long_range": {"ewald_alpha": 0.3, "ewald_n_
 Fragments: nodes['fragment'] + globals['fragment_charges'] (cfg "fragment_key" / "fragment_charges_key") constrain
 the total charge of every fragment of a structure separately.  "qeq_block": B (largest structure, atoms) solves the
 Qeq system per structure instead of densely over the whole batch (same result, G B^2 memory instead of N^2).  Optional charge
-loss on reference charges (e.g. Hirshfeld): cfg "charge_label_key" + "charge_weight" (train_3bpa; default off).
+loss on reference charges (e.g. Hirshfeld): cfg "charge_label_key" + "charge_weight" (training.train; default off).
 Charge / spin embedding: "charge_spin_embedding": true adds MLP(Q, 2S+1 - 1) (zero-initialised output) to the
 layer-0 scalars; the spin comes from data.globals['spin'] (cfg "total_spin_key", default 1).  "qeq": false switches
 the Qeq stratum off (embedding-only variant).  Periodic graphs: Ewald per graph (dense, for small cells; see design
@@ -37,9 +37,9 @@ import jax.numpy as jnp
 import jraph
 from flax import nnx
 
-from bam_omat24.long_range import (coulomb_direct, ct_solve, ewald_matrix, ewald_matrix_rows, qeq_solve,
+from race_v2.models.long_range import (coulomb_direct, ct_solve, ewald_matrix, ewald_matrix_rows, qeq_solve,
                                    short_range_part, sr_switch)
-from bam_omat24.race_nnx import RACE, _dense
+from race_v2.models.race import RACE, _dense
 
 LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_hidden": 32, "chi_scale": 1.0,
                "hard_init": 5.0, "chi_init": "pauling", "chi_init_scale": 3.0, "chi_init_missing": "mean", "qeq": True,
@@ -89,7 +89,7 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
 # partition scheme (NBO) from the model charges q (trained against charge_label_key, e.g. lowdin_charges) by the same
 # kind of local redistribution as spin_nbo_head, q^NBO_i = q_i + sum_j t^q_ij (q_j - q_i), on the pairs inside
 # long_range ct_switch (charge moves only where the charge transfer lets it move: the integer charges of separated
-# molecules are kept).  Outputs 'charges_nbo', 'charge_nbo_t'; loss (training_utils, charge_weight): the map applied
+# molecules are kept).  Outputs 'charges_nbo', 'charge_nbo_t'; loss (training.utils, charge_weight): the map applied
 # to the charge LABELS vs the NBO labels (cfg charge_nbo_label_key, default nbo_charges).  OMol25 4M check: Lowdin -> NBO
 # charges differ by RMS 0.44 e, one constant per element pair on bonds explains R^2 0.73.
 # "spin_nbo_head": true (2026-11-14; needs spin_head; an output, not in the energy): the spin populations of a second
@@ -97,7 +97,7 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
 #     m^NBO_i = m_i + sum_j t_ij (m_j - m_i),   t_ij = MLP(h_i + h_j, h_i h_j, r_ij) (1 - C2 switch over spin_nbo_switch)
 # (t symmetric, zero output layer: m^NBO = m at the start; sum m^NBO = sum m exactly; linear in m, so a global spin
 # flip is consistent).  spin_nbo_switch default: long_range ct_switch, so no spin moves between separated molecules.
-# Outputs 'spins_nbo' (from the predicted m) and 'spin_nbo_t' (edges); the loss (training_utils, spin_weight) applies
+# Outputs 'spins_nbo' (from the predicted m) and 'spin_nbo_t' (edges); the loss (training.utils, spin_weight) applies
 # the map to the Lowdin LABELS and compares with the NBO labels (both from the same SCF solution: consistent signs).
 # OMol25 4M check (md_water/spin_label_check.py): one constant t per element pair on bonds already gives R^2 0.76.
 # "spin_energy": true (2026-11-14; needs spin_head): a spin-polarisation energy in INVARIANT spin variables, so that
@@ -121,7 +121,7 @@ LR_DEFAULTS = {"ewald_alpha": 0.3, "ewald_n_real": 2, "ewald_n_recip": 6, "head_
 # <S^2> = S_z (S_z + 1) + 1/2 (sum mu - 2 S_z) per graph (OMol25 Lowdin spins: MAE 0.02 against s_squared).  A
 # restricted singlet gets exactly E_spin = 0.  Delta, A and c start at zero; W starts at zero only with
 # "spin_w_init": "zero" (then the model starts exactly as the model without spin_energy).  Training (spin_weight,
-# training_utils): (mu - |m_ref|)^2, (c - sign(m_ref,i m_ref,j))^2 on pairs with |m_ref| >= 0.1 on both atoms, and
+# training.utils): (mu - |m_ref|)^2, (c - sign(m_ref,i m_ref,j))^2 on pairs with |m_ref| >= 0.1 on both atoms, and
 # the signed head only on graphs with S > 0 (the sign pattern of a singlet is arbitrary).
 # Atomic spin constants W (Hartree) of the highest occupied shell, DFTB (PBE atoms): H 1s-1s, C / N / O 2p-2p.
 # H and C as in the 3ob-3-1 set (H -0.0717, C 2p-2p -0.0227, checked 2026-11-14); N and O from the commonly used table,

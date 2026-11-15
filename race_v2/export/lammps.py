@@ -10,16 +10,16 @@ Exported function, one per padded shape bucket (n_pad atoms, e_pad edges), float
     them as nodes n_local .. n_real-1).  One rank with ghosts mapped to their owners: n_local = n_real.
 
   * receivers = centre atom i, senders = neighbour j (owned index of the image), rvec = x_j(image) - x_i, i.e. the
-    edge vector of the training graphs (data_3bpa.preprocess_graph: r = x_sender - (x_receiver + Sij . cell)).
+    edge vector of the training graphs (data.xyz_graphs.preprocess_graph: r = x_sender - (x_receiver + Sij . cell)).
     The model is evaluated with zero positions, identity cell and Sij = -rvec, so its edge vectors are exactly rvec;
     nothing else in RACEv2 depends on absolute positions.
   * padding: atoms n_real.. are padding (species 0); edges e_real.. must be (n_real, n_real, rvec = 0) -- r = 0
-    edges carry no message (race_nnx, 2026-11-06) and padding-atom energies are masked out.
+    edges carry no message (models.race, 2026-11-06) and padding-atom energies are masked out.
   * energies exclude the isolated-atom / regression E0 (l_train); the per-species E0 table is in the metadata, add it
     in the caller.  Forces and virial follow from dE_drvec: F_i += g_e, F_j -= g_e (F = -dE/dx, r_e = x_j - x_i),
     virial W = -sum_e r_e (x) g_e.
 
-    python -m bam_omat24.export_lammps <config.json> --ckpt <ckpt.pkl> --out <dir> [--backend e3nn|cue]
+    python -m race_v2.export.lammps <config.json> --ckpt <ckpt.pkl> --out <dir> [--backend e3nn|cue]
         [--buckets 128:4096 256:8192 ...] [--check <extxyz>]
 
 --check compares, for every frame of the extxyz, the exported function (deserialised and run by JAX) against the
@@ -44,8 +44,8 @@ def build(cfg_path, ckpt, backend, dtype='float64'):
     import jax
     import jax.numpy as jnp
     from flax import nnx
-    from bam_omat24 import train_3bpa as T
-    from bam_omat24.training_utils import load_checkpoint
+    from race_v2.training import train as T
+    from race_v2.training.utils import load_checkpoint
     cfg = json.load(open(cfg_path))
     cfg['x64'] = True
     cfg['periodic'] = True                       # the weights do not depend on it; periodic path takes Sij / cell
@@ -268,9 +268,9 @@ def check(args, cfg, model, zs, e0, meta, fns):
     import ase.io
     import jax
     import jax.numpy as jnp
-    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
-    from bam_omat24 import train_3bpa as T
-    from bam_omat24.data_nnx import default_collate_fn
+    from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
+    from race_v2.training import train as T
+    from race_v2.data.loaders import default_collate_fn
     cutoff = meta['cutoff']
     frames = ase.io.read(args.check, index=':%d' % args.n_check)
     worst = {'E': 0.0, 'F': 0.0, 'S': 0.0}
@@ -339,7 +339,7 @@ def stage_irreps(model, cutoff):
     """Irreps of the dense node arrays exchanged between stages: [h0, h1, ..., hL], A (eager run on a tiny graph)."""
     import jax.numpy as jnp
     import numpy as np_
-    from bam_omat24.race_nnx import _dense
+    from race_v2.models.race import _dense
     n_pad, e_pad = 4, 8
     sp = jnp.zeros((n_pad,), jnp.int32)
     rec = jnp.array([0, 1, 0, 2, 3, 3, 3, 3], jnp.int32); snd = jnp.array([1, 0, 2, 0, 3, 3, 3, 3], jnp.int32)
@@ -371,7 +371,7 @@ def make_stage_fns(model, cutoff, n_pad, e_pad, k_pad=None):
     import jax
     import jax.numpy as jnp
     import e3nn_jax as e3nn
-    from bam_omat24.race_nnx import _dense
+    from race_v2.models.race import _dense
     hs, ia = stage_irreps(model, cutoff)
     L = len(model.layers)
     cheb = model.residual == "chebyshev"
@@ -389,7 +389,7 @@ def make_stage_fns(model, cutoff, n_pad, e_pad, k_pad=None):
         a = _dense(ctx['atomic_basis']).array if ctx['atomic_basis'] is not None else jnp.zeros((n_pad, 1), rv.dtype)
         return _dense(ctx['features']).array.astype(rv.dtype), a.astype(rv.dtype), local_sum(e_node.reshape(-1), n_local)
 
-    from bam_omat24 import race_nnx as R
+    from race_v2.models import race as R
 
     def layer(i):
         def f(h_prev, h_pp, a, sp, rec, snd, rv, n_real, e_real, n_local):

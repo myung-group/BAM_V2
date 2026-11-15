@@ -12,7 +12,7 @@ everything a torch re-implementation needs to be checked layer by layer:
                          model's energy / forces / stress
   <out>/frames.extxyz    the same structures (positions, cell, numbers) for the torch side
 
-    python -I racev2_torch/tools/dump_jax_reference.py --ckpt <ckpt.pkl> --out <dir> --val <aselmdb dir> [--n 12]
+    python -I race_v2_torch/tools/dump_jax_reference.py --ckpt <ckpt.pkl> --out <dir> --val <aselmdb dir> [--n 12]
 """
 import argparse, json, os, sys
 from pathlib import Path
@@ -23,14 +23,14 @@ ap.add_argument('--ckpt', required=True); ap.add_argument('--out', required=True
 ap.add_argument('--n', type=int, default=12); ap.add_argument('--seed', type=int, default=0)
 ap.add_argument('--repo', default=str(Path(__file__).resolve().parents[2]))
 a = ap.parse_args()
-sys.path.insert(0, a.repo); sys.path.insert(0, os.path.join(a.repo, 'bam_omat24'))
+sys.path.insert(0, a.repo); sys.path.insert(0, os.path.join(a.repo, 'race_v2', 'data'))
 import jax
 jax.config.update('jax_enable_x64', True)
 import jax.numpy as jnp
 import e3nn_jax as e3nn
 from flax import nnx
 import ase, ase.io
-from bam_omat24.predict import Predictor
+from race_v2.inference.predict import Predictor
 import stream_io as S
 
 out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
@@ -122,8 +122,8 @@ def arr(x):
 for fi, at in enumerate(frames):
     g = p._graphs([at])
     import functools, jraph
-    from bam_omat24.data_3bpa import GraphListDataset
-    from bam_omat24.data_nnx import BucketedDataLoader, default_collate_fn
+    from race_v2.data.xyz_graphs import GraphListDataset
+    from race_v2.data.loaders import BucketedDataLoader, default_collate_fn
     T = p._T
     loader = BucketedDataLoader(GraphListDataset(g), batch_size=1, n_buckets=1, shuffle=False, drop_last=False,
                                 rngs=nnx.Rngs(0), max_nodes_per_batch=len(at) + 1)

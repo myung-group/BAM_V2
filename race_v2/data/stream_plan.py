@@ -7,7 +7,7 @@ docs/stream_loader_design.md sections 4.4-4.5).  Importable as a top-level modul
     plan.packs[b][p]  -> row indices of the table (structures) of pack p of bucket b, in stream order
     plan.steps        -> list of (bucket, [pack ids of the n_local devices of this host]) for every step
 
-Packing rule = the fixed-shape loader (data_nnx.fixed_collate_fn): nodes < pad_nodes, edges <= pad_edges,
+Packing rule = the fixed-shape loader (data.loaders.fixed_collate_fn): nodes < pad_nodes, edges <= pad_edges,
 graphs <= max_graphs; greedy next-fit in stream order.  Lock-step across hosts: steps per bucket = min over hosts of
 floor(packs / n_local); counts_allgather(local_counts) -> per-host counts (identity for one host).
 """
@@ -59,7 +59,7 @@ def _budget(n, e, graphs_per_pack):
 
 
 def derive_buckets(n_atoms, n_edges, n_buckets=1, graphs_per_pack=16, max_graphs=64):
-    """Equal-count split by edges per structure; budget per bucket as train_3bpa pad_mode 'fixed'."""
+    """Equal-count split by edges per structure; budget per bucket as training.train pad_mode 'fixed'."""
     n_atoms, n_edges = np.asarray(n_atoms), np.asarray(n_edges)
     if n_buckets <= 1:
         pn, pe = _budget(n_atoms, n_edges, graphs_per_pack)

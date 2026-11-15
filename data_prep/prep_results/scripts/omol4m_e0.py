@@ -1,7 +1,7 @@
 """Per-element reference energies (least squares, training rows only) of OMol25 aselmdb shards, for data_format
 "stream" (the trainer needs atom_energies with e0_mode "isolated").
 
-JAX-free: imports bam_omat24/stream_io.py as a plain module (the package __init__ would import JAX).
+JAX-free: imports race_v2/data/stream_io.py as a plain module (the package __init__ would import JAX).
     BAM_REPO=<repo> python -I omol4m_e0.py --sizes <train size-table dir> --out <dir> [--workers 64] [--max-rows N]
 
 The training sources are taken from <sizes>/sizes_meta.json, so E0 is fitted on exactly the files the trainer reads.
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(os.environ.get('BAM_REPO', '/scratch/t510a13/BAM_V2')) / 'bam_omat24'))
+sys.path.insert(0, str(Path(os.environ.get('BAM_REPO', '/scratch/t510a13/BAM_V2')) / 'race_v2' / 'data'))
 import stream_io as S   # noqa: E402
 
 Z_MAX = 118

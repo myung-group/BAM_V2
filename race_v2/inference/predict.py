@@ -2,7 +2,7 @@
 ctx-RACE evaluate.py adapter): total energies and forces of ase.Atoms frames, with the total charge, spin and
 fragments read as the training config says.
 
-    from bam_omat24.predict import load
+    from race_v2.inference.predict import load
     pred = load('runs/<name>/ckpt.pkl')                  # config from the checkpoint (or config=dict / path)
                                                          # batch_size=16 frames, max_atoms=2048 atoms per batch
     energies, forces = pred.predict(frames)              # energies (n_frames,) eV, forces: list of (n_atoms, 3) eV/Å
@@ -14,7 +14,7 @@ info[fragment_charges_key].  No reference energies or forces are needed.
 Energies are TOTAL energies: the model output plus the config's atom_energies (E0) per atom, plus an optional
 per-element correction from a training-split refit:
 
-    python -m bam_omat24.predict refit runs/<name>/ckpt.pkl --xyz <training split.xyz> [--max-frames 20000]
+    python -m race_v2.inference.predict refit runs/<name>/ckpt.pkl --xyz <training split.xyz> [--max-frames 20000]
         -> runs/<name>/ckpt.species_refit.json, applied by load(...) when present (species_refit=True).
 The refit is a least-squares fit of the training residuals on the element counts (minimum norm), training data only
 (fair protocol).  It corrects the per-composition energy offsets that a single per-atom gauge cannot.
@@ -40,8 +40,8 @@ class Predictor:
     def __init__(self, ckpt_path, config=None, species_refit: bool = True, batch_size: int = 16,
                  max_atoms: int = 2048):
         import jax
-        from bam_omat24 import train_3bpa as T
-        from bam_omat24.training_utils import load_checkpoint
+        from race_v2.training import train as T
+        from race_v2.training.utils import load_checkpoint
         ckpt = load_checkpoint(str(ckpt_path))
         if config is None:
             config = ckpt.get('config')
@@ -94,8 +94,8 @@ class Predictor:
         self._T = T
 
     def _graphs(self, frames):
-        from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
-        from bam_omat24.analyze_errors import _tag_frames
+        from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
+        from race_v2.eval.analyze_errors import _tag_frames
         T, cfg = self._T, self.cfg
         ai = atomic_numbers_to_indices(self.atomic_numbers)
         kw = dict(charge_key=T._get(cfg, 'total_charge_key', None), spin_key=T._get(cfg, 'total_spin_key', None),
@@ -108,7 +108,7 @@ class Predictor:
             # charges q0 / spins s0 per molecule (atoms.arrays['formal_charges'] / ['formal_spins'], else labels,
             # else graph_fields.formal_charges(auto): rules from the bonds), and the restricted / unrestricted flag.
             # Without them the model falls back to Q / N and (2S) / N on every atom.
-            from bam_omat24.graph_fields import formal_charges, formal_spins
+            from race_v2.data.graph_fields import formal_charges, formal_spins
             ck, sk = kw['charge_key'], kw['spin_key']
             for a, g in zip(frames, graphs):
                 S = None
@@ -153,8 +153,8 @@ class Predictor:
     def _run_batch(self, frames, want):
         import jraph
         from flax import nnx
-        from bam_omat24.data_3bpa import GraphListDataset
-        from bam_omat24.data_nnx import BucketedDataLoader, default_collate_fn
+        from race_v2.data.xyz_graphs import GraphListDataset
+        from race_v2.data.loaders import BucketedDataLoader, default_collate_fn
         T, cfg = self._T, self.cfg
         n_tot = sum(len(a) for a in frames)
         # one batch per chunk: lift the loader's node cap (default 256) above the chunk size

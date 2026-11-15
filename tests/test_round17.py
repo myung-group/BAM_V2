@@ -9,7 +9,7 @@ import pytest
 
 from conftest import make_model, as_float64
 from test_equivariance import _check_e3, TOL
-from bam_omat24.utils import compute_node_edge_features
+from race_v2.models.blocks import compute_node_edge_features
 
 V8 = dict(update="linear", readout_mode="gated", message_norm="avg", avg_n_neighbors=16.7, x_mode="basis")
 NU3 = dict(**V8, in_layer_order=3)

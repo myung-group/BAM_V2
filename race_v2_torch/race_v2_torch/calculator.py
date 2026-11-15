@@ -1,15 +1,15 @@
-"""ASE calculator for racev2_torch models (energy, free_energy, forces, stress, energies).
+"""ASE calculator for race_v2_torch models (energy, free_energy, forces, stress, energies).
 
-    from racev2_torch.calculator import RACEv2Calculator
+    from race_v2_torch.calculator import RACEv2Calculator
     atoms.calc = RACEv2Calculator('model.pt')            # device='cpu' | 'cuda'
     atoms.get_potential_energy(); atoms.get_forces(); atoms.get_stress()
 
 Energies are TOTAL energies, model output + sum of the config's atom_energies (E0) per atom in float64, as
-bam_omat24/predict.py does.  Neighbour list: ase.neighborlist.neighbor_list('ijS'), the backend of the training graphs
-(bam_omat24/neighbors.py, BAM_NEIGHBORS=ase): receiver i, sender j, Sij = -S.
+race_v2/inference/predict.py does.  Neighbour list: ase.neighborlist.neighbor_list('ijS'), the backend of the training graphs
+(race_v2/data/neighbors.py, BAM_NEIGHBORS=ase): receiver i, sender j, Sij = -S.
 
 ``jax_compat=True`` rounds positions, cell and volume to float32 before the float64 evaluation, as
-bam_omat24/data_3bpa.preprocess_graph does for the JAX model (use it to reproduce predict.py numbers exactly; the
+race_v2/data_3bpa.preprocess_graph does for the JAX model (use it to reproduce predict.py numbers exactly; the
 default evaluates the given float64 geometry).
 """
 from __future__ import annotations

@@ -1,14 +1,14 @@
 """OMat24 -> jraph graph pickles, with the periodic image shift sign fixed (copy of build_pkl.py).
 
 build_pkl.py stores matscipy's shift S as edges['Sij'] with senders = j, receivers = i.  matscipy
-returns D_ij = x_j - x_i + S_ij . cell, but the model computes (bam_omat24/utils.py,
+returns D_ij = x_j - x_i + S_ij . cell, but the model computes (race_v2/models/blocks.py,
 compute_node_edge_features)
 
     r = x_sender - (x_receiver + Sij . cell) = x_j - x_i - S . cell,
 
 which is not D_ij for an edge that crosses the cell boundary (the vector to the image on the
 other side).  On liquid-water frame 0 (5 A) all 7,878 boundary edges get a wrong length, up to
-130 A off.  Here edges['Sij'] = -S, so r = D_ij (the convention of data_3bpa.preprocess_graph;
+130 A off.  Here edges['Sij'] = -S, so r = D_ij (the convention of data.xyz_graphs.preprocess_graph;
 tests/test_build_pkl_v2.py).  build_pkl.py is left unchanged; pickles written by it carry the
 wrong sign.  fairchem is imported only in __main__ (not needed to build graphs).
 """
@@ -19,7 +19,7 @@ import jraph
 import matscipy.neighbours
 import numpy as np
 from tqdm import tqdm
-from bam_omat24.atom_energies import (
+from race_v2.data.atom_energies import (
     ATOM_ENERGIES,
     ATOMIC_NUMBER_TO_INDEX
 )

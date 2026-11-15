@@ -11,9 +11,9 @@ import pytest
 from flax import nnx
 
 from conftest import ATOMIC_NUMBERS, ATOM_ENERGIES
-from bam_omat24.train_3bpa import COVALENT_RADII  # noqa: F401  (imports train_3bpa before the x64 fixture)
-from bam_omat24 import stream_io as S
-from bam_omat24.stream_data import _to_graph, _cast
+from race_v2.training.train import COVALENT_RADII  # noqa: F401  (imports training.train before the x64 fixture)
+from race_v2.data import stream_io as S
+from race_v2.data.stream_data import _to_graph, _cast
 
 CUTOFF = 5.0
 IDX = {z: i for i, z in enumerate(ATOMIC_NUMBERS)}
@@ -47,7 +47,7 @@ def _perturbed(m, seed, noise=0.3, parts=('pol_', 'lr_head', 'chi0', 'hard0')):
 
 
 def _polar_model(seed=0, lr=None, polar=None):
-    from bam_omat24.race_polar_nnx import RACE_POLAR
+    from race_v2.models.race_polar import RACE_POLAR
     return _perturbed(RACE_POLAR(**KW, rngs=nnx.Rngs(seed), long_range={**LR, **(lr or {})},
                                  polar={**POLAR, **(polar or {})}), seed)
 
@@ -81,7 +81,7 @@ def _batch(sts, extra_nodes=3, extra_edges=11):
 
 
 def test_options():
-    from bam_omat24.race_polar_nnx import RACE_POLAR
+    from race_v2.models.race_polar import RACE_POLAR
     with pytest.raises(ValueError):          # the default (Fukui) charges do not go with the Qeq stratum
         RACE_POLAR(**KW, rngs=nnx.Rngs(0), long_range={**LR, 'qeq': True}, polar={})
     with pytest.raises(ValueError):          # Qeq charges need the Qeq stratum
@@ -143,8 +143,8 @@ def test_energy_bookkeeping(x64):
     charges of width sigma (pair kernel erf(r / 2 sigma) / r, self energy q^2 / (2 sqrt(pi) sigma)):
         E(RACE_POLAR, charges qeq) - E(RACE_LR, coulomb_energy false) = that energy of the Qeq charges,
         E(RACE_LR) - E(RACE_LR, coulomb_energy false)                 = 1/2 q . gamma . q of the Qeq kernel."""
-    from bam_omat24 import long_range, thole
-    from bam_omat24.race_lr_nnx import RACE_LR
+    from race_v2.models import long_range, thole
+    from race_v2.models.race_lr import RACE_LR
     sigma_t = 0.8
     sts = [_molecule(4, charge=1.0), _molecule(5), _molecule(6, charge=-2.0, n=7)]
     batch = _batch(sts)

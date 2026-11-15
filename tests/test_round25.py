@@ -11,7 +11,7 @@ from flax import nnx
 from conftest import make_model, as_float64
 from test_equivariance import _check_e3, TOL
 from test_round24 import V9, _e, _fd_forces
-from bam_omat24.race_nnx import _jackson_gain
+from race_v2.models.race import _jackson_gain
 
 CHEB = dict(**V9, residual="chebyshev", layer_scale=0.5, x_norm="rms")
 TIED = dict(**CHEB, tie_operator=True)
@@ -74,7 +74,7 @@ def test_e3_and_forces_neumann(x64, graph):
 
 def test_neumann_is_partial_resolvent(x64, graph):
     """With a shared operator, h_{t+1} - h_t = M^t u_0 = M (h_t - h_{t-1}) (geometric partial sums)."""
-    import bam_omat24.race_nnx as R
+    import race_v2.models.race as R
     import e3nn_jax as e3nn
     model, g = as_float64(make_model(n_layers=4, **NEUM), graph)
     cap = []
@@ -106,7 +106,7 @@ def test_e3_and_forces_hill_spectral(x64, graph, kw):
 
 def test_hill_init_is_rms_and_gate_values(x64, graph):
     import e3nn_jax as e3nn
-    from bam_omat24.race_nnx import _hill_normalize, _rms_normalize
+    from race_v2.models.race import _hill_normalize, _rms_normalize
     rms = make_model(n_layers=4, **dict(HILL, x_norm="rms"))
     hill = make_model(n_layers=4, **HILL)
     hill_st = nnx.state(hill, nnx.Param)
@@ -128,8 +128,8 @@ def test_spectral_block_operator_norm_is_one(x64):
     """The normalised x projection has operator norm 1 on every irrep block (power iteration on the
     map itself, through lin.__call__, so the weight bookkeeping in _spectral_normalize is checked)."""
     import e3nn_jax as e3nn
-    from bam_omat24.race_nnx import _spectral_normalize
-    from bam_omat24.linear_nnx import Linear
+    from race_v2.models.race import _spectral_normalize
+    from race_v2.models.linear import Linear
     irr_in, irr_out = e3nn.Irreps("6x0e+4x0e+5x1o"), e3nn.Irreps("7x0e+3x1o+2x2e")
     lin = Linear(irreps_in=irr_in, irreps_out=irr_out, biases=False, force_irreps_out=True, rngs=nnx.Rngs(3))
     nnx.update(lin, jax.tree.map(lambda v: v.astype(jnp.float64), nnx.state(lin, nnx.Param)))

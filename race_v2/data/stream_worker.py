@@ -1,9 +1,9 @@
 """Worker side of the streaming loader (stream_data.StreamLoader): JAX-free, and it must stay so.
 
 This file is imported as the TOP-LEVEL module ``stream_worker`` (its directory is on sys.path), never as
-``bam_omat24.stream_worker``: a forkserver worker unpickles the functions by module name, and importing the package
-``bam_omat24`` would load JAX and initialise the GPU backend in every worker (2026-11-11: that killed the workers
-on HANGANG).  ``clean_main()`` stops the workers from re-importing the parent's ``__main__`` (train_3bpa) as well.
+``race_v2.data.stream_worker``: a forkserver worker unpickles the functions by module name, and importing the package
+``race_v2`` would load JAX and initialise the GPU backend in every worker (2026-11-11: that killed the workers
+on HANGANG).  ``clean_main()`` stops the workers from re-importing the parent's ``__main__`` (training.train) as well.
 """
 import os
 import sys
@@ -86,7 +86,7 @@ def _worker_block(task):
                  for st in sts]
 
 
-def _worker_state(names=('jax', 'bam_omat24')):
+def _worker_state(names=('jax', 'race_v2', 'bam_omat24')):
     """Diagnostics: (pid, which of the modules `names` this worker has loaded, its number of threads)."""
     threads = -1
     try:

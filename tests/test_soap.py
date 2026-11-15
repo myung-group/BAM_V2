@@ -1,4 +1,4 @@
-"""SOAP optax port (bam_omat24/soap_optax.py).
+"""SOAP optax port (race_v2/training/soap_optax.py).
 
 (a) vector / scalar leaves == optax.scale_by_adam
 (b) matrix leaves == an independent NumPy port of the reference soap.py
@@ -29,8 +29,8 @@ try:
 except ImportError:  # older jax
     from jax.experimental.shard_map import shard_map
 
-import bam_omat24.soap_optax as soap_optax
-from bam_omat24.soap_optax import ScaleBySoapState, scale_by_soap, soap, soap_leaf_summary
+import race_v2.training.soap_optax as soap_optax
+from race_v2.training.soap_optax import ScaleBySoapState, scale_by_soap, soap, soap_leaf_summary
 
 pytestmark = pytest.mark.usefixtures("x64")
 
@@ -409,7 +409,7 @@ def test_jit_shard_map_nnx_state():
     for i in range(7):
         p_a, s_a = sharded(p_a, s_a, x, species)
         p_b, s_b = plain(p_b, s_b, x, species)
-        if i == 3:   # checkpoint round trip mid-run (training_utils pickles opt_state)
+        if i == 3:   # checkpoint round trip mid-run (training.utils pickles opt_state)
             s_a = pickle.loads(pickle.dumps(jax.device_get(s_a)))
     for la, lb, l0 in zip(jax.tree.leaves(p_a), jax.tree.leaves(p_b), jax.tree.leaves(params)):
         assert la.dtype == jnp.float64 and np.all(np.isfinite(np.asarray(la)))
@@ -493,7 +493,7 @@ def test_integration_snippet(swd):
     cfg = {"optimizer": "soap", "learning_rate": lr, "weight_decay": wd,
            "soap_precondition_frequency": 2, "soap_max_precond_dim": 8, "stratum_weight_decay": swd}
 
-    def _get(c, k, default=None):            # == train_3bpa._get
+    def _get(c, k, default=None):            # == training.train._get
         v = c.get(k, default)
         return default if v is None else v
 

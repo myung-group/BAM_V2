@@ -17,8 +17,8 @@ def _frames(n=300):
 
 
 def test_parallel_graphs_identical():
-    from bam_omat24.data_3bpa import build_graphs
-    from bam_omat24.train_3bpa import DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES
+    from race_v2.data.xyz_graphs import build_graphs
+    from race_v2.training.train import DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES
     fr = _frames()
     a = build_graphs(fr, DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES, 5.0, n_workers=1)
     b = build_graphs(fr, DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES, 5.0, n_workers=3, chunk=64)
@@ -30,21 +30,21 @@ def test_parallel_graphs_identical():
 
 
 def test_no_cache_writes_nothing(tmp_path):
-    from bam_omat24.data_3bpa import load_3bpa_graphs, _cache_path
-    from bam_omat24.train_3bpa import DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES
+    from race_v2.data.xyz_graphs import load_xyz_graphs, _cache_path
+    from race_v2.training.train import DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES
     import shutil
     xyz = tmp_path / 'small.xyz'
     import ase.io
     ase.io.write(str(xyz), _frames(40), format='extxyz')
-    g = load_3bpa_graphs(xyz, DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES, 5.0, use_cache=False, n_workers=2)
+    g = load_xyz_graphs(xyz, DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES, 5.0, use_cache=False, n_workers=2)
     assert len(g) == 40
     assert not _cache_path(xyz, 5.0, DEFAULT_ATOM_ENERGIES, None).exists()
     shutil.rmtree(tmp_path, ignore_errors=True)
 
 
 def test_sizes_tsv_roundtrip_and_tool(tmp_path):
-    from bam_omat24.data_3bpa import build_graphs, graph_sizes, write_sizes_tsv, read_sizes_tsv
-    from bam_omat24.train_3bpa import DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES
+    from race_v2.data.xyz_graphs import build_graphs, graph_sizes, write_sizes_tsv, read_sizes_tsv
+    from race_v2.training.train import DEFAULT_ATOMIC_NUMBERS, DEFAULT_ATOM_ENERGIES
     import ase.io
     fr = _frames(60)
     xyz = tmp_path / 'part.xyz'
@@ -54,7 +54,7 @@ def test_sizes_tsv_roundtrip_and_tool(tmp_path):
     n2, e2 = read_sizes_tsv(tmp_path / 'a.tsv')
     assert np.array_equal(n, n2) and np.array_equal(e, e2)
     # stand-alone tool (no JAX import) counts the same edges
-    r = subprocess.run([sys.executable, '-I', str(ROOT / 'bam_omat24' / 'graph_sizes.py'), str(xyz), '--cutoff', '5.0',
+    r = subprocess.run([sys.executable, '-I', str(ROOT / 'race_v2' / 'data' / 'graph_sizes.py'), str(xyz), '--cutoff', '5.0',
                         '--workers', '2', '--out-dir', str(tmp_path)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     n3, e3 = read_sizes_tsv(tmp_path / 'part.sizes.tsv')

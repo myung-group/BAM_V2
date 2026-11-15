@@ -1,4 +1,4 @@
-"""Multi-dataset stream sources (bam_omat24/stream_io.py, 2026-11-11): seeded subsets per shard, meta-data
+"""Multi-dataset stream sources (race_v2/data/stream_io.py, 2026-11-11): seeded subsets per shard, meta-data
 exclusions, task rules, E0 per task, energy key, mixed periodic / open-boundary graphs, optional charge and dipole
 labels, and the cell columns of the size table.  JAX-free (synthetic aselmdb shards)."""
 import json
@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 lmdb = pytest.importorskip("lmdb")
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bam_omat24"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "race_v2", "data"))
 import stream_io as S  # noqa: E402
 
 Z = [1, 8, 26]

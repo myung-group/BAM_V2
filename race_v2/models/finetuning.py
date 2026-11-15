@@ -22,9 +22,9 @@ from flax import nnx
 
 import jraph
 
-from bam_omat24.utils import energy_forces_stress, MLP
-from bam_omat24.race_nnx import RACE
-from bam_omat24.linear_nnx import Linear as e3nn_nnx_Linear
+from race_v2.models.blocks import energy_forces_stress, MLP
+from race_v2.models.race import RACE
+from race_v2.models.linear import Linear as e3nn_nnx_Linear
 
 
 
@@ -249,7 +249,7 @@ if __name__ == "__main__":
     # Example usage
     import numpy as np
     import pickle
-    from bam_omat24.atom_energies import ATOM_ENERGIES
+    from race_v2.data.atom_energies import ATOM_ENERGIES
 
     print("=" * 70)
     print("Fine-Tuning Learning Module with RACE-Style Equivariant Potential")

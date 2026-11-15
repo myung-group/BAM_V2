@@ -14,8 +14,8 @@ import jax
 import jax.numpy as jnp
 import jraph
 
-from bam_omat24.linear_nnx import Linear as e3nn_nnx_Linear
-from bam_omat24.utils import (
+from race_v2.models.linear import Linear as e3nn_nnx_Linear
+from race_v2.models.blocks import (
     separated_layer_norm,
     MLP,
     compute_node_edge_features,
@@ -351,7 +351,7 @@ if __name__ == "__main__":
     # Example usage
     import numpy as np
     import pickle
-    from bam_omat24.atom_energies import ATOM_ENERGIES
+    from race_v2.data.atom_energies import ATOM_ENERGIES
 
     #logging.basicConfig(level=logging.INFO)
 

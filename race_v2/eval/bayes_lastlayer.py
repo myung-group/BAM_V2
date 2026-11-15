@@ -22,7 +22,7 @@ Outputs per evaluation set: accuracy of the posterior mean and calibration (z-sc
 coverage, Spearman correlation between |error| and the predicted sigma), compared with the deep ensemble of the
 given seed checkpoints (mean, sample std).
 
-    python -m bam_omat24.bayes_lastlayer <config.json> --ckpt <ckpt.pkl> [--ensemble <ckpt> <ckpt> ...]
+    python -m race_v2.eval.bayes_lastlayer <config.json> --ckpt <ckpt.pkl> [--ensemble <ckpt> <ckpt> ...]
         [--dihedral <test_dih.xyz>] [--max-train N] [--max-test N] [--stress auto|on|off] --out <dir>
 """
 from __future__ import annotations
@@ -41,8 +41,8 @@ def build(cfg_path, ckpt, backend=None):
     import jax
     import jax.numpy as jnp
     from flax import nnx
-    from bam_omat24 import train_3bpa as T
-    from bam_omat24.training_utils import load_checkpoint
+    from race_v2.training import train as T
+    from race_v2.training.utils import load_checkpoint
     cfg = json.load(open(cfg_path))
     cfg['x64'] = True
     if backend:
@@ -80,7 +80,7 @@ def zero_readout(model):
 def load_xyz_graphs(path, zs, e0, cutoff):
     """Graphs of an extxyz file; forces only when present (dihedral scans are energy-only)."""
     import ase.io
-    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
+    from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
     idx = atomic_numbers_to_indices(zs)
     out, has_f = [], True
     for a in ase.io.read(path, index=':'):
@@ -113,7 +113,7 @@ def make_fns(model, model0, periodic, jac_chunk=8):
     import jax
     import jax.numpy as jnp
     import jraph
-    from bam_omat24 import race_nnx as R
+    from race_v2.models import race as R
 
     def _ne(m, pos, cell, b):
         if periodic:
@@ -186,8 +186,8 @@ def make_fns(model, model0, periodic, jac_chunk=8):
 def collate(g, n_bucket, e_bucket):
     import jax
     import jax.numpy as jnp
-    from bam_omat24.data_nnx import default_collate_fn
-    from bam_omat24 import train_3bpa as T
+    from race_v2.data.loaders import default_collate_fn
+    from race_v2.training import train as T
     g = T._cast_graphs([g], np.float64)[0]
     b = default_collate_fn([g], batch_size=1, node_bucket_size=n_bucket, edge_bucket_size=e_bucket)
     return jax.tree.map(jnp.asarray, b)

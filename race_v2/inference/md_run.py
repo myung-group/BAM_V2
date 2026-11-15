@@ -1,6 +1,6 @@
 """NVT molecular dynamics with a trained RACE checkpoint (MD-observable benchmarks, Fu et al. TMLR 2023 protocol).
 
-    python -m bam_omat24.md_run <train config json> --ckpt <pkl> --init-xyz <test.xyz> --out <dir>
+    python -m race_v2.inference.md_run <train config json> --ckpt <pkl> --init-xyz <test.xyz> --out <dir>
            [--run 0] [--n-runs 5] [--init-seed 123] [--steps 200000] [--dt 0.25] [--temp 520]
            [--ttime 20] [--save-freq 50] [--chunk 2000]
 
@@ -26,10 +26,10 @@ from ase import units
 from ase.io import read
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary
 
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
-from bam_omat24.data_nnx import default_collate_fn
-from bam_omat24.training_utils import load_checkpoint
+from race_v2.training import train as T
+from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
+from race_v2.data.loaders import default_collate_fn
+from race_v2.training.utils import load_checkpoint
 
 
 class RaceModel:

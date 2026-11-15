@@ -1,4 +1,4 @@
-"""RACEv2 interatomic potential, PyTorch inference re-implementation of bam_omat24/race_nnx.py (class RACE).
+"""RACEv2 interatomic potential, PyTorch inference re-implementation of race_v2/models/race.py (class RACE).
 
 Faithful port in float64 of the configuration family of the MPtrj runs (x_mode basis, x_norm hill, residual chebyshev,
 LayerScale, linear update, message_norm avg, gated stratum readouts, x / f readouts, radial prior, shell-radius radial
@@ -10,7 +10,7 @@ The forward pass keeps the split of the JAX code: ``prelude`` (edge features, em
 ``layer_step`` (one interaction layer + its energy stratum) and ``finalize`` (sum of the strata, scale / shift), so
 that a domain-decomposed MD driver can exchange node features after every layer.
 
-Graph convention (bam_omat24/data_3bpa.preprocess_graph): receivers = i, senders = j, integer shifts ``Sij`` (n_edges, 3)
+Graph convention (race_v2/data_3bpa.preprocess_graph): receivers = i, senders = j, integer shifts ``Sij`` (n_edges, 3)
 with edge vector  r_ij = x_j - (x_i + Sij . cell)  (= x_j - x_i + S . cell for the ASE shift S = -Sij).
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _get(cfg: Dict, key: str, default=None):
     return default if v is None else v
 
 
-# (key, default as in train_3bpa.build_model, allowed values): options the port implements.  Anything else raises.
+# (key, default as in training.train.build_model, allowed values): options the port implements.  Anything else raises.
 _FIXED_OPTIONS = [
     ('model', 'RACE', ('RACE',)),
     ('x_mode', 'species', ('basis',)),
@@ -77,7 +77,7 @@ _FIXED_OPTIONS = [
 
 def resolve_config(cfg: Dict) -> Dict:
     """Training config (as stored in the checkpoint) -> the hyper-parameters of the model, resolved exactly as
-    bam_omat24/train_3bpa.build_model does.  Raises NotImplementedError for options the port does not implement."""
+    race_v2/train_3bpa.build_model does.  Raises NotImplementedError for options the port does not implement."""
     for key, default, allowed in _FIXED_OPTIONS:
         v = _get(cfg, key, default)
         if all(isinstance(a, bool) for a in allowed):
@@ -85,7 +85,7 @@ def resolve_config(cfg: Dict) -> Dict:
         else:
             ok = (not isinstance(v, (bool, dict, list))) and v in allowed
         if not ok:
-            raise NotImplementedError(f"racev2_torch: option {key}={v!r} is not implemented (supported: {allowed})")
+            raise NotImplementedError(f"race_v2_torch: option {key}={v!r} is not implemented (supported: {allowed})")
     if not _get(cfg, 'x64', False):
         import warnings
         warnings.warn("config has x64 false: the JAX model ran in float32, the torch port runs in float64 "
@@ -139,7 +139,7 @@ def resolve_config(cfg: Dict) -> Dict:
 
 # ===================================================================================================== building blocks
 def _sanitize_name(name: str) -> str:
-    """linear_nnx.Linear._sanitize_name: 'w[0,0] 128x0e,128x0e' -> 'weight_w_0_0_128x0e_128x0e'."""
+    """models.linear.Linear._sanitize_name: 'w[0,0] 128x0e,128x0e' -> 'weight_w_0_0_128x0e_128x0e'."""
     s = name.replace("[", "_").replace("]", "_").replace(",", "_").replace(" ", "_").replace(".", "_")
     while "__" in s:
         s = s.replace("__", "_")
@@ -159,7 +159,7 @@ class SpeciesGroups:
 
 
 class EquivariantLinear(nn.Module):
-    """bam_omat24/linear_nnx.Linear (+ e3nn_jax.FunctionalLinear) in the mul_ir layout.
+    """race_v2/linear_nnx.Linear (+ e3nn_jax.FunctionalLinear) in the mul_ir layout.
 
     y_out = sum_{blocks in -> out} path_weight * W^T x_in  (+ bias on 0e outputs), path_weight = sqrt(1 / fan_in),
     fan_in = sum of the input multiplicities feeding the output block (path_normalization "element", gradient
@@ -213,7 +213,7 @@ class EquivariantLinear(nn.Module):
         self._in_slices = self.irreps_in.slices()
 
     def species_weight(self, name: str, rank: Optional[int], z: int) -> torch.Tensor:
-        """W[z] (mul_in, mul_out) of an indexed block (linear_nnx.Linear._get_weight)."""
+        """W[z] (mul_in, mul_out) of an indexed block (models.linear.Linear._get_weight)."""
         w = getattr(self, name)
         if rank is None:
             return w[z]
@@ -258,7 +258,7 @@ class EquivariantLinear(nn.Module):
 
 
 class DenseLinear(nn.Module):
-    """bam_omat24/utils.DenseLinear without bias: x @ weights, weights (in, out)."""
+    """race_v2/utils.DenseLinear without bias: x @ weights, weights (in, out)."""
 
     def __init__(self, n_in: int, n_out: int):
         super().__init__()
@@ -269,7 +269,7 @@ class DenseLinear(nn.Module):
 
 
 class RadialMLP(nn.Module):
-    """bam_omat24/utils.MLP (use_bias False): Dense -> silu -> ... -> Dense (plain silu, not normalised)."""
+    """race_v2/utils.MLP (use_bias False): Dense -> silu -> ... -> Dense (plain silu, not normalised)."""
 
     def __init__(self, sizes: Sequence[int]):
         super().__init__()
@@ -284,7 +284,7 @@ class RadialMLP(nn.Module):
 
 
 def separated_layer_norm(x: torch.Tensor, irreps: Irreps, eps: float = 1e-6) -> torch.Tensor:
-    """bam_omat24/utils.separated_layer_norm: each 0e block centred + RMS-normalised over its channels, all
+    """race_v2/utils.separated_layer_norm: each 0e block centred + RMS-normalised over its channels, all
     non-scalar blocks share one RMS."""
     n = x.shape[0]
     sl = irreps.slices()
@@ -349,7 +349,7 @@ def _tp_paths(irreps1: Irreps, irreps2: Irreps, filter_irs) -> List[Tuple[int, i
 
 
 class EdgeTensorProduct(nn.Module):
-    """Channelwise edge tensor product with gather / scatter (race_nnx.cue_edge_tensor_product, or the e3nn path
+    """Channelwise edge tensor product with gather / scatter (models.race.cue_edge_tensor_product, or the e3nn path
     linear_1(h)[senders] (x) Y -> * R -> scatter_sum):  m_i = sum_{j} R_ij,p,u  (h_j,u (x)_p Y(r_ij)), output blocks in
     the sorted path order (path-major: block mul index = path * mul + u), CG with 'component' normalisation."""
 
@@ -453,7 +453,7 @@ class ChannelwiseProduct(nn.Module):
 
 
 def _expand_per_irrep(gamma: torch.Tensor, irreps: Irreps) -> torch.Tensor:
-    """(num_irreps,) per-channel gains -> (dim,) over the mul_ir layout (race_nnx._scale_irreps)."""
+    """(num_irreps,) per-channel gains -> (dim,) over the mul_ir layout (models.race._scale_irreps)."""
     parts, off = [], 0
     for mul, l, _ in irreps:
         parts.append(gamma[off:off + mul, None].expand(mul, 2 * l + 1).reshape(-1))
@@ -463,7 +463,7 @@ def _expand_per_irrep(gamma: torch.Tensor, irreps: Irreps) -> torch.Tensor:
 
 # ===================================================================================================== modules
 class RACEXReadout(nn.Module):
-    """race_nnx.RACEXReadout (norm=True, linear=False): separated LN / sqrt(<N>) -> indexed Linear -> Linear(+b)
+    """models.race.RACEXReadout (norm=True, linear=False): separated LN / sqrt(<N>) -> indexed Linear -> Linear(+b)
     -> normalised silu -> Linear(+b) -> 0e."""
 
     def __init__(self, hidden_irreps: Irreps, x_irreps: Irreps, n_species: int, avg_n_neighbors: float,
@@ -490,7 +490,7 @@ class RACEXReadout(nn.Module):
 
 
 class RACEConvolution(nn.Module):
-    """race_nnx.RACEConvolution for x_mode basis, update linear, message_norm avg, readout gated, residual
+    """models.race.RACEConvolution for x_mode basis, update linear, message_norm avg, readout gated, residual
     chebyshev (in_layer_order 1, no sym contraction, no msg_lmax)."""
 
     def __init__(self, input_irreps: Irreps, hidden_irreps: Irreps, sh_irreps: Irreps, n_species: int,
@@ -568,7 +568,7 @@ class RACEConvolution(nn.Module):
 
 
 class RACEv2(nn.Module):
-    """RACEv2 (race_nnx.RACE) in float64.  Build with ``RACEv2(resolve_config(cfg))`` or ``RACEv2.load(path)``."""
+    """RACEv2 (models.race.RACE) in float64.  Build with ``RACEv2(resolve_config(cfg))`` or ``RACEv2.load(path)``."""
 
     def __init__(self, hp: Dict):
         super().__init__()
@@ -608,7 +608,7 @@ class RACEv2(nn.Module):
             self.register_buffer("uff_table", torch.tensor(C.uff_rows(z), dtype=torch.float64), persistent=False)
             self.register_buffer("species_radii", torch.tensor(C.covalent_radii(z), dtype=torch.float64),
                                  persistent=False)
-        # radial regularity prior (race_nnx.RACE.__init__ radial_scales)
+        # radial regularity prior (models.race.RACE.__init__ radial_scales)
         radial_scales = [None] * self.n_layers
         rp = hp.get('radial_prior')
         if rp:
@@ -693,7 +693,7 @@ class RACEv2(nn.Module):
         return r_feat, r_dist
 
     def prelude(self, species, senders, receivers, r_feat, r_dist, cutoff_e=None) -> Dict:
-        """race_nnx.RACE._prelude: edge features, species embedding, UFF repulsion stratum, atomic basis A_i.
+        """models.race.RACE._prelude: edge features, species embedding, UFF repulsion stratum, atomic basis A_i.
 
         r_feat / r_dist: edge vectors (see edge_vectors); cutoff_e: per-edge cutoff of the Bessel basis and its
         envelope (periodic graphs: globals['cutoff'] per graph, clamped to >= 1; default the model cutoff)."""
@@ -759,7 +759,7 @@ class RACEv2(nn.Module):
                     layer_parts={"node": [], "x": [], "f": []})
 
     def x_features(self, ctx: Dict, i: int) -> torch.Tensor:
-        """x_i of layer i: hill-normalised x_proj_i(A_i) (race_nnx._hill_normalize)."""
+        """x_i of layer i: hill-normalised x_proj_i(A_i) (models.race._hill_normalize)."""
         x = self.x_projs[i](ctx['atomic_basis'])
         ab = self.x_hill[i]
         sp = ctx['species']
@@ -768,7 +768,7 @@ class RACEv2(nn.Module):
         return x * torch.rsqrt(ms) * g
 
     def layer_step(self, ctx: Dict, i: int, features, prev_features=None):
-        """race_nnx.RACE._layer_step: interaction layer i -> (new node features, energy stratum of the layer).
+        """models.race.RACE._layer_step: interaction layer i -> (new node features, energy stratum of the layer).
         prev_features: input features of layer i-1 (Chebyshev residual, i >= 2), else None."""
         layer = self.layers[i]
         sp, groups = ctx['species'], ctx['groups']
@@ -786,7 +786,7 @@ class RACEv2(nn.Module):
         return features, gain * (e_node + e_x + e_f)
 
     def finalize(self, ctx: Dict, features) -> Dict:
-        """race_nnx.RACE._finalize: node energy = scale * (sum of the strata) + shift (variance heads omitted)."""
+        """models.race.RACE._finalize: node energy = scale * (sum of the strata) + shift (variance heads omitted)."""
         outputs = ctx['outputs']
         strata = torch.stack(outputs, dim=0) * self.scale
         node_energies = torch.sum(torch.stack(outputs, dim=1), dim=-1, keepdim=True)
@@ -795,7 +795,7 @@ class RACEv2(nn.Module):
                 'strata_parts': {k: torch.stack(v, dim=0) * self.scale for k, v in ctx['layer_parts'].items()}}
 
     def run_layers(self, ctx: Dict) -> Dict:
-        """All layers with the Chebyshev history, then finalize (race_nnx.RACE.node_energies)."""
+        """All layers with the Chebyshev history, then finalize (models.race.RACE.node_energies)."""
         features = ctx['features']
         hist = []
         rec = ctx.get('record')                 # dict: keep layer inputs / outputs / x features (validation)

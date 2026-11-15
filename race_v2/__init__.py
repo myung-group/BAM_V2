@@ -1,18 +1,22 @@
-"""BAM-OMAT24: Equivariant ML potentials with JAX/Flax NNX."""
+"""race_v2: the RACE v2 equivariant ML potentials (JAX / Flax NNX) of the BAM_V2 repository.
+
+Subpackages: models, data, training, inference, eval, export.  The old package name ``bam_omat24`` and its module
+names (``bam_omat24.train_3bpa`` ...) remain importable through the compatibility aliases in ``bam_omat24/``.
+"""
 
 import os as _os
 if _os.environ.get("BAM_DISTRIBUTED") == "1":
     # multi-node data parallel: jax.distributed must start before the imports below touch the backend
-    from bam_omat24.distributed import init_distributed as _init_distributed
+    from race_v2.training.distributed import init_distributed as _init_distributed
     _init_distributed()
 
 # Models
-from bam_omat24.nequip_nnx import Nequip
-from bam_omat24.race_nnx import RACE
-from bam_omat24.finetuning_nnx import FineTuningPotential, filter_ft_params
+from race_v2.models.nequip import Nequip
+from race_v2.models.race import RACE
+from race_v2.models.finetuning import FineTuningPotential, filter_ft_params
 
 # Model building blocks
-from bam_omat24.utils import (
+from race_v2.models.blocks import (
     bessel_basis,
     polynomial_cutoff,
     separated_layer_norm,
@@ -22,16 +26,16 @@ from bam_omat24.utils import (
     node_graph_idx,
     energy_forces_stress,
 )
-from bam_omat24.linear_nnx import Linear as EquivariantLinear
+from race_v2.models.linear import Linear as EquivariantLinear
 
 # Data
-from bam_omat24.data_nnx import (
+from race_v2.data.loaders import (
     Dataset,
     BucketedDataLoader,
     MultiDeviceDataLoader,
     setup_mesh,
 )
-from bam_omat24.atom_energies import (
+from race_v2.data.atom_energies import (
     ATOM_ENERGIES,
     ATOMIC_NUMBERS,
     ATOMIC_NUMBER_TO_INDEX,
@@ -39,7 +43,7 @@ from bam_omat24.atom_energies import (
 )
 
 # Training utilities
-from bam_omat24.training_utils import (
+from race_v2.training.utils import (
     huber_loss,
     compute_loss,
     squeeze_batch,

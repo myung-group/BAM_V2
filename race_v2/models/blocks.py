@@ -1,7 +1,7 @@
 """Shared utilities for equivariant ML potential models.
 
 This module contains model-agnostic building blocks used across
-nequip_nnx, race_nnx, and finetuning_nnx.
+models.nequip, models.race, and models.finetuning.
 """
 
 import math

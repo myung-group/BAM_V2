@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 
 from conftest import ATOMIC_NUMBERS, ATOM_ENERGIES, pad_single, random_rotation, as_float64
-# imported at module level: train_3bpa forces float32 when it is first imported, which would undo the x64 fixture
-from bam_omat24.train_3bpa import element_shell_radii, COVALENT_RADII  # noqa: E402
+# imported at module level: training.train forces float32 when it is first imported, which would undo the x64 fixture
+from race_v2.training.train import element_shell_radii, COVALENT_RADII  # noqa: E402
 from test_oam_stress import ZS, _cell, _graph, _f64  # noqa: E402
 
 MADELUNG_NACL = 1.747564594633
@@ -24,7 +24,7 @@ def _nacl(a=5.64):
 @pytest.mark.parametrize('alpha', [0.5, 0.6, 0.75])
 def test_ewald_madelung_and_alpha_independence(x64, alpha):
     import jax.numpy as jnp
-    from bam_omat24.long_range import ewald_matrix, K_COULOMB
+    from race_v2.models.long_range import ewald_matrix, K_COULOMB
     pos, cell, q = _nacl()
     sigma = jnp.full((8,), 1e-3)
     g = ewald_matrix(jnp.asarray(pos), jnp.asarray(cell), sigma, alpha, n_real=3, n_recip=10)
@@ -35,7 +35,7 @@ def test_ewald_madelung_and_alpha_independence(x64, alpha):
 
 def test_ewald_rows_batch_matches_single(x64):
     import jax.numpy as jnp
-    from bam_omat24.long_range import ewald_matrix, ewald_matrix_rows
+    from race_v2.models.long_range import ewald_matrix, ewald_matrix_rows
     rng = np.random.default_rng(0)
     p1, c1 = rng.uniform(0, 6, (5, 3)), np.diag([6.0, 6.5, 7.0])
     p2, c2 = rng.uniform(0, 5, (4, 3)), np.array([[5.0, 0, 0], [1.0, 5.5, 0], [0.5, 0.3, 6.0]])
@@ -49,7 +49,7 @@ def test_ewald_rows_batch_matches_single(x64):
 
 def test_qeq_conserves_charge_and_is_optimal(x64):
     import jax.numpy as jnp
-    from bam_omat24.long_range import coulomb_direct, qeq_solve, K_COULOMB
+    from race_v2.models.long_range import coulomb_direct, qeq_solve, K_COULOMB
     rng = np.random.default_rng(1)
     N, G = 9, 3                                  # graphs of 4 and 4 atoms, last node + last graph = padding
     node_graph = jnp.asarray([0, 0, 0, 0, 1, 1, 1, 1, 2])
@@ -70,7 +70,7 @@ def test_qeq_conserves_charge_and_is_optimal(x64):
 
 def _lr_model(seed=0, lr=None):
     from flax import nnx
-    from bam_omat24.race_lr_nnx import RACE_LR
+    from race_v2.models.race_lr import RACE_LR
     return RACE_LR(n_species=4, lmax=2, cutoff=5.0, hidden_irreps="16x0e + 16x1o + 16x2e", n_layers=2,
                    radial_basis_size=8, radial_mlp_size=16, radial_mlp_layers=2, mlp_init_scale=4.0, shift=0.0,
                    scale=1.0, avg_n_neighbors=20.0, atom_energies=ATOM_ENERGIES, l_train=True, periodic=False,
@@ -126,7 +126,7 @@ def test_chi_init_pauling():
     """chi_init 'pauling' (the default since 2026-11-07): chi0 = 3 eV x (Pauling - mean); 'zero' when asked."""
     import jax.numpy as jnp
     from flax import nnx
-    from bam_omat24.race_lr_nnx import RACE_LR, PAULING
+    from race_v2.models.race_lr import RACE_LR, PAULING
     kw = dict(n_species=4, lmax=1, cutoff=5.0, hidden_irreps="8x0e + 8x1o", n_layers=1, radial_basis_size=4,
               radial_mlp_size=8, radial_mlp_layers=1, mlp_init_scale=4.0, shift=0.0, scale=1.0, avg_n_neighbors=10.0,
               atom_energies=ATOM_ENERGIES, l_train=True, periodic=False, x_mode="species", rngs=nnx.Rngs(0),
@@ -149,7 +149,7 @@ def test_charge_loss_term(x64, graph):
     import jax
     import jax.numpy as jnp
     from flax import nnx
-    from bam_omat24.training_utils import compute_loss
+    from race_v2.training.utils import compute_loss
     model, g = as_float64(_lr_model(), pad_single(graph))
     model.chi0.value = jnp.asarray([0.3, -0.2, 0.1, -0.4])
     n = int(g.n_node[0])
@@ -183,7 +183,7 @@ def test_ref_charges_in_graph(graph, frame):
 
 def _cs_model(qeq, seed=0, **lr):
     from flax import nnx
-    from bam_omat24.race_lr_nnx import RACE_LR
+    from race_v2.models.race_lr import RACE_LR
     return RACE_LR(n_species=4, lmax=2, cutoff=5.0, hidden_irreps="16x0e + 16x1o + 16x2e", n_layers=2,
                    radial_basis_size=8, radial_mlp_size=16, radial_mlp_layers=2, mlp_init_scale=4.0, shift=0.0,
                    scale=1.0, avg_n_neighbors=20.0, atom_energies=ATOM_ENERGIES, l_train=True, periodic=False,
@@ -261,7 +261,7 @@ def test_charge_spin_embedding(x64, graph):
 def test_charge_spin_embedding_with_qeq_and_options(x64, graph, frame):
     import jax
     import jax.numpy as jnp
-    from bam_omat24.race_lr_nnx import RACE_LR
+    from race_v2.models.race_lr import RACE_LR
     from conftest import preprocess_graph, atomic_numbers_to_indices, CUTOFF
     m, g = as_float64(_cs_model(qeq=True), pad_single(graph))
     g = g._replace(globals={**g.globals, 'charge': np.array([1.0, 0.0]), 'spin': np.array([2.0, 1.0])})
@@ -281,7 +281,7 @@ def test_charge_spin_embedding_with_qeq_and_options(x64, graph, frame):
 
 def _periodic_lr_model(ewald):
     from flax import nnx
-    from bam_omat24.race_lr_nnx import RACE_LR
+    from race_v2.models.race_lr import RACE_LR
     return RACE_LR(n_species=len(ZS), lmax=2, cutoff=5.0, hidden_irreps="16x0e + 16x1o + 16x2e", n_layers=2,
                    radial_basis_size=8, radial_mlp_size=16, radial_mlp_layers=2, mlp_init_scale=4.0, shift=0.0,
                    scale=1.0, avg_n_neighbors=30.0, atom_energies=[0.0] * len(ZS), l_train=True, periodic=True,
@@ -469,15 +469,15 @@ def test_short_range_switch_periodic_stress(x64):
 
 
 def test_predict_api_and_species_refit(tmp_path, frame):
-    """bam_omat24.predict: the Predictor reproduces model + E0 of a checkpoint, returns Qeq charges that sum to the
+    """race_v2.inference.predict: the Predictor reproduces model + E0 of a checkpoint, returns Qeq charges that sum to the
     total charge, and the training-split species refit recovers per-element energy offsets."""
     import io
     import jax
     import jax.numpy as jnp
-    from bam_omat24 import train_3bpa as T
-    from bam_omat24.training_utils import save_checkpoint
-    from bam_omat24.predict import load, species_refit
-    from bam_omat24.data_3bpa import load_frames
+    from race_v2.training import train as T
+    from race_v2.training.utils import save_checkpoint
+    from race_v2.inference.predict import load, species_refit
+    from race_v2.data.xyz_graphs import load_frames
     cfg = {"model": "RACE_LR", "atomic_numbers": ATOMIC_NUMBERS, "atom_energies": ATOM_ENERGIES, "cutoff": 5.0,
            "hidden_size": 8, "lmax": 1, "n_layers": 1, "radial_mlp_size": 8, "radial_mlp_layers": 1,
            "avg_n_neighbors": 15.0, "tp_backend": "e3nn", "total_charge_key": "charge", "x64": False,
@@ -491,7 +491,7 @@ def test_predict_api_and_species_refit(tmp_path, frame):
         a.info['charge'] = [0, 1, -1, 0, 1, 0][i]
     p = load(ck)
     e, f = p.predict(frames)
-    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
+    from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
     from flax import nnx
     model = nnx.merge(graphdef, params)
     a = frames[1]
@@ -520,10 +520,10 @@ def test_predict_atom_budget_batches(tmp_path):
     for frames of about 1000 atoms."""
     import io
     import ase
-    from bam_omat24 import train_3bpa as T
-    from bam_omat24.training_utils import save_checkpoint
-    from bam_omat24.predict import load
-    from bam_omat24.data_3bpa import load_frames
+    from race_v2.training import train as T
+    from race_v2.training.utils import save_checkpoint
+    from race_v2.inference.predict import load
+    from race_v2.data.xyz_graphs import load_frames
     cfg = {"model": "RACE_LR", "atomic_numbers": ATOMIC_NUMBERS, "atom_energies": ATOM_ENERGIES, "cutoff": 5.0,
            "hidden_size": 8, "lmax": 1, "n_layers": 1, "radial_mlp_size": 8, "radial_mlp_layers": 1,
            "avg_n_neighbors": 15.0, "tp_backend": "e3nn", "total_charge_key": "charge", "x64": False,
@@ -621,7 +621,7 @@ def test_train_only_freezes_other_leaves():
     the reported freeze mask marks exactly those leaves."""
     import io
     import jax, jax.numpy as jnp
-    from bam_omat24 import train_3bpa as T
+    from race_v2.training import train as T
     cfg = {"model": "RACE_LR", "atomic_numbers": ATOMIC_NUMBERS, "atom_energies": ATOM_ENERGIES, "cutoff": 5.0,
            "hidden_size": 8, "lmax": 1, "n_layers": 1, "radial_mlp_size": 8, "radial_mlp_layers": 1,
            "avg_n_neighbors": 15.0, "tp_backend": "e3nn", "x64": False, "learning_rate": 1e-2,

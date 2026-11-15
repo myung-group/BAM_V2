@@ -6,7 +6,7 @@ import matscipy.neighbours
 import numpy as np
 from tqdm import tqdm
 from fairchem.core.datasets import AseDBDataset
-from bam_omat24.atom_energies import (
+from race_v2.data.atom_energies import (
     ATOM_ENERGIES,
     ATOMIC_NUMBER_TO_INDEX
 )

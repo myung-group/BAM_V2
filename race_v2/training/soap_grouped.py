@@ -1,6 +1,6 @@
 """Shape-grouped SOAP (review §13, docs/RACE_SOAP_speedup_plan_2026-10-29.md).
 
-The algorithm of ``bam_omat24/soap_optax.py`` (same maths, same Householder QR / eigh unless
+The algorithm of ``race_v2/training/soap_optax.py`` (same maths, same Householder QR / eigh unless
 ``orth='cholqr'``) with every same-shape matrix (and every species slice of a 3-D leaf) stacked
 into one batched array, so one optimizer step issues O(#groups) instead of O(#leaves) kernels.
 The per-leaf ``scale_by_soap`` stays the reference implementation (tests/test_soap_grouped.py).
@@ -37,7 +37,7 @@ import jax.numpy as jnp
 import optax
 from jax import lax
 
-from bam_omat24.soap_optax import ScaleBySoapState, _Spec, _spec, _mm, _t
+from race_v2.training.soap_optax import ScaleBySoapState, _Spec, _spec, _mm, _t
 
 
 class ScaleBySoapGroupedState(NamedTuple):
@@ -289,7 +289,7 @@ def soap_grouped_build(b1=0.95, b2=0.95, eps=1e-8, precondition_frequency=10, ma
                     cols[5][mb.leaf] = gs.qr[g.key][sl].reshape(lead + (g.n, g.n))
         return ScaleBySoapState(gs.count, *[treedef.unflatten(c) for c in cols])
 
-    from bam_omat24.soap_optax import scale_by_soap as _per_leaf_soap
+    from race_v2.training.soap_optax import scale_by_soap as _per_leaf_soap
     init_per_leaf = _per_leaf_soap(b1=b1, b2=b2, eps=eps, precondition_frequency=freq,
                                    max_precond_dim=max_precond_dim, shampoo_beta=shampoo_beta,
                                    precondition_1d=precondition_1d).init

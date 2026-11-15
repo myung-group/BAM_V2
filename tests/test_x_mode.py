@@ -42,7 +42,7 @@ def test_node_scalar_x_feats_vary_within_element(graph):
     model = make_model(x_mode="node_scalar")
     g = pad_single(graph)
     # run node_energies manually up to layer-1 input features
-    from bam_omat24.utils import compute_node_edge_features, separated_layer_norm
+    from race_v2.models.blocks import compute_node_edge_features, separated_layer_norm
     feats, rb, sh = compute_node_edge_features(
         g.nodes["positions"], None, None, g, model.n_species, model.cutoff,
         model.radial_basis_size, model.radial_polynomial_p, model.lmax, False)

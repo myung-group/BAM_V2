@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'bam_omat24'))
+sys.path.insert(0, str(ROOT / 'race_v2' / 'data'))
 import stream_io as S  # noqa: E402
 import stream_plan as P  # noqa: E402
 
@@ -45,8 +45,8 @@ FIELDS = dict(charge_key='charge', spin_key='spin', charge_label_key='ref_charge
 @pytest.mark.parametrize('periodic', [False, True])
 def test_graph_fields_equal_in_memory(tmp_path, periodic):
     import ase.io
-    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
-    from bam_omat24.stream_data import _to_graph
+    from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
+    from race_v2.data.stream_data import _to_graph
     from graph_fields import field_keys
     p = tmp_path / 'f.xyz'
     ase.io.write(str(p), _frames(periodic=periodic), format='extxyz')
@@ -103,8 +103,8 @@ def _table(tmp_path, n=60):
 
 def test_eval_set_every_structure_once(tmp_path):
     import jax
-    from bam_omat24.data_nnx import setup_mesh
-    from bam_omat24.stream_data import StreamEvalSet
+    from race_v2.data.loaders import setup_mesh
+    from race_v2.data.stream_data import StreamEvalSet
     import jraph
     t = _table(tmp_path)
     bk = P.derive_buckets(t['n_atoms'], t['n_edges'], n_buckets=2, graphs_per_pack=4, max_graphs=8)
@@ -129,8 +129,8 @@ def test_eval_set_every_structure_once(tmp_path):
 @pytest.mark.parametrize('mix', [1, 4])
 def test_stream_steps_resume_cursor(tmp_path, mix):
     """take(5) + take(7) from a fresh StreamSteps at the saved cursor = take(12) in one go (same packs)."""
-    from bam_omat24.data_nnx import setup_mesh
-    from bam_omat24.stream_data import StreamLoader, StreamSteps
+    from race_v2.data.loaders import setup_mesh
+    from race_v2.data.stream_data import StreamLoader, StreamSteps
     t = _table(tmp_path, 80)
     bk = P.derive_buckets(t['n_atoms'], t['n_edges'], n_buckets=1, graphs_per_pack=4, max_graphs=8)
     mesh, nd = setup_mesh()

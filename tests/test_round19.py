@@ -1,11 +1,11 @@
-"""Round-19: first-order Taylor augmentation of the training set (train_3bpa, config taylor_aug)."""
+"""Round-19: first-order Taylor augmentation of the training set (training.train, config taylor_aug)."""
 import json
 import numpy as np
 import pytest
 from flax import nnx
 
 from conftest import make_model, pad_single
-from bam_omat24.training_utils import compute_loss
+from race_v2.training.utils import compute_loss
 
 
 class _DS:
@@ -14,7 +14,7 @@ class _DS:
 
 
 def _augment(graphs, n_aug, delta, seed=42):
-    """Run the taylor_aug block of train_3bpa.train on a list of graphs (extracted logic)."""
+    """Run the taylor_aug block of training.train.train on a list of graphs (extracted logic)."""
     rng = np.random.RandomState(seed + 7)
     out = []
     for g in graphs:
@@ -33,9 +33,9 @@ def _augment(graphs, n_aug, delta, seed=42):
 
 
 def test_taylor_aug_source_matches_train_3bpa():
-    """The augmentation logic above must be the one in train_3bpa (guard against drift)."""
+    """The augmentation logic above must be the one in training.train (guard against drift)."""
     import inspect
-    from bam_omat24 import train_3bpa as T
+    from race_v2.training import train as T
     src = inspect.getsource(T.train)
     for frag in ("ta_cfg = _get(cfg, 'taylor_aug', None)", "np.sum(frc * d)", "'loss_weight': np.zeros((n,), np.float32)",
                  "* (1 + n_aug)", "rng.normal(size=(n, 3))"):

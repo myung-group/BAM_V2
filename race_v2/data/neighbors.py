@@ -1,10 +1,10 @@
 """Neighbour search of the training graphs, without JAX (importable by stand-alone tools: ``import neighbors`` from
-this directory, or ``bam_omat24.neighbors``).
+this directory, or ``race_v2.data.neighbors``).
 
     src, dst, S = neighbor_pairs(atoms, cutoff)
 
 src = receiver i, dst = sender j, S = integer image shift of j (periodic) or None.  Same convention as the graphs of
-``data_3bpa.preprocess_graph``: the model edge vector is x_j - (x_i + Sij . cell) with Sij = -S.
+``data.xyz_graphs.preprocess_graph``: the model edge vector is x_j - (x_i + Sij . cell) with Sij = -S.
 
 Backend: environment variable BAM_NEIGHBORS = "ase" (default: ASE for periodic, matscipy for molecules) or "vesin"
 (C++ cell list, ``pip install vesin``; 2026-11-09 local test: the same pair set as ASE on 200 periodic Au2/MgO

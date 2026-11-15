@@ -1,4 +1,4 @@
-"""Thole phase 2 (bam_omat24/thole.py, stream_io.py) against BAM-torch: electrode / charge-group constraints,
+"""Thole phase 2 (race_v2/models/thole.py, stream_io.py) against BAM-torch: electrode / charge-group constraints,
 contact charge relaxation, fragment unwrapping and the slab dipole correction.  Reference values:
 tests/data/thole_torch_ref2.npz (tests/data/make_thole_torch_ref2.py, run with torch and BAM-torch)."""
 import importlib.util
@@ -12,10 +12,10 @@ import jax
 import jax.numpy as jnp
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_spec = importlib.util.spec_from_file_location("thole", os.path.join(_HERE, "..", "bam_omat24", "thole.py"))
+_spec = importlib.util.spec_from_file_location("thole", os.path.join(_HERE, "..", "race_v2", "models", "thole.py"))
 TH = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(TH)
-sys.path.insert(0, os.path.join(_HERE, "..", "bam_omat24"))
+sys.path.insert(0, os.path.join(_HERE, "..", "race_v2", "data"))
 import stream_io as S  # noqa: E402
 
 REF = np.load(os.path.join(_HERE, "data", "thole_torch_ref2.npz"))

@@ -5,14 +5,14 @@ terms.  Run in a Slurm job (JAX)."""
 import numpy as np
 
 from conftest import ATOMIC_NUMBERS
-from bam_omat24.train_3bpa import COVALENT_RADII  # noqa: F401  (imports train_3bpa before the x64 fixture)
+from race_v2.training.train import COVALENT_RADII  # noqa: F401  (imports training.train before the x64 fixture)
 from test_race_polar_qeq import _polar_model, _molecule, _batch, IDX, CUTOFF, FIELDS  # noqa: E402
 
 BOHR = 0.529177210903
 
 
 def test_stream_quadrupole_and_spin_labels():
-    from bam_omat24 import stream_io as S
+    from race_v2.data import stream_io as S
     st = _molecule(0, charge=0.0, n=6)
     st['info'] = {'charge': 0, 'spin': 3, 'unrestricted': True,
                   'multipoles': [[0.0, 0.0, 0.0], [0.1, -0.2, 0.3], [-30.0, -31.0, -29.0, 0.5, -0.25, 0.75]],
@@ -79,14 +79,14 @@ def test_spin_head_sums_to_2S(x64):
 def test_quadrupole_and_spin_loss_terms(x64):
     import jax
     import jax.numpy as jnp
-    from bam_omat24.training_utils import compute_loss
+    from race_v2.training.utils import compute_loss
     m = _polar_model(3, lr={'spin_head': True})
     sts = [_molecule(8), _molecule(9, charge=-1.0)]
     for st in sts:
         st['info'].update(multipoles=[[0, 0, 0], [0, 0, 0], [-30.0, -31.0, -29.0, 0.4, 0.0, -0.2]], unrestricted=False)
     gs = []
-    from bam_omat24 import stream_io as S
-    from bam_omat24.stream_data import _to_graph, _cast
+    from race_v2.data import stream_io as S
+    from race_v2.data.stream_data import _to_graph, _cast
     import jraph
     for st in sts:
         d = _cast(S.graph_arrays(st, IDX, np.zeros(4), CUTOFF, dict(FIELDS, quadrupole=True,
@@ -113,7 +113,7 @@ def test_quadrupole_and_spin_loss_terms(x64):
 
 
 def test_charge_label_scale_keeps_the_total():
-    from bam_omat24.graph_fields import extra_fields
+    from race_v2.data.graph_fields import extra_fields
     info = {'charge': -1, 'nbo_charges': [-0.9, 0.45, -1.0, 0.45]}
     n, _ = extra_fields(info, {}, 4, charge_key='charge', charge_label_key='nbo_charges', charge_label_scale=0.75)
     q = np.asarray(n['ref_charges'], np.float64)

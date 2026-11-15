@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from conftest import ATOMIC_NUMBERS  # noqa: F401
-from bam_omat24.train_3bpa import COVALENT_RADII  # noqa: F401  (imports train_3bpa before the x64 fixture)
+from race_v2.training.train import COVALENT_RADII  # noqa: F401  (imports training.train before the x64 fixture)
 from test_race_polar_qeq import _polar_model, _molecule, KW, IDX, FIELDS, CUTOFF, _name  # noqa: E402
 
 SE = {'spin_head': True, 'spin_energy': True}
@@ -19,8 +19,8 @@ HEADS = ['sp_delta0', 'sp_w', 'sp_j', 'sp_delta.kernel', 'sp_mu.kernel', 'sp_c2.
 def _batch(sts, extra_nodes=3, extra_edges=11):
     """as test_race_polar_qeq._batch, with the spin labels / unrestricted flag of the rows (stream_io spin_labels)"""
     import jraph
-    from bam_omat24 import stream_io as S
-    from bam_omat24.stream_data import _to_graph, _cast
+    from race_v2.data import stream_io as S
+    from race_v2.data.stream_data import _to_graph, _cast
     gs = []
     for st in sts:
         d = _cast(S.graph_arrays(st, IDX, np.zeros(4), CUTOFF, dict(FIELDS, spin_labels={'key': 'lowdin_spins'})),
@@ -110,7 +110,7 @@ def test_restricted_singlet_is_zero(x64):
 
 
 def test_pair_formula_and_symmetry(x64):
-    from bam_omat24.long_range import sr_switch
+    from race_v2.models.long_range import sr_switch
     m = _noisy(_polar_model(3, lr=SE), scale=0.5)
     m.sp_delta0.value = 0 * m.sp_delta0.value; m.sp_w.value = 0 * m.sp_w.value
     m.sp_delta.kernel.value = 0 * m.sp_delta.kernel.value; m.sp_delta.bias.value = 0 * m.sp_delta.bias.value
@@ -159,7 +159,7 @@ def test_symmetric_dimer_broken_symmetry(x64):
     rc = np.asarray(m.cov_r)[1]
     kap = 2 * np.log1p(np.exp(float(np.asarray(m.sp_kappa.value)[1])))
     r_on, r_off = m.lr['spin_pair_switch']
-    from bam_omat24.long_range import sr_switch
+    from race_v2.models.long_range import sr_switch
     J = 0.2 * np.exp(-kap * (2.2 - 2 * rc)) * (1.0 - float(sr_switch(2.2, r_on, r_off)))
     assert abs((es[1.0] - es[-1.0]) - 2 * J * np.log1p(np.e) ** 2) < 1e-9 and es[-1.0] < es[1.0]
 
@@ -192,7 +192,7 @@ def test_forces_and_batch_independence(x64):
 def test_spin_loss_terms(x64):
     import jraph
     from flax import nnx
-    from bam_omat24.training_utils import compute_loss
+    from race_v2.training.utils import compute_loss
     m = _noisy(_polar_model(6, lr=SE), scale=0.4)
     sts = _mols((1, 3, 1), unres=(True, True, False), labels=True)
     sts[2]['info'].pop('lowdin_spins')                 # a restricted singlet without labels: target 0, weight 1
@@ -261,13 +261,13 @@ def test_nbo_head_identity_conservation_range(x64):
 def test_nbo_loss_term(x64):
     import jraph
     from flax import nnx
-    from bam_omat24.training_utils import compute_loss
-    from bam_omat24.race_lr_nnx import RACE_LR
+    from race_v2.training.utils import compute_loss
+    from race_v2.models.race_lr import RACE_LR
     m = _noisy(_polar_model(8, lr=NB), ['sp_head2.kernel', 'sp_t2.kernel', 'sp_t2.bias'], scale=0.4)
     sts = _nbo_labels(_mols((1, 3, 2), labels=True))
     sts[2]['info'].pop('nbo_spins')                   # a row without NBO labels: weight 0 for that term
-    import bam_omat24.stream_io as S
-    from bam_omat24.stream_data import _to_graph, _cast
+    import race_v2.data.stream_io as S
+    from race_v2.data.stream_data import _to_graph, _cast
     gs = []
     for st in sts:
         d = _cast(S.graph_arrays(st, IDX, np.zeros(4), CUTOFF, dict(FIELDS, spin_labels={'key': 'lowdin_spins',
@@ -294,10 +294,10 @@ def test_nbo_loss_term(x64):
 def test_charge_nbo_head(x64):
     import jraph
     from flax import nnx
-    from bam_omat24.training_utils import compute_loss
-    from bam_omat24.race_lr_nnx import RACE_LR
-    import bam_omat24.stream_io as S
-    from bam_omat24.stream_data import _to_graph, _cast
+    from race_v2.training.utils import compute_loss
+    from race_v2.models.race_lr import RACE_LR
+    import race_v2.data.stream_io as S
+    from race_v2.data.stream_data import _to_graph, _cast
     m = _polar_model(9, lr={'charge_nbo_head': True})
     rng = np.random.default_rng(2)
     sts = [_molecule(30), _molecule(31, charge=-1.0), _molecule(32, charge=1.0)]

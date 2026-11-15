@@ -1,8 +1,8 @@
-"""Thole electrostatics (bam_omat24/thole.py) against the BAM-torch block (mode pbc_split).
+"""Thole electrostatics (race_v2/models/thole.py) against the BAM-torch block (mode pbc_split).
 
 tests/data/thole_torch_ref.npz holds inputs and outputs of bam_ufo.model.thole.TholeElectrostaticsBlock for a batch
 of two periodic cells (one charged) and two molecules (one charged); made by tests/data/make_thole_torch_ref.py in
-an environment with torch and BAM-torch.  The JAX functions are imported without the bam_omat24 package (no model).
+an environment with torch and BAM-torch.  The JAX functions are imported without the race_v2 package (no model).
 """
 import importlib.util
 import os
@@ -22,7 +22,7 @@ def _x64():
 
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_spec = importlib.util.spec_from_file_location("thole", os.path.join(_HERE, "..", "bam_omat24", "thole.py"))
+_spec = importlib.util.spec_from_file_location("thole", os.path.join(_HERE, "..", "race_v2", "models", "thole.py"))
 TH = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(TH)
 REF = np.load(os.path.join(_HERE, "data", "thole_torch_ref.npz"))

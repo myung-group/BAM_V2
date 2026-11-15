@@ -9,8 +9,8 @@ from flax import nnx
 
 from conftest import make_model, as_float64, pad_single, ATOMIC_NUMBERS
 from test_equivariance import _check_e3, TOL
-from bam_omat24.training_utils import compute_loss
-from bam_omat24.train_3bpa import element_descriptors, element_shell_radii, SHELL_TABLE_PATH, BOHR_A
+from race_v2.training.utils import compute_loss
+from race_v2.training.train import element_descriptors, element_shell_radii, SHELL_TABLE_PATH, BOHR_A
 
 Z = list(ATOMIC_NUMBERS)
 DESC = element_descriptors(Z, "both")

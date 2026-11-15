@@ -10,7 +10,7 @@ from flax import nnx
 from conftest import make_model, as_float64, pad_single
 from test_equivariance import _check_e3, TOL
 from test_round11_shells import SHELLS
-from bam_omat24.training_utils import compute_loss
+from race_v2.training.utils import compute_loss
 
 A = dict(update="linear", readout_mode="gated")
 AB = dict(update="linear", readout_mode="gated", message_norm="avg", avg_n_neighbors=16.7)
@@ -60,7 +60,7 @@ def test_linear_update_features_are_linear_in_message(x64, graph):
     model, g = as_float64(make_model(n_layers=2, seed=3, **AB), graph)
     layer = model.layers[0]
     # species embedding (layer-0 input) and the plain edge features
-    from bam_omat24.utils import compute_node_edge_features
+    from race_v2.models.blocks import compute_node_edge_features
     feats, rb, sh = compute_node_edge_features(
         g.nodes["positions"], None, None, g, model.n_species, model.cutoff,
         model.radial_basis_size, model.radial_polynomial_p, model.lmax, periodic=False)
@@ -82,7 +82,7 @@ def test_linear_update_features_are_linear_in_message(x64, graph):
 def test_gate_update_is_not_linear(x64, graph):
     model, g = as_float64(make_model(n_layers=2, seed=3, message_norm="avg", avg_n_neighbors=16.7), graph)
     layer = model.layers[0]
-    from bam_omat24.utils import compute_node_edge_features
+    from race_v2.models.blocks import compute_node_edge_features
     feats, rb, sh = compute_node_edge_features(
         g.nodes["positions"], None, None, g, model.n_species, model.cutoff,
         model.radial_basis_size, model.radial_polynomial_p, model.lmax, periodic=False)

@@ -12,7 +12,7 @@ def _x(scale, seed=0):
 
 
 def test_default_eps_is_the_old_norm(x64):
-    from bam_omat24.utils import separated_layer_norm
+    from race_v2.models.blocks import separated_layer_norm
     x = _x(0.3)
     a = np.asarray(separated_layer_norm(x).array)
     b = np.asarray(separated_layer_norm(x, eps=1e-6).array)
@@ -23,7 +23,7 @@ def test_default_eps_is_the_old_norm(x64):
 
 
 def test_soft_norm_large_unchanged_small_linear(x64):
-    from bam_omat24.utils import separated_layer_norm
+    from race_v2.models.blocks import separated_layer_norm
     e0 = 1e-2                                         # (the old eps 1e-6 is e0 = 1e-3)
     big = _x(1.0)                                     # |x| >> e0: the plain norm
     a = np.asarray(separated_layer_norm(big, eps=e0 ** 2).array)
@@ -43,7 +43,7 @@ def test_soft_norm_large_unchanged_small_linear(x64):
 
 def test_readout_takes_the_eps():
     from flax import nnx
-    from bam_omat24.race_nnx import RACEXReadout
+    from race_v2.models.race import RACEXReadout
     r = RACEXReadout(hidden_irreps=e3nn.Irreps("8x0e"), output_irreps=e3nn.Irreps("0e"),
                      x_irreps=e3nn.Irreps("8x0e + 4x1o"), n_species=2, avg_n_neighbors=10.0, rngs=nnx.Rngs(0),
                      norm=True, norm_eps=1e-4)

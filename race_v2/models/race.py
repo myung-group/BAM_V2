@@ -27,7 +27,7 @@ import jax
 import jax.numpy as jnp
 import jraph
 
-from bam_omat24.utils import (
+from race_v2.models.blocks import (
     separated_layer_norm,
     MLP,
     compute_node_edge_features,
@@ -36,7 +36,7 @@ from bam_omat24.utils import (
     polynomial_cutoff,
     node_graph_idx,
 )
-from bam_omat24.linear_nnx import Linear as e3nn_nnx_Linear
+from race_v2.models.linear import Linear as e3nn_nnx_Linear
 
 
 # -----------------------------------------------------------------------------
@@ -559,7 +559,7 @@ class RACEConvolution(nnx.Module):
         self.message_norm = message_norm
         # radial regularity prior (review §11.15): fixed per-channel rescaling 1/gamma(n) of the
         # radial basis entering the radial MLP (static tuple; the matching L2 on the MLP's first
-        # layer is applied in the loss, training_utils.compute_loss radial_l2)
+        # layer is applied in the loss, training.utils.compute_loss radial_l2)
         self.radial_scale = None if radial_scale is None else tuple(float(s) for s in radial_scale)
         # neighbour-species radial mixing (review §12.3, GRACE's W_n(mu_j)): a per-layer linear mix
         # of the radial channels by the species of the sender ("neighbor") or of the pair ("pair"),
@@ -751,7 +751,7 @@ class RACEConvolution(nnx.Module):
         )
 
         # Skip connection has per-species weights (species_rank: rank-K factorisation along the species axis,
-        # see linear_nnx.Linear index_rank)
+        # see models.linear.Linear index_rank)
         self.skip = e3nn_nnx_Linear(
             irreps_in=input_irreps,
             irreps_out=update_irreps,
@@ -960,7 +960,7 @@ class RACEConvolution(nnx.Module):
                 odd_act=jnp.tanh,
                 even_gate_act=jax.nn.silu,
             )
-        if READOUT_TAP is not None:          # last-layer Bayesian analysis (bam_omat24/bayes_lastlayer.py)
+        if READOUT_TAP is not None:          # last-layer Bayesian analysis (race_v2/eval/bayes_lastlayer.py)
             READOUT_TAP.append(node_energies.array)
         if self.readout_species:
             node_energies = self.readout(species, node_energies)
@@ -1413,7 +1413,7 @@ class RACE(nnx.Module):
 
         # species_rank K (2026-11-12): the species-indexed weight tables (n_species, mul, mul) of the skip
         # connections, of the first Linear of the x / f readouts and of x_linear are W[Z] = K**-0.5 sum_k c[Z, k] B[k]
-        # (linear_nnx.Linear index_rank) instead of one free matrix per element -- 89 % of the parameters of the
+        # (models.linear.Linear index_rank) instead of one free matrix per element -- 89 % of the parameters of the
         # 89-element L5x128 model were these tables.  None: free tables (original).
         # species_rank_prune: tables that cannot reach the energy get rank 1 -- x_linear when every layer takes its x
         # from the atomic basis, and the l > 0 skip blocks of the last layer (its l > 0 features are read by nobody;
@@ -2113,7 +2113,7 @@ class RACE(nnx.Module):
             # Force variation (equivariant): [a, b_0..b_4]
             #   a : isotropic std (0e), softplus + min 0.04
             #   b : 5 components of a 2e irrep (traceless symmetric B)
-            # Sigma = (a*I + B')^2 is assembled in training_utils.build_force_L
+            # Sigma = (a*I + B')^2 is assembled in training.utils.build_force_L
             frc_var = jnp.hstack([
                 jax.nn.softplus(frc_logvar.array[:, :1]) + 0.04,
                 frc_logvar.array[:, 1:]
@@ -2169,7 +2169,7 @@ class RACE(nnx.Module):
         """Per-stratum total energies (n_strata, n_graphs) and forces (n_strata, n_atoms, 3)
         for a (possibly padded) batch.  Stratum 0 is the explicit pair term when
         ``pair_term`` is on, otherwise stratum i is layer i."""
-        from bam_omat24.utils import node_graph_idx
+        from race_v2.models.blocks import node_graph_idx
         n_graphs = data.n_node.shape[0]
         node_mask = (jraph.get_node_padding_mask(data) if n_graphs > 1
                      else jnp.ones(data.nodes['positions'].shape[0], bool)).astype(jnp.float32)
@@ -2224,7 +2224,7 @@ if __name__ == "__main__":
     # Example usage
     import numpy as np
     import pickle
-    from bam_omat24.atom_energies import ATOM_ENERGIES
+    from race_v2.data.atom_energies import ATOM_ENERGIES
 
     print("=" * 70)
     print("RACE-Style Equivariant Potential")

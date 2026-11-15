@@ -15,9 +15,9 @@ from flax import nnx
 from jax.sharding import Mesh
 
 from conftest import make_model, ATOMIC_NUMBERS, ATOM_ENERGIES, CUTOFF, XYZ
-from bam_omat24.data_3bpa import preprocess_graph, load_frames, atomic_numbers_to_indices
-from bam_omat24.data_nnx import stack_batches_for_devices, default_collate_fn
-from bam_omat24.training_utils import (make_sharded_train_step, replicate, replicate_pytree, to_host,
+from race_v2.data.xyz_graphs import preprocess_graph, load_frames, atomic_numbers_to_indices
+from race_v2.data.loaders import stack_batches_for_devices, default_collate_fn
+from race_v2.training.utils import (make_sharded_train_step, replicate, replicate_pytree, to_host,
                                        evaluate_sharded, make_sharded_evaluate_step)
 
 SIZES = [27, 20, 12, 25, 9, 27, 15, 22]          # different atom counts per graph

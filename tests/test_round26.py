@@ -9,7 +9,7 @@ from flax import nnx
 from conftest import make_model, as_float64
 from test_equivariance import _check_e3, TOL
 from test_round24 import V9, _e, _fd_forces
-from bam_omat24.utils import polynomial_cutoff
+from race_v2.models.blocks import polynomial_cutoff
 
 HILL = dict(**V9, residual="chebyshev", layer_scale=0.5, x_norm="hill")
 BO_POW = dict(**HILL, bond_order="power")

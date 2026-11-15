@@ -3,7 +3,7 @@ import pytest
 
 
 def test_wsd_schedule_shape():
-    from bam_omat24.train_3bpa import wsd_schedule
+    from race_v2.training.train import wsd_schedule
     fn = wsd_schedule(100, 800, 1000, 0.05)
     f = lambda t: float(fn(t))  # noqa: E731
     assert abs(f(0) - 0.05) < 1e-6 and abs(f(50) - 0.525) < 1e-6 and abs(f(100) - 1.0) < 1e-6

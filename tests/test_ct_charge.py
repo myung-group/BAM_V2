@@ -5,8 +5,8 @@ import pytest
 
 from conftest import ATOMIC_NUMBERS, ATOM_ENERGIES
 
-# imported at module level: train_3bpa forces float32 when it is first imported, which would undo the x64 fixture
-from bam_omat24.train_3bpa import COVALENT_RADII  # noqa: E402,F401
+# imported at module level: training.train forces float32 when it is first imported, which would undo the x64 fixture
+from race_v2.training.train import COVALENT_RADII  # noqa: E402,F401
 
 R_OH, ANG = 0.9572, np.deg2rad(104.52)
 H1 = np.array([R_OH * np.sin(ANG / 2), 0.0, R_OH * np.cos(ANG / 2)])
@@ -21,7 +21,7 @@ def _pairs(pos, cutoff=5.0):
 
 # ------------------------------------------------------------------------------------------- JAX-free: formal charges
 def test_formal_charges_round_per_molecule():
-    from bam_omat24.graph_fields import formal_charges, molecules
+    from race_v2.data.graph_fields import formal_charges, molecules
     nums = np.array([8, 1, 1, 11])
     # Na-O 2.3 A is below 1.2 (r_Na + r_O) = 2.78 A: one molecule; at 3.5 A two
     pos = np.array([[0, 0, 0], H1, H2, [0, 0, -2.3]])
@@ -54,7 +54,7 @@ def test_formal_charges_round_per_molecule():
 # ------------------------------------------------------------------------------------------------------- ct_solve
 def test_ct_solve_conserves_components_and_tends_to_qeq(x64):
     import jax.numpy as jnp
-    from bam_omat24.long_range import coulomb_direct, ct_solve, qeq_solve
+    from race_v2.models.long_range import coulomb_direct, ct_solve, qeq_solve
     rng = np.random.default_rng(0)
     N = 6
     pos = jnp.asarray(rng.uniform(0, 3, (N, 3)))
@@ -82,7 +82,7 @@ def test_ct_solve_float32_inputs_keep_the_charge(x64):
     """a large, strongly coupled structure with float32 inputs (a float32 model under jax_enable_x64): the total
     charge is kept to float32 rounding (the float32 LU of I + L A lost it completely before the float64 solve)"""
     import jax.numpy as jnp
-    from bam_omat24.long_range import coulomb_direct, ct_solve
+    from race_v2.models.long_range import coulomb_direct, ct_solve
     rng = np.random.default_rng(3)
     N = 300
     pos = rng.uniform(0, 14, (N, 3))
@@ -104,7 +104,7 @@ CT = {'qeq_block': 8, 'ct_mode': 'conductance', 'sigma_bounds': [0.5, 2.0], 'ct_
 
 def _model(lr):
     from flax import nnx
-    from bam_omat24.race_lr_nnx import RACE_LR
+    from race_v2.models.race_lr import RACE_LR
     return RACE_LR(n_species=4, lmax=2, cutoff=5.0, hidden_irreps="16x0e + 16x1o + 16x2e", n_layers=2,
                    radial_basis_size=8, radial_mlp_size=16, radial_mlp_layers=2, mlp_init_scale=4.0, shift=0.0,
                    scale=1.0, avg_n_neighbors=20.0, atom_energies=ATOM_ENERGIES, l_train=True, periodic=False,
@@ -115,8 +115,8 @@ def _model(lr):
 def _graph(R, q_c=1.0):
     """water + a C atom (stand-in ion) on the C2 axis at distance R, total charge q_c on the C atom"""
     import ase
-    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
-    from bam_omat24.graph_fields import formal_charges
+    from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
+    from race_v2.data.graph_fields import formal_charges
     from conftest import pad_single
     a = ase.Atoms('OHHC', positions=[[0, 0, 0], H1, H2, [0, 0, -R]])
     a.info['charge'] = q_c

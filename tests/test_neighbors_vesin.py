@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip('vesin')
 import ase  # noqa: E402
-from bam_omat24.neighbors import neighbor_pairs  # noqa: E402
+from race_v2.data.neighbors import neighbor_pairs  # noqa: E402
 
 
 def _canon(i, j, S):

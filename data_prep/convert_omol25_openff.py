@@ -115,7 +115,7 @@ def main():
                 ref_charges_key=['lowdin_charges'])
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices
+    from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices
     ai = atomic_numbers_to_indices(Z)
     probe = frames['train'][:2000]
     info['avg_n_neighbors'] = sum(int(preprocess_graph(a, ai, [0.0] * len(Z), 5.0).n_edge.sum()) for a in probe) / \

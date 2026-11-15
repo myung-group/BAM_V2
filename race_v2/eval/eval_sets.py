@@ -1,6 +1,6 @@
 """Evaluate a trained 3BPA-pipeline checkpoint on additional extxyz test sets (review §12).
 
-    python -m bam_omat24.eval_sets <train config json> --ckpt <pkl> --xyz <file.xyz> [--xyz ...]
+    python -m race_v2.eval.eval_sets <train config json> --ckpt <pkl> --xyz <file.xyz> [--xyz ...]
            [--group-key dihedrals --group-index 0] [--tag dih] [--batch-size 10]
 
 * Energies are compared after subtracting the config's atom_energies (as in training).
@@ -17,10 +17,10 @@ import jax, jax.numpy as jnp
 from flax import nnx
 import ase.calculators.singlepoint
 
-from bam_omat24 import train_3bpa as T
-from bam_omat24.data_3bpa import load_frames, preprocess_graph, GraphListDataset, atomic_numbers_to_indices
-from bam_omat24.data_nnx import setup_mesh, default_collate_fn
-from bam_omat24.training_utils import (load_checkpoint, replicate_pytree, make_sharded_evaluate_step,
+from race_v2.training import train as T
+from race_v2.data.xyz_graphs import load_frames, preprocess_graph, GraphListDataset, atomic_numbers_to_indices
+from race_v2.data.loaders import setup_mesh, default_collate_fn
+from race_v2.training.utils import (load_checkpoint, replicate_pytree, make_sharded_evaluate_step,
                                        evaluate_sharded)
 
 

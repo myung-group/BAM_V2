@@ -6,7 +6,7 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'bam_omat24'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'race_v2', 'data'))
 
 
 def test_missing_labels_nan_only_when_optional():
@@ -31,7 +31,7 @@ def test_missing_labels_nan_only_when_optional():
 def test_masked_charge_loss_skips_nan_labels():
     import jax
     import jax.numpy as jnp
-    from bam_omat24.training_utils import masked_charge_loss
+    from race_v2.training.utils import masked_charge_loss
     q = jnp.array([0.3, -0.1, 0.2, 0.5, 0.0, 0.0])
     ref = jnp.array([0.1, 0.1, jnp.nan, jnp.nan, 0.0, 0.0])        # atoms 2, 3: structure without labels
     mask = jnp.array([True, True, True, True, False, False])       # atoms 4, 5: padding

@@ -17,7 +17,7 @@ import numpy as np
 import ase.io
 
 sys.path.insert(0, '.')
-from bam_omat24.data_3bpa import preprocess_graph, atomic_numbers_to_indices   # noqa: E402
+from race_v2.data.xyz_graphs import preprocess_graph, atomic_numbers_to_indices   # noqa: E402
 
 CUTOFF = 5.0
 

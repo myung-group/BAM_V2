@@ -1,0 +1,1 @@
+"""Structures to graphs, loaders and the stream loader.  The JAX-free modules of this folder (neighbors, graph_fields, formal_assign, stream_*, graph_sizes) are also imported as top-level modules by the worker processes, so they must stay together in one folder."""

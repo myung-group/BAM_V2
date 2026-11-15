@@ -8,7 +8,7 @@ same group): every structure keeps its own unmodified ``ase.optimize.FIRE`` on i
 for all structures together.  New here: ``race_payload`` (host, JAX-free) and ``RaceEvaluator`` (device).
 
 Import rule: this file is a TOP-LEVEL module (``relax_batched``, its directory on sys.path), not
-``bam_omat24.relax_batched``: the host workers are spawned processes that unpickle its functions by module name,
+``race_v2.inference.relax_batched``: the host workers are spawned processes that unpickle its functions by module name,
 and importing the package would load JAX in every worker (see stream_worker.py).  JAX is imported only inside
 RaceEvaluator methods, which run in the main process.
 """
@@ -29,7 +29,8 @@ import numpy as np
 from ase.calculators.calculator import Calculator, all_changes
 from ase.filters import FrechetCellFilter
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# top-level (JAX-free) import of neighbors: it lives in race_v2/data
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data'))
 from neighbors import neighbor_pairs  # noqa: E402
 
 # StructureRelaxation.advance replays ase.optimize.optimize.Dynamics.irun of this ASE release.
@@ -682,7 +683,7 @@ class RaceEvaluator:
     def __init__(self, ckpt_path, *, max_graphs: int = 64, node_rung: int = 256, edge_rung: int = 8192,
                  weights: str = 'ema'):
         import jax
-        from bam_omat24.predict import Predictor
+        from race_v2.inference.predict import Predictor
         p = Predictor(ckpt_path, species_refit=False)
         if weights != 'ema':
             raise ValueError("only the EMA weights of the checkpoint are supported")
@@ -708,8 +709,8 @@ class RaceEvaluator:
         return int(payload['n_node'][0]), int(payload['n_edge'][0])
 
     def dispatch(self, payloads):
-        from bam_omat24.data_nnx import fixed_collate_fn
-        from bam_omat24.stream_data import _to_graph, _cast
+        from race_v2.data.loaders import fixed_collate_fn
+        from race_v2.data.stream_data import _to_graph, _cast
         if len(payloads) > self.max_graphs:
             raise ValueError(f"{len(payloads)} structures in one call, max_graphs is {self.max_graphs}")
         n = sum(int(p['n_node'][0]) for p in payloads)

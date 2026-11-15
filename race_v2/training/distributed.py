@@ -1,6 +1,6 @@
 """Multi-process (multi-node) start-up for data parallel training (review §13).
 
-Imports only os and jax, so that bam_omat24/__init__.py can call init_distributed() before the
+Imports only os and jax, so that race_v2/__init__.py can call init_distributed() before the
 model modules, whose import initialises the XLA backend.
 """
 import os
@@ -46,7 +46,7 @@ def init_distributed() -> None:
     unaffected).  Must run before the first JAX computation.
 
     Launch with srun, one process per node (all GPUs of the node, recommended) or one per GPU, and
-    export BAM_DISTRIBUTED=1: bam_omat24/__init__.py then calls this before the model modules are
+    export BAM_DISTRIBUTED=1: race_v2/__init__.py then calls this before the model modules are
     imported (importing them initialises the XLA backend, after which initialize() is refused).
     Read from the environment (BAM_* overrides SLURM_*):
       BAM_NUM_PROCESSES / SLURM_NTASKS, BAM_PROCESS_ID / SLURM_PROCID,

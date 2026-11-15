@@ -1,6 +1,6 @@
 """LiPS MD observables exactly as in MDsim/observable.ipynb (Fu et al., TMLR 2023, Table 6).
 
-    python -m bam_omat24.md_lips_analysis <md dir with run*/> --ref /scratch/t510a13/data/datasets_ext/lips_src/lips.xyz
+    python -m race_v2.eval.md_lips_analysis <md dir with run*/> --ref /scratch/t510a13/data/datasets_ext/lips_src/lips.xyz
 
 Per run: stability = first 1-ps window (80 saved frames) whose RDF MAE x 6 vs the reference exceeds 1.0
 (else the full 50 ps); RDF error over the stable part; Li diffusivity (if stable > 3200 frames = 40 ps):

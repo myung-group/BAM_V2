@@ -41,8 +41,8 @@ import numpy as np
 
 try:
     from graph_fields import _COV_RADII, molecules
-except ImportError:                                   # imported as bam_omat24.formal_assign
-    from bam_omat24.graph_fields import _COV_RADII, molecules
+except ImportError:                                   # imported as race_v2.data.formal_assign
+    from race_v2.data.graph_fields import _COV_RADII, molecules
 
 # ------------------------------------------------------------------------------------------------ element tables
 NONMETAL = {1, 2, 5, 6, 7, 8, 9, 10, 14, 15, 16, 17, 18, 33, 34, 35, 36, 52, 53, 54, 85, 86}

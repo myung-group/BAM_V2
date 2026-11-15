@@ -44,7 +44,7 @@ sizes() {   # <name> <source args...>
     if [ -f "$OUT/sizes_$name/sizes_meta.json" ]; then
         echo "sizes_$name: already there"
     else
-        python -I bam_omat24/stream_io.py sizes "$@" --cutoff $CUT --out "$OUT/sizes_$name" --workers 64 | tail -n 2
+        python -I race_v2/data/stream_io.py sizes "$@" --cutoff $CUT --out "$OUT/sizes_$name" --workers 64 | tail -n 2
     fi
 }
 echo "== size tables  $(date '+%T')"

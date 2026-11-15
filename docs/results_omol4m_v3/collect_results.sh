@@ -8,7 +8,8 @@ RUN=/scratch/t510a13/BAM_V2_run_v3/runs/omol4m/omol4m_v3_polarqeq_c6_cs_ct_L5x12
 SP=/tmp/claude-500022713/-scratch-t510a13-race-lr/09325077-957d-4b0c-93ee-81439d057b0f/scratchpad
 OUT=/scratch/t510a13/BAM_V2_wt_thole/docs/results_omol4m_v3
 LABELS=("$@"); [ ${#LABELS[@]} -gt 0 ] || LABELS=(v3_e20 v3_e70)
-mkdir -p "$OUT"/{training,eval,official_val,prep,figures}
+PREP=/scratch/t510a13/BAM_V2_wt_thole/data_prep/prep_results      # preprocessing results: their own folder
+mkdir -p "$OUT"/{training,eval,official_val,figures} "$PREP"
 
 # training: the loss log (config + per-epoch table + neutral_val tests); "*.out" is in .gitignore, hence .txt
 cp "$RUN/loss.out" "$OUT/training/loss_log.txt"
@@ -42,10 +43,11 @@ done
 # preprocessing: per-element E0 + meta + the size-table summaries (the tables themselves stay in /appsdata)
 prep() {   # <name> <dir>
     [ -d "$2" ] || return 0
-    mkdir -p "$OUT/prep/$1"
-    for f in e0.json meta.json; do [ -f "$2/$f" ] && cp "$2/$f" "$OUT/prep/$1/"; done
+    [ -f "$2/e0.json" ] || [ -f "$2/sizes_train/sizes_meta.json" ] || return 0      # nothing finished yet
+    mkdir -p "$PREP/$1"
+    for f in e0.json meta.json; do [ -f "$2/$f" ] && cp "$2/$f" "$PREP/$1/"; done
     for s in train valid neutral_val; do
-        [ -f "$2/sizes_$s/sizes_meta.json" ] && cp "$2/sizes_$s/sizes_meta.json" "$OUT/prep/$1/sizes_${s}_meta.json"
+        [ -f "$2/sizes_$s/sizes_meta.json" ] && cp "$2/sizes_$s/sizes_meta.json" "$PREP/$1/sizes_${s}_meta.json"
     done
     return 0
 }

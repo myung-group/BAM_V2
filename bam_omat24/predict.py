@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import functools
 import io
+import os
 import json
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -49,6 +50,12 @@ class Predictor:
         if config is None:
             raise ValueError('the checkpoint has no config; pass config=')
         cfg = self.cfg = dict(config)
+        # BAM_PREDICT_X64=1: run a float32-trained model in float64 (parameters cast to float64).  Needed where
+        # forces must be precise to ~1e-5 eV/A: relaxations to fmax 1e-4 and the finite-difference force constants
+        # of the thermal conductivity (kappa SRME 0.86 in float32, 0.22 in float64; docs/inference_precision.md).
+        self.promoted = bool(os.environ.get('BAM_PREDICT_X64') == '1' and not cfg.get('x64'))
+        if self.promoted:
+            cfg['x64'] = True
         if cfg.get('x64'):
             jax.config.update('jax_enable_x64', True)
         self.atomic_numbers = [int(z) for z in cfg['atomic_numbers']]
@@ -68,7 +75,10 @@ class Predictor:
         graphdef, *_ = T.build_model(bcfg, len(self.atomic_numbers), list(self.atom_energies), stats, io.StringIO())
         from flax import nnx
         import jax.numpy as jnp
-        self.model = nnx.merge(graphdef, jax.tree.map(jnp.asarray, ckpt['ema_params']))
+        params = jax.tree.map(jnp.asarray, ckpt['ema_params'])
+        if self.promoted:
+            params = jax.tree.map(lambda x: x.astype(jnp.float64) if jnp.issubdtype(x.dtype, jnp.floating) else x, params)
+        self.model = nnx.merge(graphdef, params)
         self.batch_size = int(batch_size)
         # RACE_LR solves the Qeq system densely over a whole batch (N_batch^2 memory, N_batch^3 time), so batches
         # are cut at max_atoms real atoms (a larger single frame runs alone)

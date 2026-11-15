@@ -745,6 +745,10 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         # stream configs without the key take the value of the size table (in-memory configs keep the old default)
         avg_n_neighbors = float(_get(cfg, 'avg_n_neighbors', stats['avg_n_neighbors']
                                      if _get(cfg, 'data_format', 'xyz') == 'stream' else 25.0))
+    if cfg.get('avg_n_neighbors') is None:
+        # write the value used back into the config that the checkpoints store: tools that rebuild the model from
+        # the checkpoint config (predict.py, calculators) would otherwise take the default 25 (2026-11-15)
+        cfg['avg_n_neighbors'] = avg_n_neighbors
     print(f"Model init: shift={shift:.6f} scale={scale:.6f} avg_n_neighbors={avg_n_neighbors:.3f}",
           file=fout)
 

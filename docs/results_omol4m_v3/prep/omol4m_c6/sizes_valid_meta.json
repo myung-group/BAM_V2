@@ -1,0 +1,43 @@
+{
+ "cutoff": 6.0,
+ "sources": [
+  {
+   "spec": "aselmdb:/appsdata/t510a13/omol25/train_4M/data0079.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/omol25/train_4M/data0079.aselmdb"
+   ],
+   "opts": {},
+   "n": 49834
+  }
+ ],
+ "ase": "3.29.0",
+ "numpy": "2.5.4",
+ "tsv": {
+  "0000_data0079": "516bc797fba177dae791c2285682ee106ef4eb8619bf48fdb6a6d20eb0b18633"
+ },
+ "neighbors": "ase",
+ "files": [
+  "/appsdata/t510a13/omol25/train_4M/data0079.aselmdb"
+ ],
+ "kinds": [
+  "aselmdb"
+ ],
+ "file_source": [
+  0
+ ],
+ "n": 49834,
+ "sum_atoms": 2731952,
+ "sum_edges": 89056198,
+ "avg_n_neighbors": 32.598009774695896,
+ "max_atoms": 348,
+ "max_edges": 22310,
+ "max_cell_volume": 0.0,
+ "max_cell_length": [
+  0.0,
+  0.0,
+  0.0
+ ],
+ "n_periodic": 0,
+ "dropped": {}
+}

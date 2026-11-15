@@ -1,0 +1,30 @@
+{
+ "cutoff": 5.0,
+ "sources": [
+  {
+   "spec": "aselmdb:/appsdata/t510a13/omol25/train_4M/data0079.aselmdb",
+   "kind": "aselmdb",
+   "files": [
+    "/appsdata/t510a13/omol25/train_4M/data0079.aselmdb"
+   ]
+  }
+ ],
+ "ase": "3.29.0",
+ "numpy": "2.5.4",
+ "tsv": {
+  "0000_data0079": "7f04c1dd4b21c8ca5d620312cc549bbae68c6f414d86d9e0dd0cfffb98c22617"
+ },
+ "neighbors": "ase",
+ "files": [
+  "/appsdata/t510a13/omol25/train_4M/data0079.aselmdb"
+ ],
+ "kinds": [
+  "aselmdb"
+ ],
+ "n": 49834,
+ "sum_atoms": 2731952,
+ "sum_edges": 63536260,
+ "avg_n_neighbors": 23.25672632608479,
+ "max_atoms": 348,
+ "max_edges": 14468
+}

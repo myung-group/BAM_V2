@@ -1,0 +1,13 @@
+model: /scratch/t510a13/md_water/eval/v3_e20/ckpt_copy.pkl
+reference: wb97m_v / def2-tzvpd (PySCF, grid level 4)
+
+curve       DFT min (kcal/mol @ A)         model min  error at DFT min  MAE 1.9-10 A ratio 6 A ratio 10 A ratio 20 A
+Na+_c2v        -24.25 @ 2.20        -30.81 @ 2.20          -6.56          4.42       0.91       0.88       0.88
+Cl-_hb         -13.89 @ 3.10        -14.39 @ 3.10          -0.50          1.25       1.03       0.91       0.89
+Cl-_c2v        -12.48 @ 3.20        -10.93 @ 3.20          +1.55          1.11       0.94       0.88       0.87
+K+_c2v         -17.52 @ 2.60        -22.32 @ 2.60          -4.80          2.75       0.90       0.88       0.88
+F-_hb          -24.41 @ 2.50        -22.79 @ 2.50          +1.62          1.18       0.83       0.91       0.89
+F-_c2v         -17.47 @ 2.60        -12.74 @ 2.80          +5.45          2.37       0.84       0.88       0.87
+Li+_c2v        -34.39 @ 1.80        -38.91 @ 1.90          -4.40          3.99       0.90       0.88       0.88
+
+energies in kcal/mol; ratio = model / DFT interaction energy at that distance

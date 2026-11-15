@@ -3,7 +3,7 @@
 2026-11-11~16 계산 창(KISTI HANGANG, exclusive06, 11/16 09:00 종료)에서 RACE v2를 Matbench Discovery 기준으로 학습하고
 평가한 결과다. 방법론(수식)과 결과를 정리한 문서는 `report/RACEv2_MBD_methods_results_ko.pdf`(13쪽)다.
 
-학습은 브랜치 `racev2`(패키지 옛 이름 `bam_omat24`)의 코드로 했다. 이 브랜치에서는 패키지 이름이 `race_v2`이고,
+학습은 브랜치 `racev2`(패키지 옛 이름 `bam_omat24`)의 코드로 했다. 주 브랜치 `main`에서는 패키지 이름이 `race_v2`이고,
 옛 이름과 새 이름의 대응은 `docs/LAYOUT.md`에 있다. 체크포인트, 크기표, 평가 원본은 여기에 넣지 않았다(5절).
 
 ## 1. 결과

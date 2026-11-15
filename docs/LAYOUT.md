@@ -1,5 +1,8 @@
 # Repository layout (since 2026-11-16)
 
+Main branch: **`main`** (until 2026-11-16 `racev2-thole-merge`).  It contains the former lines `racev2` (Matbench
+Discovery work) and `thole-merge` (OMol25 / RACE v2 LR-POLAR); new work starts from `main`.
+
 Distribution name: **BAM_V2** (`pyproject.toml`).  Python package: **`race_v2`** (was `bam_omat24`).
 PyTorch inference port: **`race_v2_torch`** (was `racev2_torch`).
 

@@ -86,7 +86,7 @@ def _worker_block(task):
                  for st in sts]
 
 
-def _worker_state(names=('jax', 'race_v2', 'race_v2', 'data')):
+def _worker_state(names=('jax', 'race_v2', 'bam_omat24')):
     """Diagnostics: (pid, which of the modules `names` this worker has loaded, its number of threads)."""
     threads = -1
     try:

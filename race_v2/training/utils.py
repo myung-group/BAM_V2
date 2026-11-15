@@ -1232,7 +1232,7 @@ def save_checkpoint(state_dict: Dict, path: str):
 
 class _CompatUnpickler(pickle.Unpickler):
     """Maps the module paths of the old package layout (race_v2/_compat.py) to the new ones: checkpoints written
-    before 2026-11-16 name race_v2.training.soap_grouped.ScaleBySoapGroupedState for the optimiser state."""
+    before 2026-11-16 name bam_omat24.soap_grouped.ScaleBySoapGroupedState for the optimiser state."""
 
     def find_class(self, module, name):
         from race_v2._compat import OLD_MODULES

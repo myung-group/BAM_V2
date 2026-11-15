@@ -452,7 +452,7 @@ def main():
                        np.concatenate([x for x in D[ke]], axis=1))          # (n_models, components)
                 rep[f'{nm}_ensemble'] = calib(c * (ens.mean(0) - y), c * ens.std(0, ddof=1))
         report['sets'][name] = rep
-        # per-structure arrays for OOD analyses (research/diag/ood_summary.py): energies and structure-mean force sigma
+        # per-structure arrays for OOD analyses (runs/diag/ood_summary.py): energies and structure-mean force sigma
         dump = {'yE': yE, 'mE': mE, 'netE': np.asarray(D['eFull']), 'sigE_epi': np.sqrt(vE_epi),
                 'sigE_tot': np.sqrt(vE_epi + 1 / beta['E'])}
         if 'J' in D and 'F' in beta:
@@ -487,4 +487,4 @@ if __name__ == '__main__':
     main()
 
 
-load_xyz_graphs = load_xyz_graphs          # old name
+load_3bpa_graphs = load_xyz_graphs          # old name

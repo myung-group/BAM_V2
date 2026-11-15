@@ -139,14 +139,19 @@ def molecules(numbers, positions, src, dst, shift_vectors=None, bond_factor: flo
 
 
 def formal_charges(numbers, positions, src, dst, total_charge: float, info=None, arrays=None, shift_vectors=None,
-                   label_keys=('nbo_charges', 'lowdin_charges'), bond_factor: float = 1.2, given_key='formal_charges'):
+                   label_keys=('nbo_charges', 'lowdin_charges'), bond_factor: float = 1.2, given_key='formal_charges',
+                   auto: bool = False, multiplicity=None):
     """Per-atom reference charges q0 for the distance-limited charge transfer of RACE_LR (long_range ct_mode
     "conductance"): every molecule (molecules()) carries an integer charge Q_m, spread evenly over its atoms.
       arrays[given_key] (per-atom, e.g. formal charges of the user)  -> summed per molecule;
       else the first available per-atom label of label_keys          -> summed per molecule and rounded;
+      else, with auto, several molecules                              -> formal_assign.assign_formal_charges (rules
+                                                                         from the bonds: ions, onium, carboxylate ...);
       else one molecule, or a neutral structure                       -> Q on the molecule / zero everywhere;
       else                                                            -> Q / N on every atom (no integer split).
-    The integers are corrected to sum to the total charge by the largest-remainder rule.  Returns (q0 (N,), source)."""
+    The integers are corrected to sum to the total charge by the largest-remainder rule.  Returns (q0 (N,), source).
+    auto is for inference (the calculator); training keeps auto=False (its rows carry labels).  multiplicity (2S + 1
+    of the structure) steers auto between radicals and ions (formal_assign)."""
     n = len(numbers)
     Q = float(total_charge)
     lab, k = molecules(numbers, positions, src, dst, shift_vectors, bond_factor)
@@ -159,6 +164,13 @@ def formal_charges(numbers, positions, src, dst, total_charge: float, info=None,
             if x is not None and len(np.asarray(x).reshape(-1)) == n and np.all(np.isfinite(np.asarray(x, float))):
                 v, source = np.asarray(x, np.float64).reshape(-1), key
                 break
+    if v is None and auto and k > 1:
+        try:
+            from formal_assign import assign_formal_charges
+        except ImportError:
+            from bam_omat24.formal_assign import assign_formal_charges
+        qa, _ = assign_formal_charges(numbers, positions, src, dst, Q, shift_vectors, bond_factor, multiplicity)
+        v, source = qa.astype(np.float64), 'auto'
     if v is None:
         if k <= 1 or abs(Q) < 1e-9:
             qm = np.zeros(k)

@@ -13,7 +13,7 @@
 | `oc25_c6` | OC25 | VASP RPBE+D3 | 7,395,512 / 203,630 | 6 | 작업 1284769가 끝나면 추가 | | | |
 | `omol_full_c6` | OMol25 전체 | ωB97M-V/def2-TZVPD | 101,666,280 / 공식 val | 6 | 작업 1284787이 끝나면 추가 | | | |
 
-- v3 학습(OMol25 4M, cutoff 6)은 `omol4m_c6`의 크기표와 `omol4m_c5`의 E0를 썼다.
+- RACE v2 LR-POLAR 학습(내부 실행 이름 v3; OMol25 4M, cutoff 6)은 `omol4m_c6`의 크기표와 `omol4m_c5`의 E0를 썼다.
 - E0는 DFT 수준마다 따로 쓴다. OMol25와 OPoly26은 수준이 같아 섞어 쓸 수 있고, OC25(RPBE+D3)와
   MPtrj/sAlex(PBE, PBE+U)는 각자의 E0와 출력 헤드가 필요하다.
 - OPoly26의 E0는 파일당 앞 20,000행(합계 160만 행) 표본으로 맞췄다. OMol25 4M은 전체 행으로 맞췄다.

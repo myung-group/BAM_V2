@@ -1,4 +1,4 @@
-"""RACE v3: methods (with equations) and results of the OMol25 4M run -- Korean PDF.
+"""RACE v2 LR-POLAR: methods (with equations) and results of the OMol25 4M run -- Korean PDF.
 
 usage: python -I build_report.py <font_dir> <fig_dir> <out.pdf>
 Equations follow the code the model was trained with (BAM_V2_run_v3, commit d90bdc5); see v3_methods_formulas.md.
@@ -16,16 +16,16 @@ K = Kit(FONT_DIR, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'asse
 p, h1, h2, h3, eq, bl, tb, fig, note = K.p, K.h1, K.h2, K.h3, K.eq, K.bullets, K.table, K.figure, K.note
 
 # =====================================================================================================================
-K.title('RACE v3: 방법론과 OMol25 4M 학습 결과',
+K.title('RACE v2 LR-POLAR: 방법론과 OMol25 4M 학습 결과',
         '2026-11-16 · 모델 RACE_POLAR (파라미터 19,919,663개) · 학습 코드 BAM_V2_run_v3 (커밋 d90bdc5) · '
         'KISTI HANGANG, GPU 12개, 170 에폭, 21.1시간')
 
 h1('요약')
-p('RACE v3는 등변 메시지 전달 백본 위에 물리 항을 명시적으로 얹은 원자간 퍼텐셜이다. 전하는 전하 평형(Qeq)으로 구하되 '
+p('RACE v2 LR-POLAR는 등변 메시지 전달 백본 위에 물리 항을 명시적으로 얹은 원자간 퍼텐셜이다. 전하는 전하 평형(Qeq)으로 구하되 '
   '분자별 형식전하에서 출발해 가까운 원자쌍 사이로만 흐르게 했고, 정전기·분극·분산·스핀 에너지를 각각 별도 항으로 계산한다. '
   '이 문서는 구현한 방법을 코드에 있는 수식 그대로 정리하고, OMol25 4M으로 170 에폭 학습한 결과를 싣는다.')
 tb([['항목', '70 에폭', '최종 (170 에폭)', '비교'],
-    ['내부 검증 6,000 구조 (E meV / F meV/Å)', '136.7 / 26.0', '90.9 / 24.2', '이전 버전 v2local: 188 / 24.8'],
+    ['내부 검증 6,000 구조 (E meV / F meV/Å)', '136.7 / 26.0', '90.9 / 24.2', '이전 실행 v2local: 188 / 24.8'],
     ['neutral_val 테스트 (E / F)', '-', '62.2 / 20.7', '에폭 16: 138.5 / 28.2'],
     ['공식 val 표본 32,000 구조 (E / F)', '448.7 / 24.8', '363.8 / 23.3', 'UMA-s-1.2.1: 44.9 / 7.9'],
     ['이온-물 곡선 MAE (kcal/mol)', '0.70~1.93', '0.33~1.04', 'UMA, eSEN: 2~3 (F<super>-</super>는 12~20)'],
@@ -103,7 +103,7 @@ eq(r'e^{\mathrm{Qeq}}_i=\chi_i q_i+\dfrac{1}{2}\left(J_i+\dfrac{K}{\sqrt{\pi}\,\
 
 h2('2.3 전도도 기반 전하 이동')
 p('보통의 Qeq는 구조 전체에서 전하를 자유롭게 재분배하므로, 멀리 떨어진 분자 사이에도 전하가 흐르고 해리 한계에서 분수 전하가 남는다. '
-  'v3에서는 전하가 분자별 형식전하 q<super>0</super>에서 출발해 전도도 c<sub>ij</sub>가 있는 가까운 쌍을 따라서만 이동한다.')
+  'LR-POLAR에서는 전하가 분자별 형식전하 q<super>0</super>에서 출발해 전도도 c<sub>ij</sub>가 있는 가까운 쌍을 따라서만 이동한다.')
 eq([r'\mathbf{q}=\mathbf{q}^{0}+B\mathbf{p},\qquad \mathbf{p}=\mathrm{argmin}_{\mathbf{p}}\left[E_{\mathrm{solve}}(\mathbf{q}^{0}+B\mathbf{p})'
     r'+\dfrac{1}{2}\sum_{\mathrm{pairs}}\dfrac{p_{ij}^{2}}{c_{ij}}\right]',
     r'\Longleftrightarrow\quad (I+LA)\,\mathbf{q}=\mathbf{q}^{0}-L\boldsymbol{\chi},\qquad L=\mathrm{diag}\left(\sum_j c_{ij}\right)-c'])
@@ -146,7 +146,7 @@ p('학습 샤드 표본에서 레이블로 구한 q<super>0</super>와 행 기�
 h2('2.5 국소 전하·스핀 입력과 크기 일관성')
 p('전하나 스핀 상태가 다른 계를 한 모델로 다루려면 그 정보를 입력으로 넣어야 한다. 구조 전체의 전하 Q와 스핀 S를 모든 원자에 '
   '똑같이 넣는 방식(공개 모델 UMA도 같다)은 크기 일관성을 깨뜨린다. 멀리 떨어진 이온이 하나 추가되면 Q가 바뀌어 다른 분자의 '
-  '에너지까지 달라지기 때문이다. v3는 원자마다 주변 6 Å 안의 형식전하와 형식스핀만 더해 넣는다.')
+  '에너지까지 달라지기 때문이다. LR-POLAR는 원자마다 주변 6 Å 안의 형식전하와 형식스핀만 더해 넣는다.')
 eq(r'\bar{Q}_i=q^{0}_i+\sum_{j\in N(i)}w(r_{ij})\,q^{0}_j,\qquad 2\bar{S}_i=s^{0}_i+\sum_{j\in N(i)}w(r_{ij})\,s^{0}_j,\qquad '
    r'w(r)=1-S(r;4.5,6.0)')
 eq(r'h^{(0)}_i=e_i+\left[W_{c2}\,\mathrm{silu}\left(W_{c1}[\bar{Q}_i,2\bar{S}_i]+T_q(\bar{Q}_i)+T_s(2\bar{S}_i)\right)+b\right]\left(1+G_{Z_i,0}\right)')
@@ -292,7 +292,7 @@ tb([['그룹', '구조 수', '70 에폭 E', '최종 E', '70 에폭 F', '최종 F
 bl(['공식 val은 내부 검증보다 훨씬 어렵다. 큰 전해질 클러스터가 60 %를 넘고 전하가 큰 구조가 많다.',
     '|q| ≥ 2 그룹의 오차(1,178 meV)가 전체 평균을 끌어올린다. 자동 지정한 형식전하가 틀린 행(약 10 %)이 주된 원인으로 의심되지만, '
     '레이블 형식전하로 다시 평가해 확인하지는 않았다.',
-    '공개 모델과의 차이는 대부분 데이터 양에서 온다고 본다. UMA와 eSEN은 OMol25 전체(1억 구조)로 학습했고 v3는 4 %만 썼다. '
+    '공개 모델과의 차이는 대부분 데이터 양에서 온다고 본다. UMA와 eSEN은 OMol25 전체(1억 구조)로 학습했고 LR-POLAR는 4 %만 썼다. '
     '확인하려면 전체 데이터 학습이 필요하다.'])
 
 K.need(300)
@@ -310,7 +310,7 @@ tb([['곡선', '70 에폭', '최종', 'DFT 최소점', '최종 모델'],
    widths=[0.36, 0.14, 0.14, 0.18, 0.18],
    caption='상호작용 에너지 곡선의 MAE와 DFT 최소점 위치에서의 값 (kcal/mol).')
 fig(os.path.join(FIG, 'bench_vs_public_final.png'),
-    '물리 벤치마크 곡선: DFT(검은 점), RACE v3 최종, 이전 버전(v2local), 공개 모델. 공개 모델은 6 Å 근처에서 상호작용이 끊겨 '
+    '물리 벤치마크 곡선: DFT(검은 점), RACE v2 LR-POLAR 최종, 이전 실행(v2local), 공개 모델. 공개 모델은 6 Å 근처에서 상호작용이 끊겨 '
     '이온쌍 곡선이 평평해진다.', width=0.92)
 bl(['이온쌍과 염다리의 먼 거리 꼬리(1/r)를 정확히 따라간다. 형식전하를 고정하고 정전기를 절단 없이 계산한 결과다.',
     'LiF는 학습 중간보다 나빠졌다. 최소점에서 24 kcal/mol 과하게 결합한다. 고립 이온의 에너지 기준이 맞지 않는 것으로 의심된다.',
@@ -331,10 +331,10 @@ tb([['곡선', 'DFT 최소점', '모델 최소점', '최소점 오차', 'MAE (1.
    widths=[0.2, 0.15, 0.15, 0.15, 0.17, 0.18],
    caption='이온-물 상호작용 곡선 (kcal/mol). 기준은 ωB97M-V/def2-TZVPD 계산이다.')
 fig(os.path.join(FIG, 'iw_vs_public_final.png'),
-    '이온-물 상호작용 곡선: DFT와 RACE v3 최종, 이전 버전, 공개 모델의 비교. 오른쪽 아래는 곡선별 MAE다.')
-bl(['v3의 MAE는 0.33~1.04 kcal/mol이다. 공개 모델은 2~3 kcal/mol이고, 6 Å 밖에서 상호작용이 0이 되며, F<super>−</super>에서는 '
+    '이온-물 상호작용 곡선: DFT와 RACE v2 LR-POLAR 최종, 이전 실행, 공개 모델의 비교. 오른쪽 아래는 곡선별 MAE다.')
+bl(['LR-POLAR의 MAE는 0.33~1.04 kcal/mol이다. 공개 모델은 2~3 kcal/mol이고, 6 Å 밖에서 상호작용이 0이 되며, F<super>−</super>에서는 '
     '12~20 kcal/mol까지 틀린다.',
-    '이전 버전의 4.5~5 Å 계단은 없어졌다. 0.05 Å 간격 스캔에서 가장 큰 튐은 0.29~0.60 kcal/mol이고 모두 3.50~3.55 Å에서 나온다. '
+    '이전 실행의 4.5~5 Å 계단은 없어졌다. 0.05 Å 간격 스캔에서 가장 큰 튐은 0.29~0.60 kcal/mol이고 모두 3.50~3.55 Å에서 나온다. '
     'K<super>+</super>와 F<super>−</super> 곡선에 작은 꺾임이 남아 있다.',
     '10~20 Å에서 상호작용이 DFT의 0.84~0.88배로 약 15 % 약하다. 물 분자의 쌍극자가 작게 예측되는 것으로 추정한다.'])
 
@@ -367,10 +367,10 @@ bl(['작은 분자에서는 부호와 크기를 대체로 맞추고, 제한 단�
     '철 착물의 스핀 갭은 절반 수준이다. 전이 금속 열린 껍질은 데이터가 적고, 스핀 에너지의 원소별 상수가 H, C, N, O에만 초기값이 있다.'])
 
 K.need(470)
-h2('3.7 이전 버전과의 비교')
+h2('3.7 이전 실행과의 비교')
 fig(os.path.join(FIG, 'v3_summary_final.png'),
-    '위: 내부 검증의 그룹별 에너지·힘 오차와 물리 벤치마크 MAE를 이전 버전과 비교. 아래: 이온-물 0.05 Å 간격 스캔. '
-    '이전 버전(주황, 회색 점선)의 4.5~5 Å 계단이 v3(파랑)에서 없어졌다.')
+    '위: 내부 검증의 그룹별 에너지·힘 오차와 물리 벤치마크 MAE를 이전 실행과 비교. 아래: 이온-물 0.05 Å 간격 스캔. '
+    '이전 실행(주황, 회색 점선)의 4.5~5 Å 계단이 LR-POLAR(파랑)에서 없어졌다.')
 
 # =====================================================================================================================
 h1('4. 한계와 다음 단계')
@@ -409,7 +409,7 @@ K.need(200)
 h2('4.3 사전처리 현황')
 rows = [['데이터셋', 'DFT 수준', '구조 수 (train)', '평균 이웃 수', '최대 원자 / 간선', 'E0 잔차 (eV/원자)', '상태']]
 r4 = prep_row('omol4m', 'OMol25 4M', 'ωB97M-V', '/appsdata/t510a13/omol25/prep_4M_c6')
-r4[5], r4[6] = '0.420', '완료 (v3 학습에 사용)'
+r4[5], r4[6] = '0.420', '완료 (LR-POLAR 학습에 사용)'
 rows.append(r4)
 rows.append(prep_row('opoly26', 'OPoly26', 'ωB97M-V', '/appsdata/t510a13/prep/opoly26_c6.0'))
 rows.append(prep_row('oc25', 'OC25', 'RPBE+D3', '/appsdata/t510a13/prep/oc25_c6.0'))
@@ -427,7 +427,9 @@ tb([['내용', '위치'],
     ['크기표', '/appsdata/t510a13/prep, /appsdata/t510a13/omol25/prep_4M_c6'],
     ['다음 계산 창 계획', 'BAM_V2_wt_thole/docs/PLAN_omol_full_next_window.md']],
    widths=[0.27, 0.73], align_right_from=-1)
+note('이름: 이 모델의 이름은 RACE v2 LR-POLAR다. 실행 폴더, 결과 폴더, 그림 파일 이름에는 학습 당시의 내부 실행 이름인 v3가 '
+     '남아 있다(예: BAM_V2_run_v3, v3_final). v2local 등은 그보다 앞선 실행의 이름이다.')
 note('수식은 학습에 쓴 코드에서 직접 옮겼다. 표의 숫자는 2026-11-16의 최종 총 테스트(Slurm 작업 1285135~1285139, 1285153) 결과다.')
 
-K.build(OUT, 'RACE v3: 방법론과 OMol25 4M 학습 결과', footer='RACE v3 방법론과 결과 · 2026-11-16')
+K.build(OUT, 'RACE v2 LR-POLAR: 방법론과 OMol25 4M 학습 결과', footer='RACE v2 LR-POLAR 방법론과 결과 · 2026-11-16')
 print('wrote', OUT)

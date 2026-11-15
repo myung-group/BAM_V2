@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 
 EV = '/scratch/t510a13/md_water/eval'
 OUT = sys.argv[1]
-VERS = [('e249', 'e249 (old, 249 ep)', '#eda100'), ('v2local_e90', 'v2local e90', '#eb6834'),
-        ('v3_e70', 'v3 e70', '#1baf7a'), ('v3_final', 'v3 final (e170)', '#2a78d6')]
+VERS = [('e249', 'e249 (old, 249 ep)', '#eda100'), ('v2local_e90', 'earlier run v2local e90', '#eb6834'),
+        ('v3_e70', 'LR-POLAR e70', '#1baf7a'), ('v3_final', 'LR-POLAR final (e170)', '#2a78d6')]
 INK, MUT, GRID = '#0b0b0b', '#52514e', '#e4e3df'
 plt.rcParams.update({'font.size': 10, 'axes.edgecolor': '#c9c8c2', 'axes.labelcolor': INK, 'xtick.color': MUT,
                      'ytick.color': MUT, 'axes.spines.top': False, 'axes.spines.right': False})
@@ -82,7 +82,7 @@ ax.text(0.98, 0.03, 'shaded: noble gases (worse)', transform=ax.transAxes, ha='r
 # ---- ion-water 0.05 A scans: the 4.5 A step
 SC = [('debug_iw_step_v2local_decay', 'v2local e99 (no decay)', '#eb6834', '-'),
       ('debug_iw_step_v2localdec_now', 'v2localdec e110 (beta 3)', '#9a9893', '--'),
-      ('debug_iw_step_v3_final', 'v3 final (learned decay)', '#2a78d6', '-')]
+      ('debug_iw_step_v3_final', 'LR-POLAR final (learned decay)', '#2a78d6', '-')]
 scans = {d: json.load(open(f'{EV}/{d}/iw_step.json'))['scans'] for d, *_ in SC}
 ref = json.load(open('/scratch/t510a13/md_water/ion_water_ref/ion_water_ref.json'))['scans']
 ions = ['F-_c2v', 'Cl-_c2v', 'Na+_c2v']
@@ -106,6 +106,6 @@ for j, ion in enumerate(ions):
     ax.set_title(f'{ion.replace("_c2v", "")} ... H2O, 0.05 A scan', loc='left', color=INK)
     ax.grid(color=GRID)
     ax.set_axisbelow(True)
-fig.suptitle('RACE v3 final test (epoch 170) vs earlier versions', x=0.01, ha='left', fontsize=14, color=INK)
+fig.suptitle('RACE v2 LR-POLAR final test (epoch 170) vs earlier runs', x=0.01, ha='left', fontsize=14, color=INK)
 fig.savefig(OUT, dpi=120, facecolor='#fcfcfb', bbox_inches='tight')
 print('wrote', OUT)

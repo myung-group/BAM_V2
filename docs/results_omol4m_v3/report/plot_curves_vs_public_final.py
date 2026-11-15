@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 MD = '/scratch/t510a13/md_water'
 KC = 23.0605
 MODELS = [  # label, bench_report.txt, ion_water.json, colour, style
-    ('RACE v3 final', f'{MD}/eval/v3_final/bench_report.txt', f'{MD}/eval/v3_final/iw/ion_water.json', '#2a78d6', '-'),
-    ('RACE v2local e90', f'{MD}/eval/v2local_e90/bench_report.txt', f'{MD}/eval/v2local_e90/iw/ion_water.json',
+    ('RACE v2 LR-POLAR', f'{MD}/eval/v3_final/bench_report.txt', f'{MD}/eval/v3_final/iw/ion_water.json', '#2a78d6', '-'),
+    ('earlier run (v2local e90)', f'{MD}/eval/v2local_e90/bench_report.txt', f'{MD}/eval/v2local_e90/iw/ion_water.json',
      '#eb6834', '-'),
     ('eSEN-md', f'{MD}/fc/esen_md/bench_report.txt', f'{MD}/fc/esen_md/ion_water.json', '#1baf7a', '-'),
     ('UMA-s-1.1', f'{MD}/fc/uma_s_1p1/bench_report.txt', f'{MD}/fc/uma_s_1p1/ion_water.json', '#e87ba4', '--'),
@@ -130,7 +130,7 @@ ax.set_title('MAE vs DFT', loc='left', color=INK)
 ax.grid(axis='y', color=GRID)
 ax.set_axisbelow(True)
 axs[0, 0].legend(frameon=False, fontsize=9, loc='lower right')
-fig.suptitle('Ion ... H2O interaction curves: DFT vs RACE v3 final and public OMol25 models', x=0.01, ha='left',
+fig.suptitle('Ion ... H2O interaction curves: DFT vs RACE v2 LR-POLAR and public OMol25 models', x=0.01, ha='left',
              fontsize=13, color=INK)
 fig.tight_layout(rect=(0, 0, 1, 0.96))
 fig.savefig(sys.argv[2], dpi=110, facecolor='#fcfcfb')

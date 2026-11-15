@@ -61,6 +61,10 @@ class Predictor:
         stats = {'shift_raw': 0.0, 'scale': 1.0, 'avg_n_neighbors': float(cfg.get('avg_n_neighbors', 25.0)),
                  'n_graphs': 1, 'n_atoms': 1}
         bcfg = {'learning_rate': 1e-3, **cfg}       # build_model also creates the optimiser; not used here
+        if not cfg.get('x64'):
+            # float32 model trained with a float64 SOAP state (soap_state_dtype): the optimiser is not used for
+            # inference, and building its float64 state would need jax_enable_x64
+            bcfg.pop('soap_state_dtype', None)
         graphdef, *_ = T.build_model(bcfg, len(self.atomic_numbers), list(self.atom_energies), stats, io.StringIO())
         from flax import nnx
         import jax.numpy as jnp

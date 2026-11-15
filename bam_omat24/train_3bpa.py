@@ -465,6 +465,31 @@ def _stream_table(spec: Dict, name: str, cutoff: float, workers: int, log_dir: P
     return SP.load_size_table(d, cutoff), d
 
 
+def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool, fout):
+    """stream.train = {"parts": [{"sources": [...], "sizes": dir, "repeat": r}, ...]}: one size table per part, merged
+    into one training table in which every row of part i appears repeat_i times per data epoch (e.g. MPtrj x8 +
+    sAlex x1 for fine-tuning).  File indices of later parts are offset; the duplicates are distinct rows."""
+    cols = {'n_atoms': [], 'n_edges': [], 'file': [], 'key': []}
+    files, kinds, sources, dirs = [], [], [], []
+    for i, p in enumerate(parts):
+        spec = _stream_split(p)
+        rep = int(spec.get('repeat', 1))
+        if rep < 1:
+            raise ValueError(f"stream.train.parts[{i}]: repeat must be >= 1, got {rep}")
+        t, d = _stream_table(spec, f'train{i}', cutoff, workers, log_dir, rank0)
+        off = len(files)
+        for k in ('n_atoms', 'n_edges', 'key'):
+            cols[k].append(np.tile(t[k], rep))
+        cols['file'].append(np.tile(t['file'] + off, rep))
+        files += list(t['meta']['files']); kinds += list(t['meta']['kinds'])
+        sources += list(spec['sources']); dirs.append(str(d))
+        print(f"stream train part {i}: {len(t['n_atoms'])} structures x {rep} from {spec['sources']} ({d})", file=fout)
+    table = {k: np.concatenate(v) for k, v in cols.items()}
+    table['meta'] = {'files': files, 'kinds': kinds, 'sources': [{'spec': s} for s in sources],
+                     'n': int(len(table['n_atoms'])), 'sum_atoms': int(table['n_atoms'].sum()), 'cutoff': cutoff}
+    return table, ' + '.join(dirs), {'sources': sources}
+
+
 def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
     """data_format "stream": size tables, buckets, statistics from a sample, the training StreamLoader and the
     evaluation sets (stream_data.StreamEvalSet).  Returns (atomic_numbers, atom_energies, train loader, valid set,
@@ -495,8 +520,11 @@ def build_stream_datasets(cfg: Dict, fout, rank0: bool, n_local: int):
                                     fragments=fragments_of(cfg)).items() if v}
     if 'train' not in sc or 'valid' not in sc:
         raise ValueError("data_format stream needs stream.train and stream.valid")
-    tr = _stream_split(sc['train'])
-    table, tdir = _stream_table(tr, 'train', cutoff, workers, log_dir, rank0)
+    if isinstance(sc['train'], dict) and 'parts' in sc['train']:
+        table, tdir, tr = _stream_parts(sc['train']['parts'], cutoff, workers, log_dir, rank0, fout)
+    else:
+        tr = _stream_split(sc['train'])
+        table, tdir = _stream_table(tr, 'train', cutoff, workers, log_dir, rank0)
     bs = int(_get(cfg, 'batch_size', 5))
     gpp = int(sc.get('graphs_per_pack', bs))
     buckets = SP.derive_buckets(table['n_atoms'], table['n_edges'], n_buckets=int(sc.get('n_buckets', 1)),

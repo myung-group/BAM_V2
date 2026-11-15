@@ -20,7 +20,7 @@ echo "node $(hostname)  ckpt $CKPT  shards $NSH  limit ${LIMIT:-none}  code $(gi
 rc=0
 for s in $(seq 0 $((NSH - 1))); do
   CUDA_VISIBLE_DEVICES=$s python runs/diag/mbd/kappa.py run --ckpt $CKPT --structures $P/2024-11-09-phononDB-PBE-103-structures.extxyz \
-    --out-dir $OUT --shard $s --num-shards $NSH ${LIMIT:+--limit $LIMIT} > $OUT/run_${s}of${NSH}.log 2>&1 &
+    --out-dir $OUT --shard $s --num-shards $NSH ${LIMIT:+--limit $LIMIT} ${APC:+--atoms-per-call $APC} >> $OUT/run_${s}of${NSH}.log 2>&1 &
 done
 for j in $(jobs -p); do wait $j || rc=1; done
 for s in $(seq 0 $((NSH - 1))); do grep -E '^\[kappa\]|Traceback|Error' $OUT/run_${s}of${NSH}.log | tail -n 40 | cut -c1-260; done

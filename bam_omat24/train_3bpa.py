@@ -511,7 +511,10 @@ def _stream_table(spec: Dict, name: str, cutoff: float, workers: int, log_dir: P
 def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool, fout):
     """stream.train = {"parts": [{"sources": [...], "sizes": dir, "repeat": r}, ...]}: one size table per part, merged
     into one training table in which every row of part i appears repeat_i times per data epoch (e.g. MPtrj x8 +
-    sAlex x1 for fine-tuning).  File indices of later parts are offset; the duplicates are distinct rows."""
+    sAlex x1 for fine-tuning).  Every copy gets its own file indices (the file list repeats the same paths), so the
+    copies of a structure fall into different read blocks and are spread over the data epoch by the block shuffle of
+    stream_plan.plan_data_epoch; with one shared file index the copies sort next to each other ((file, key) order)
+    and land in the same block, i.e. a structure was seen `repeat` times within a few steps (racev2 8922d40)."""
     cols = {'n_atoms': [], 'n_edges': [], 'file': [], 'key': [], 'cell': []}
     files, kinds, sources, src_meta, file_source, dirs, part_meta = [], [], [], [], [], [], []
     for i, p in enumerate(parts):
@@ -522,16 +525,18 @@ def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool
         t, d = _stream_table(spec, f'train{i}', cutoff, workers, log_dir, rank0)
         m = t['meta']
         part_meta.append((m, rep))
-        off, soff = len(files), len(src_meta)
-        for k in ('n_atoms', 'n_edges', 'key'):
-            cols[k].append(np.tile(t[k], rep))
-        cols['file'].append(np.tile(t['file'] + off, rep))
-        cols['cell'].append(None if t.get('cell') is None else np.tile(t['cell'], (rep,) + (1,) * (t['cell'].ndim - 1)))
-        files += list(m['files']); kinds += list(m['kinds'])
-        # per-file source options (stream_io.file_opts): keep each part's sources and point its files at them
+        soff = len(src_meta)
+        # per-file source options (stream_io.file_opts): keep each part's sources once and point its files at them
         fs = m.get('file_source')
-        file_source += [soff + int(s) for s in fs] if fs is not None else [soff] * len(m['files'])
         src_meta += list(m['sources']) if fs is not None else [{'spec': s} for s in spec['sources']][:1]
+        for _ in range(rep):
+            off = len(files)
+            for k in ('n_atoms', 'n_edges', 'key'):
+                cols[k].append(t[k])
+            cols['file'].append(t['file'] + off)
+            cols['cell'].append(t.get('cell'))
+            files += list(m['files']); kinds += list(m['kinds'])
+            file_source += [soff + int(s) for s in fs] if fs is not None else [soff] * len(m['files'])
         sources += list(spec['sources']); dirs.append(str(d))
         print(f"stream train part {i}: {len(t['n_atoms'])} structures x {rep} from {spec['sources']} ({d})", file=fout)
     cells = cols.pop('cell')

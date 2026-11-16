@@ -211,8 +211,11 @@ def run_one(atoms, forces: Forces, RB) -> dict:
 
 
 def cmd_run(a):
-    bam = _bam_dir()
-    sys.path.insert(0, bam); sys.path.insert(0, str(Path(bam).parent))
+    bam = _bam_dir(); pkg = Path(bam).parent
+    # relax_batched and stream_worker are top-level modules (race_v2/inference, race_v2/data); the folder that holds
+    # race_v2 is needed for the package imports of the evaluator
+    for d in (str(pkg.parent), str(pkg / 'inference'), bam):
+        sys.path.insert(0, d)
     import relax_batched as RB
     import stream_worker
     import ase.io

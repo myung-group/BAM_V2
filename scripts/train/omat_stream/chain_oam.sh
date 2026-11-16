@@ -7,6 +7,8 @@
 # configs/oam_finetune/race_v2_oam_finetune_after_continue.json (virtual epochs are set for 48 GPUs).
 #   $ sbatch -J oamchain -p normal --comment="field=sciai;appl=jax" --nodes=12 --ntasks-per-node=1 --exclusive --gres=gpu:4 -t 1-12:00:00 --export=ALL,XLA_EXTRA=--xla_gpu_shard_autotuning=false scripts/train/omat_stream/chain_oam.sh <pretrain.json> <finetune.json> <tag>
 #   TEST=1: the evaluation relaxes 8 structures per shard and 1 phonon material (small check of the chain)
+#   STOP_AFTER=1: stop after the pretraining (a later submission of the same command goes on with stage 2: a stage
+#   whose log is at its last epoch is not run again); PHONON_DIR: folder with the PhononDB files (kappa.sh)
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd ${RACE_WORK:-/scratch/t589a02/BAM_V2_more/work}
@@ -19,6 +21,8 @@ NODES=($(scontrol show hostnames $SLURM_JOB_NODELIST)); NN=${#NODES[@]}
 echo "chain $T  nodes $NN (${NODES[*]})  A $A  B $B  test ${TEST:-0}  $(date '+%F %T')"
 stage() {   # <config>: train to the last epoch of the config; 0 when the log has that epoch
   local CFG=$1 NE LOG LE TRY; NE=$(val $CFG n_epochs); LOG=$(val $CFG log_file)
+  LE=$(grep -a -E '^[0-9]+/[0-9]+/[0-9]+ ' $LOG 2>/dev/null | tail -n 1 | awk '{print $3}')
+  [ "$LE" = "$NE" ] && { echo "stage $CFG: the log is at epoch $NE of $NE already, not run again"; return 0; }
   for TRY in 1 2; do
     bash scripts/train/omat_stream/pretrain.sh $CFG
     LE=$(grep -a -E '^[0-9]+/[0-9]+/[0-9]+ ' $LOG 2>/dev/null | tail -n 1 | awk '{print $3}')
@@ -31,6 +35,7 @@ echo "==== stage 1: pretraining  $(date '+%F %T')"
 stage $A || { echo "CHAIN STOPPED in stage 1"; exit 1; }
 CK=$(val $A ckpt_name); INIT=$(val $B init_params_from); sleep 45
 command cp -pf ${CK%.pkl}.last.pkl $INIT && ls -l $INIT | awk '{print "pretraining checkpoint", $5, $9}'
+[ "${STOP_AFTER:-}" = 1 ] && { echo "CHAIN STOPPED after stage 1 (STOP_AFTER=1)  $(date '+%F %T')"; exit 0; }
 echo "==== stage 2: fine-tuning  $(date '+%F %T')"
 stage $B || { echo "CHAIN STOPPED in stage 2"; exit 1; }
 CK=$(val $B ckpt_name); S=runs/mbd/snap/${T}_ft_final.pkl; sleep 45

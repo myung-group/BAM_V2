@@ -175,6 +175,7 @@ def cmd_score_md(a):
 def cmd_diatomics(a):
     from datetime import UTC, datetime
     from ase.data import chemical_symbols
+    from matbench_discovery.diatomics import generate_diatomics
     from matbench_discovery.hpc import merge_audit_metadata
     from matbench_discovery.metrics import diatomics as D
     from matbench_discovery.metrics.diatomics.exclusions import is_non_mp_formula
@@ -184,7 +185,7 @@ def cmd_diatomics(a):
     max_z, n_points = (3, 10) if a.dry_run else (92, 119)
     z_values = list(range(1, max_z + 1))
     distances = np.geomspace(0.1, 6.0, n_points)
-    calc.get_potential_energy(R.generate_diatomics('H', 'H', distances[-1:])[0])     # compilation outside the timing
+    calc.get_potential_energy(generate_diatomics('H', 'H', distances[-1:])[0])     # compilation outside the timing
     t0 = time.perf_counter()
     curves, invalid = R.predict_curves(calc, a.key, z_values, distances)
     run_time = round(time.perf_counter() - t0, 2)

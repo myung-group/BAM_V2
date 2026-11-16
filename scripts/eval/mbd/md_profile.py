@@ -44,7 +44,7 @@ def md_loop(a):
         out = f'{d}/mdloop_{os.getpid()}_{k}'
         if k == 0:        # compilation of this system's shape outside the comparison
             run_md_benchmark(calculator=calc, model_key='warm', out_dir=out + '_warm', ref_file=a.ref_file,
-                             systems=[name], n_steps=20, runtime=runtime)
+                             systems=[name], n_steps=200, runtime=runtime)   # >= 4 time-matched frames for the metrics
         n0 = calc.n_calls; pr = cProfile.Profile(); t0 = time.perf_counter(); pr.enable()
         df = run_md_benchmark(calculator=calc, model_key='prof', out_dir=out, ref_file=a.ref_file, systems=[name],
                               n_steps=a.md_steps, runtime=runtime)

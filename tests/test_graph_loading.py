@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-XYZ = ROOT / 'research' / 'dataset_3BPA' / 'train_300K.xyz'
+XYZ = ROOT / 'dataset_3BPA' / 'train_300K.xyz'
 
 
 def _frames(n=300):

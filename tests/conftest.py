@@ -23,7 +23,7 @@ ATOMIC_NUMBERS = [1, 6, 7, 8]
 ATOM_ENERGIES = [-13.587222780835477, -1029.4889999855063,
                  -1484.9814568572233, -2041.9816003861047]
 CUTOFF = 5.0
-XYZ = REPO / "research" / "dataset_3BPA" / "train_300K.xyz"
+XYZ = REPO / "dataset_3BPA" / "train_300K.xyz"
 
 
 @pytest.fixture(scope="session")

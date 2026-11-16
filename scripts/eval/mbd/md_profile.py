@@ -33,14 +33,46 @@ def tm(fn, n):
     return 1e3 * float(np.median(ts))
 
 
+def md_loop(a):
+    """cProfile of the benchmark's own rollout (run_md_benchmark) for the first system and every output folder:
+    how much of a step is the calculator, the integrator and the frame output."""
+    import cProfile, io, pstats, shutil
+    from matbench_discovery.md import run_md_benchmark
+    calc, runtime = X.make_calculator(a.ckpt)
+    name = a.systems[0]
+    for k, d in enumerate(a.md_dirs):
+        out = f'{d}/mdloop_{os.getpid()}_{k}'
+        if k == 0:        # compilation of this system's shape outside the comparison
+            run_md_benchmark(calculator=calc, model_key='warm', out_dir=out + '_warm', ref_file=a.ref_file,
+                             systems=[name], n_steps=20, runtime=runtime)
+        n0 = calc.n_calls; pr = cProfile.Profile(); t0 = time.perf_counter(); pr.enable()
+        df = run_md_benchmark(calculator=calc, model_key='prof', out_dir=out, ref_file=a.ref_file, systems=[name],
+                              n_steps=a.md_steps, runtime=runtime)
+        pr.disable(); wall = time.perf_counter() - t0
+        rt = float(df['run_time_sec'].iloc[0])
+        print(f"\n== {name}  out_dir {d}: rollout {rt:.1f} s for {a.md_steps} steps = {1e3 * rt / a.md_steps:.1f} ms per "
+              f"step, {calc.n_calls - n0} model calls, wall with metrics {wall:.1f} s", flush=True)
+        st = io.StringIO(); ps = pstats.Stats(pr, stream=st).sort_stats('cumulative'); ps.print_stats(45)
+        keep = [l for l in st.getvalue().splitlines() if any(w in l for w in (
+            'ncalls', 'run_nvt_md_resumable', 'record_and_checkpoint', '_snapshot_frame', 'extxyz', 'formats.py',
+            'calculate', 'evaluate', 'dispatch', 'collect', 'race_payload', 'neighbor_pairs', 'nose_hoover',
+            '_step', 'md.py', 'read_trajectory', 'evaluate_md_system', 'get_forces', 'asarray', 'savez'))]
+        print('\n'.join(l[:200] for l in keep[:40]), flush=True)
+        shutil.rmtree(out, ignore_errors=True); shutil.rmtree(out + '_warm', ignore_errors=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--ckpt', required=True); ap.add_argument('--ref-file')
     ap.add_argument('--systems', nargs='*', default=['bulkLiMgAlZnSn_600K_J_Schmidt_VASP', 'bulkAu_1500K_Kapil',
                                                      'bulkAg_600K_Kapil', 'anthracene_293K_Sharma_S'])
     ap.add_argument('--repeats', type=int, default=40); ap.add_argument('--skin', type=float, default=0.5)
+    ap.add_argument('--md-steps', type=int, default=0, help='> 0: profile the benchmark rollout loop instead')
+    ap.add_argument('--md-dirs', nargs='*', default=[], help='output folders to compare (e.g. Lustre and /dev/shm)')
     a = ap.parse_args()
     X._paths()
+    if a.md_steps:
+        return md_loop(a)
     import jax
     import jax.numpy as jnp
     import relax_batched as RB

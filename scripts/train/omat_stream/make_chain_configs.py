@@ -7,7 +7,7 @@ change; the model, loss and optimiser settings are copied.
 
 Virtual epochs (5,000 steps each) scale with 1 / GPUs:
   pretraining : one OMat24 data epoch = 139,000 steps at 24 GPUs; --pre-epochs data epochs (default 2), linear decay
-                over the last third;
+                after the first --pre-flat-frac of the run (default 2/3);
   fine-tuning : one data epoch (MPtrj x8 + sAlex x1) = 6.1 virtual epochs at 24 GPUs; --ft-epochs data epochs
                 (default 6.2), constant learning rate for --ft-flat data epochs (default 4.6), then linear decay.
 
@@ -28,6 +28,7 @@ ap.add_argument('--map', action='append', default=[], help='OLD=NEW path prefix 
 ap.add_argument('--init', default='runs/mbd/snap/omat_pre_final.pkl', help='checkpoint the pretraining starts from')
 ap.add_argument('--pre-epochs', type=float, default=2.0); ap.add_argument('--ft-epochs', type=float, default=6.2)
 ap.add_argument('--ft-flat', type=float, default=4.6)
+ap.add_argument('--pre-flat-frac', type=float, default=2 / 3, help='pretraining: fraction of the run before the decay')
 ap.add_argument('--test', action='store_true')
 a = ap.parse_args()
 maps = [tuple(m.split('=', 1)) for m in a.map]
@@ -57,7 +58,7 @@ pre = json.load(open(REPO / 'configs/omat_pretrain/race_v2_omat24_pretrain_conti
 ft = json.load(open(REPO / 'configs/oam_finetune/race_v2_oam_finetune_after_continue.json'))
 assert pre['stream']['steps_per_epoch'] == ft['stream']['steps_per_epoch'] == 5000
 s = 24.0 / a.gpus
-n_pre = round(a.pre_epochs * 139000 * s / 5000); cd_pre = round(n_pre * 2 / 3)
+n_pre = round(a.pre_epochs * 139000 * s / 5000); cd_pre = round(n_pre * a.pre_flat_frac)
 n_ft = round(a.ft_epochs * 6.1 * s); cd_ft = round(a.ft_flat * 6.1 * s)
 if a.test:
     n_pre = n_ft = 2; cd_pre = cd_ft = 1

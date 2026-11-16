@@ -4,7 +4,8 @@
 #      the same order, rows of the files = kept + dropped rows of the table, table keys present in the files;
 #   B. the unit tests (pytest tests).
 # usage (from the work folder, default /scratch/t589a02/BAM_V2_more/work):
-#   $ sbatch -J precheck -p normal --comment="field=sciai;appl=jax" --nodes=1 --ntasks-per-node=1 --gres=gpu:1 -t 02:00:00 --export=ALL,TABLES=<a,b,...>,MAPS="OLD=NEW OLD=NEW" scripts/train/omat_stream/precheck.sh
+#   $ sbatch -J precheck -p normal --comment="field=sciai;appl=jax" --nodes=1 --ntasks-per-node=1 --gres=gpu:1 -t 02:00:00 --export=ALL,TABLES="<a b ...>",MAPS="OLD=NEW OLD=NEW" scripts/train/omat_stream/precheck.sh
+#   (TABLES and MAPS are space-separated: a comma would end the variable in --export)
 #   SIZES_SRC / SIZES_OUT: original and remapped size-table folders;  SKIP_TESTS=1: part A only
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
@@ -20,7 +21,7 @@ echo "node $(hostname)  cpus $(nproc)  code $(git -C $REPO rev-parse --short HEA
 python -c "import jax, flax, e3nn_jax, cuequivariance_jax, lmdb, ase; print('jax', jax.__version__, 'devices', jax.devices())"
 echo "== A. raw files against the size tables  $(date +%T)"
 M=""; for m in ${MAPS:?OLD=NEW path maps}; do M="$M --map $m"; done
-python -I scripts/data/remap_size_tables.py --src $SRC --out $OUT $M ${TABLES:+--tables $TABLES} --check --count --workers $(( $(nproc) > 64 ? 64 : $(nproc) )); RA=$?
+python -I scripts/data/remap_size_tables.py --src $SRC --out $OUT $M ${TABLES:+--tables ${TABLES// /,}} --check --count --workers $(( $(nproc) > 64 ? 64 : $(nproc) )); RA=$?
 echo "size-table check exit $RA  $(date +%T)"
 RB=0
 if [ "${SKIP_TESTS:-0}" != 1 ]; then

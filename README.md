@@ -16,17 +16,27 @@ export code, and the results obtained with it.
 
 ## Repository layout
 
-| Folder | Content |
-|---|---|
-| `race_v2/` | the package: `models`, `data`, `training`, `inference`, `eval`, `export` |
-| `race_v2_torch/` | PyTorch inference port (no JAX needed), see its [README](race_v2_torch/README.md) |
-| `scripts/` | launchers and helpers: `train`, `eval` (Matbench Discovery, uncertainty, benchmarks), `data` |
-| `configs/` | representative configs, see [configs/README.md](configs/README.md) |
-| `docs/` | documentation; results per model under `docs/results/` |
-| `lammps/` | `pair_style race` |
-| `dataset_3BPA/` | the 3BPA example data used by `configs/base` and `configs/smoke` |
-| `tests/` | unit tests |
-| `bam_omat24/`, `racev2_torch/` | aliases for the old package names (see below) |
+| Folder | What it is | Why it is here |
+|---|---|---|
+| `race_v2/` | the python package: `models`, `data`, `training`, `inference`, `eval`, `export` | the RACE v2 model and everything that trains and runs it (JAX) |
+| `race_v2_torch/` | PyTorch inference port, see its [README](race_v2_torch/README.md) | to use a trained model without JAX: it converts a JAX checkpoint and gives an ASE calculator. Inference only, no training |
+| `lammps/` | C++ sources of `pair_style race`, the runtime wrapper, a build script and the third-party headers they need | to run molecular dynamics of large systems in LAMMPS. The model is exported once (`race_v2/export/lammps.py`) and then runs from C++ without Python |
+| `scripts/` | launchers and helpers: `train`, `eval` (Matbench Discovery, uncertainty, benchmarks), `data` | the commands that produced the results in `docs/results`, kept so that they can be repeated |
+| `configs/` | representative training configs, see [configs/README.md](configs/README.md) | one config per workflow that was actually run (small-data recipe, MPtrj, OMat24 pretraining, fine-tuning, OMol25) |
+| `docs/` | the reports under `docs/results/`, the methods summary and the usage documents | results and methods; working notes are not kept on `main` |
+| `dataset_3BPA/` | the 3BPA data set (4 small extxyz files) | example data: `configs/base`, `configs/smoke` and the unit tests run on it without any download |
+| `tests/` | unit tests | `pytest tests` |
+| `bam_omat24/`, `racev2_torch/` | aliases for the old package names | so that old commands, imports and checkpoints keep working (see below) |
+
+Folders of the previous `main` that are not here:
+
+| Folder of the old `main` | What it was | Where it is now |
+|---|---|---|
+| `bam_torch/` | PyTorch training backend (e3nn) of the first BAM_V2 | [`deprecated`](https://github.com/myung-group/BAM_V2/tree/deprecated) branch only. The PyTorch code on `main` is `race_v2_torch/`, which does inference only |
+| `bam_torch_cue/` | PyTorch training backend with cuEquivariance | `deprecated` branch only |
+| `bam_3bpa/` | early JAX code for the 3BPA benchmark | `deprecated` branch only; its role is taken by `race_v2/` with `configs/base` |
+| `bam_omat24/` (real code) | the JAX backend | renamed to `race_v2/`; the folder of that name on `main` only holds aliases |
+| `input/` | old configs | `deprecated` and `racev2` branches; the configs in use are in `configs/` |
 
 ### Why are `bam_omat24/` and `racev2_torch/` still here?
 

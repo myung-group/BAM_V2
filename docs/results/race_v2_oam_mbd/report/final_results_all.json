@@ -1,0 +1,15 @@
+{
+ "note": "RACE v2 OAM final model (virtual epoch 38, oamft_final.pkl), float64 inference. Discovery: full WBM, unique prototypes (215,488). MD and diatomics: job 1288683 (2026-11-16, NVIDIA GH200, coarse padding ladder), benchmark code of matbench-discovery commit 6d587c1.",
+ "race_v2_oam": {
+  "F1": 0.8932, "DAF": 5.947, "Prec": 0.9091, "Recall": 0.8779, "Acc": 0.9679, "MAE": 0.0214, "RMSE": 0.0658, "R2": 0.8723,
+  "TP": 28919, "FP": 2890, "FN": 4023, "TN": 179656,
+  "RMSD": 0.0643, "kSRME": 0.229, "CPS": 0.858,
+  "CMDS": 0.7135, "md_speed": 0.690,
+  "md": {"vdos_error": 22.466, "adf_error": 1.500, "pressure_error": 51.340, "rdf_error": 3.629, "run_time_sec": 26709.66, "n_systems": 17, "hardware": "NVIDIA GH200 120GB"},
+  "CDS": 0.3528,
+  "pillars": {"accuracy": 0.0, "geometry": 0.6834, "speed": 0.7928, "physicality": 0.5076},
+  "diatomics": {"pbe_energy_mae": 45.52, "pbe_force_mae": 345.8, "pbe_wall_dist_mae": 0.1611, "pbe_bond_length_error": 0.2832, "pbe_well_depth_error": 0.787, "energy_jump": 2.814, "force_flips": 1.724, "tortuosity": 1.007, "run_time_sec": 129.81, "n_curves": 87},
+  "diatomics_without": {"Ne": {"pbe_energy_mae": 2.35, "pbe_force_mae": 17.63, "CDS": 0.457}, "Ne Ar Kr": {"pbe_energy_mae": 0.85, "pbe_force_mae": 1.69, "CDS": 0.745}, "He Ne Ar Kr Xe": {"pbe_energy_mae": 0.73, "pbe_force_mae": 0.91, "CDS": 0.808}}
+ },
+ "race_v2_mptrj": {"F1": 0.777, "MAE": 0.040, "R2": 0.800, "RMSD": 0.0785, "kSRME": 0.375, "CPS": 0.761}
+}

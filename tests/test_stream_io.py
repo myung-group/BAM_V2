@@ -13,7 +13,7 @@ import stream_io as S  # noqa: E402
 import stream_plan as P  # noqa: E402
 
 MOL = ROOT / 'dataset_3BPA' / 'train_300K.xyz'
-PER = Path('/scratch/t510a13/data/datasets_ext/oam_subsets/omat24_valid.xyz')     # periodic, with stress
+PER = Path(os.environ.get('RACE_OAM_SUBSETS', '/scratch/t589a02/datasets_ext/oam_subsets')) / 'omat24_valid.xyz'   # periodic, with stress
 
 
 def _small(tmp_path, src, n):

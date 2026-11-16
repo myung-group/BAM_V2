@@ -1,6 +1,7 @@
 """val_table.py <run suffix> [first epoch]: per-epoch validation E MAE / F MAE / F RMSE / S RMSE (physical units)."""
 import re, sys
-W = '/scratch/t510a13/race_v2/work'
+import os
+W = os.environ.get('RACE_WORK', '/scratch/t589a02/BAM_V2_more/work')
 def read(n):
     L = open(f'{W}/runs/{n}_cue/loss_{n}_cue.out', errors='replace').read().splitlines(); d = {}
     for i, l in enumerate(L):

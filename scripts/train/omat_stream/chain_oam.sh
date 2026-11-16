@@ -5,15 +5,15 @@
 # Checked end to end in the old layout (branch racev2, job 1285602: 2 nodes, short configs); not run in this layout yet.
 # Configs of the planned run (12 nodes): configs/omat_pretrain/race_v2_omat24_pretrain_continue.json and
 # configs/oam_finetune/race_v2_oam_finetune_after_continue.json (virtual epochs are set for 48 GPUs).
-#   $ sbatch -J oamchain -p exclusive06 --comment="field=sciai;appl=jax" --nodes=12 --ntasks-per-node=1 --exclusive --gres=gpu:4 -t 1-12:00:00 --exclude=node[0449-0480,0499-0576] --export=ALL,XLA_EXTRA=--xla_gpu_shard_autotuning=false scripts/train/omat_stream/chain_oam.sh <pretrain.json> <finetune.json> <tag>
+#   $ sbatch -J oamchain -p normal --comment="field=sciai;appl=jax" --nodes=12 --ntasks-per-node=1 --exclusive --gres=gpu:4 -t 1-12:00:00 --export=ALL,XLA_EXTRA=--xla_gpu_shard_autotuning=false scripts/train/omat_stream/chain_oam.sh <pretrain.json> <finetune.json> <tag>
 #   TEST=1: the evaluation relaxes 8 structures per shard and 1 phonon material (small check of the chain)
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
-cd /scratch/t510a13/race_v2/work
+cd ${RACE_WORK:-/scratch/t589a02/BAM_V2_more/work}
 A=${1:?pretraining config}; B=${2:?fine-tuning config}; T=${3:?tag}
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
-conda activate ${BAM_ENV:-/scratch/t510a13/envs/bam_cue}
+conda activate ${BAM_ENV:-/home01/t589a02/.conda/envs/bam_cue}
 val() { python -I -c "import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" $1 $2; }
 NODES=($(scontrol show hostnames $SLURM_JOB_NODELIST)); NN=${#NODES[@]}
 echo "chain $T  nodes $NN (${NODES[*]})  A $A  B $B  test ${TEST:-0}  $(date '+%F %T')"

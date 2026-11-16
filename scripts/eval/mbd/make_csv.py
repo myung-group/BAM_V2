@@ -8,7 +8,7 @@ the MP elemental references.  Only the input differs: JSONL files instead of one
     python make_csv.py --relaxed <dir with relaxed_*.jsonl> --output <name>.csv.gz --model-name <column prefix> \
         --refs <mp_elemental_ref_per_atom.npz> --mp2020-cse <wbm-computed-structure-entries.jsonl.gz> \
         [--details <details.csv.gz>] [--write-relaxed-json <relaxed.json>] [--scripts <BAM-GAMP-jax/scripts>]
-Run with an environment that has pymatgen (e.g. /scratch/t510a13/envs/bam_jax), on a compute or data-mover node.
+Run with an environment that has pymatgen (e.g. ~/.conda/envs/bam_jax), on a compute or data-mover node.
 """
 import argparse
 import gzip
@@ -22,7 +22,7 @@ ap.add_argument('--relaxed', required=True); ap.add_argument('--output', require
 ap.add_argument('--model-name', default='racev2'); ap.add_argument('--refs', required=True)
 ap.add_argument('--mp2020-cse', required=True); ap.add_argument('--details'); ap.add_argument('--write-relaxed-json')
 ap.add_argument('--species-refit', help='<ckpt>.species_refit.json: per-element energy correction (training-split refit)')
-ap.add_argument('--scripts', default='/scratch/t510a13/probabilistic_symmetrization/BAM-GAMP-jax/scripts')
+ap.add_argument('--scripts', default='/home01/t589a02/prog/BAM-GAMP-jax/scripts')
 a = ap.parse_args()
 sys.path.insert(0, a.scripts)
 import make_submission_csv as M  # noqa: E402

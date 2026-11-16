@@ -5,14 +5,14 @@ structures that do not match count as 1.0, plain mean over all structures.
 
     python rmsd_sample.py --relaxed <dir with relaxed_*.jsonl> --mp2020-cse <wbm-computed-structure-entries.jsonl.gz> \
         --summary <wbm-summary.csv.gz> [--limit N] [--output rmsd.csv.gz]
-Needs pymatgen (e.g. /scratch/t510a13/envs/bam_jax); single thread, about 3k structures on a login node."""
+Needs pymatgen (e.g. ~/.conda/envs/bam_jax); single thread, about 3k structures on a login node."""
 import argparse, gzip, json, sys, time
 from pathlib import Path
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--relaxed', required=True); ap.add_argument('--mp2020-cse', required=True)
 ap.add_argument('--summary', required=True); ap.add_argument('--limit', type=int); ap.add_argument('--output')
-ap.add_argument('--scripts', default='/scratch/t510a13/probabilistic_symmetrization/BAM-GAMP-jax/scripts')
+ap.add_argument('--scripts', default='/home01/t589a02/prog/BAM-GAMP-jax/scripts')
 a = ap.parse_args()
 sys.path.insert(0, a.scripts)
 import make_submission_csv as M  # noqa: E402

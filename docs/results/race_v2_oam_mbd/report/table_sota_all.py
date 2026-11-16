@@ -114,8 +114,8 @@ note1 = ('Epoch: pretraining + fine-tuning.  RACE v2 OAM: OMat24 2 epochs, then 
          'MAE in eV/atom, RMSD in Å.  Shaded rows: models of our lab.  "-": not collected or not measured.\n'
          f'Other models: model YAML files of janosh/matbench-discovery (commit {LB["commit"]}); CPS, CMDS and CDS recomputed with the site formulas.  '
          'CMDS (molecular dynamics) and CDS (diatomic curves) are not part of CPS.\n'
-         'RACE v2 OAM, CMDS: 17 DynaMat systems, summed rollout time 26,710 s on one NVIDIA GH200 (float64).  CDS: 87 homonuclear curves; the mean energy error is dominated by\n'
-         'Ne, Ar and Kr, whose energies diverge below about 1 Å (the accuracy pillar is 0).  Without Ne, Ar and Kr the same formula gives 0.745 (for reference only).\n'
+         'RACE v2 OAM, CMDS: 17 DynaMat systems, summed rollout time 22,174 s on one NVIDIA GH200 (float64).  CDS: 87 homonuclear curves; the mean energy error is dominated by\n'
+         'Ne, Ar and Kr, whose energies diverge below about 1 Å (the accuracy pillar is 0).  Without Ne, Ar and Kr the same formula gives 0.768 (for reference only).\n'
          'Ranks: 1 + number of shown leaderboard models (49, page read on 2026-11-12) with a better value, out of the models that report the metric plus RACE v2.')
 figs = [draw(sys.argv[1], [('Matbench Discovery (unique prototypes), sorted by CPS: every leaderboard model down to CPS 0.837, and GRACE-1L-OAM.', C1, rows1, X1, None),
                    ('Rank of RACE v2 for each metric (1 = best) / number of models compared.', ['', 'Compared with'] + C1[3:], rrows, XR, None)], note1, 17.5)]
@@ -133,7 +133,7 @@ note2 = ('CMDS = 0.3 (1 - vDOS error / 100) + 0.3 (1 - pressure error / 100) + 0
          'CDS = (4 accuracy + 2 geometry + 1 speed + 2 physicality) / 9 times the fraction of the 87 scored elements;  E MAE (eV) and F MAE (eV/Å) are means over the elements and enter the\n'
          'accuracy pillar (0 at 4 eV and 5 eV/Å).  Run times are on different hardware (RACE v2: NVIDIA GH200, float64).  '
          f'Other models: YAML files of janosh/matbench-discovery (commit {LB["commit"]}).\n'
-         'RACE v2 OAM diatomics: median E MAE 0.66 eV, 82 of 87 elements below 4 eV; mean without Ne, Ar, Kr 0.85 eV and 1.69 eV/Å (CDS 0.745), without the five noble gases 0.73 eV and 0.91 eV/Å (CDS 0.808).')
+         'RACE v2 OAM diatomics: median E MAE 0.66 eV, 82 of 87 elements below 4 eV; mean without Ne, Ar, Kr 0.85 eV and 1.69 eV/Å (CDS 0.768), without the five noble gases 0.73 eV and 0.91 eV/Å (CDS 0.831).')
 figs.append(draw(sys.argv[1] + '_md_diatomics',
      [('Molecular dynamics (CMDS) and diatomic curves (CDS): components, same models as the main table.', C2, rows2, X2,
        [(X2[1], X2[6], 'Molecular dynamics, 17 systems (errors in %)'), (X2[7], X2[13], 'Diatomics, 87 homonuclear curves')]),

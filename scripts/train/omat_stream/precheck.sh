@@ -6,7 +6,8 @@
 # usage (from the work folder, default /scratch/t589a02/BAM_V2_more/work):
 #   $ sbatch -J precheck -p normal --comment="field=sciai;appl=jax" --nodes=1 --ntasks-per-node=1 --gres=gpu:1 -t 02:00:00 --export=ALL,TABLES="<a b ...>",MAPS="OLD=NEW OLD=NEW" scripts/train/omat_stream/precheck.sh
 #   (TABLES and MAPS are space-separated: a comma would end the variable in --export)
-#   SIZES_SRC / SIZES_OUT: original and remapped size-table folders;  SKIP_TESTS=1: part A only
+#   SIZES_SRC / SIZES_OUT: original and remapped size-table folders;  SKIP_TESTS=1: part A only;  SKIP_TABLES=1: part B
+#   only;  PYTEST_ARGS: pytest targets and options (default: tests), space-separated
 #SBATCH -o runs/slurm/%x_%j.out
 ulimit -c 0
 cd ${RACE_WORK:-/scratch/t589a02/BAM_V2_more/work}
@@ -20,14 +21,19 @@ SRC=${SIZES_SRC:-/scratch/t589a02/BAM_V2_more/prep_data/oam/oam_sizes}; OUT=${SI
 echo "node $(hostname)  cpus $(nproc)  code $(git -C $REPO rev-parse --short HEAD)  $(date '+%F %T')"
 # jax.devices() first: the JAX CUDA plugin loads libnvrtc, which libcue_ops needs
 python -c "import jax; d = jax.devices(); import flax, e3nn_jax, cuequivariance_jax, lmdb, ase; print('jax', jax.__version__, 'devices', d)"
-echo "== A. raw files against the size tables  $(date +%T)"
-M=""; for m in ${MAPS:?OLD=NEW path maps}; do M="$M --map $m"; done
-python -I scripts/data/remap_size_tables.py --src $SRC --out $OUT $M ${TABLES:+--tables ${TABLES// /,}} --check --count --workers $(( $(nproc) > 64 ? 64 : $(nproc) )); RA=$?
-echo "size-table check exit $RA  $(date +%T)"
+RA=0
+if [ "${SKIP_TABLES:-0}" != 1 ]; then
+  echo "== A. raw files against the size tables  $(date +%T)"
+  M=""; for m in ${MAPS:?OLD=NEW path maps}; do M="$M --map $m"; done
+  python -I scripts/data/remap_size_tables.py --src $SRC --out $OUT $M ${TABLES:+--tables ${TABLES// /,}} --check --count --workers 16; RA=$?
+  echo "size-table check exit $RA  $(date +%T)"
+fi
 RB=0
 if [ "${SKIP_TESTS:-0}" != 1 ]; then
   echo "== B. unit tests  $(date +%T)"
-  ( cd $REPO && OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 python -m pytest tests -q -p no:cacheprovider 2>&1 | tail -n 60 ); RB=${PIPESTATUS[0]}
+  PL=$PWD/runs/slurm/pytest_${SLURM_JOB_ID:-local}.log
+  ( cd $REPO && OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4 python -m pytest ${PYTEST_ARGS:-tests} -q -p no:cacheprovider -W ignore::DeprecationWarning > $PL 2>&1 ); RB=$?
+  grep -a -n -E '^(FAILED|ERROR)|^=+ .* in [0-9.]+s' $PL | tail -n 40; echo "full pytest output: $PL"
   ( cd $REPO && git status --short | head -n 20 )
 fi
 echo "exit $RA $RB  $(date '+%F %T')"

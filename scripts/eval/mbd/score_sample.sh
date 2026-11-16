@@ -16,10 +16,11 @@ out = {}
 for name, m in (('all', np.ones(len(d), bool)), ('unique_prototypes', d['unique_prototype'].values.astype(bool))):
     e, h, ep = err[m], hull[m], each[m]
     tp = ((h <= 0) & (ep <= 0)).sum(); fp = ((h > 0) & (ep <= 0)).sum(); fn = ((h <= 0) & (ep > 0)).sum()
-    pr, rc = tp / max(tp + fp, 1), tp / max(tp + fn, 1)
+    pr, rc = tp / max(tp + fp, 1), tp / max(tp + fn, 1); tn = ((h > 0) & (ep > 0)).sum()
     out[name] = dict(n=int(m.sum()), MAE=round(float(e.abs().mean()), 4), RMSE=round(float(np.sqrt((e**2).mean())), 4), mean_error=round(float(e.mean()), 4),
                      R2=round(float(1 - (e**2).sum() / ((h - h.mean())**2).sum()), 3),   # E above hull, as in Matbench Discovery
-                     F1=round(float(2*pr*rc/max(pr+rc, 1e-9)), 3), precision=round(float(pr), 3), recall=round(float(rc), 3), DAF=round(float(pr/max((h<=0).mean(), 1e-9)), 2))
+                     F1=round(float(2*pr*rc/max(pr+rc, 1e-9)), 3), precision=round(float(pr), 3), recall=round(float(rc), 3), DAF=round(float(pr/max((h<=0).mean(), 1e-9)), 3),
+                     accuracy=round(float((tp + tn) / max(int(m.sum()), 1)), 3), TP=int(tp), FP=int(fp), FN=int(fn), TN=int(tn))
     print(name, out[name])
 step = d.index.str.split('-').str[1]
 print('MAE by WBM step:', {k: round(float(err[step == k].abs().mean()), 4) for k in sorted(set(step))}, ' converged', int(det['converged'].sum()), 'of', len(det), ' mean steps', round(float(det['n_steps'].mean()), 1))

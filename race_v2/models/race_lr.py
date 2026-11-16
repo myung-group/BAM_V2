@@ -25,7 +25,7 @@ Task embedding slot (2026-11-10): "n_tasks": N > 0 adds a zero-initialised table
 data.globals['task'] (integer per graph, 0 if absent, clipped to 0..N-1) is added to the layer-0 scalars, next to the
 charge / spin embedding.  A task is one labelling convention (level of theory / code of a dataset).  A run that never
 sets 'task' trains row 0 only and leaves the other rows at exactly zero, so a later multi-dataset stage can give every
-new dataset its own row without changing the parameter tree (docs/HANDOFF_uq_omol25.md §7).
+new dataset its own row without changing the parameter tree (docs/HANDOFF_uq_omol25.md on branch racev2 §7).
 """
 from __future__ import annotations
 

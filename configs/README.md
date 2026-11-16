@@ -1,6 +1,6 @@
 # Representative configs
 
-Only the configs of the main workflows are here; every other config of the project history is in `research/input/`.
+Only the configs of the main workflows are here; the other configs of the project history are on the `racev2` branch (`input/`).
 The files are copies of the configs that were actually run (contents unchanged, so `log_file` / `ckpt_name` inside
 still carry the original run names).  Run with `python -m race_v2.training.train <config>` from a work folder.
 
@@ -15,3 +15,16 @@ still carry the original run names).  Run with `python -m race_v2.training.train
 | `base/race_v2_base_recipe.json` | recipe template read by the config generators `scripts/train/make_*_configs.py` | `input/input_3bpa_omat24_abl3_full_s42_cue.json` |
 | `smoke/oam_finetune_stream_parts_smoke.json` | smoke of the stream `parts` fine-tuning (2 epochs, 4 GPUs) | `runs/omat_stream/oam_ft_smoke2.json` |
 | `smoke/cpu_race_smoke.json`, `smoke/cpu_race_lr_smoke.json` | CPU smokes of RACE and RACE_LR | `input/input_local_race_smoke.json`, `input/input_local_racelr_smoke.json` |
+
+## Chained run (pretraining continued, fine-tuning, evaluation in one allocation)
+
+`scripts/train/omat_stream/chain_oam.sh <pretrain.json> <finetune.json> <tag>` runs the two configs below and then the
+float64 Matbench Discovery evaluation in one job.
+
+| Config | Content |
+|---|---|
+| `omat_pretrain/race_v2_omat24_pretrain_continue.json` | OMat24 pretraining continued from the 2-epoch checkpoint for 2 more data epochs: 28 virtual epochs at 48 GPUs, learning-rate decay from 19 |
+| `oam_finetune/race_v2_oam_finetune_after_continue.json` | MPtrj ×8 + sAlex ×1 fine-tuning from its end: 19 virtual epochs at 48 GPUs (6.2 data epochs), decay from 14 |
+
+The virtual-epoch numbers depend on the number of GPUs (a virtual epoch is 5,000 steps). The run started on
+2026-11-16 was cancelled at the end of the allocation before its first checkpoint, so these two configs have no result yet.

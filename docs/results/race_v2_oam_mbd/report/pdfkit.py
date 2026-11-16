@@ -1,4 +1,4 @@
-"""Small helpers for the Korean methods + results PDF (reportlab + matplotlib mathtext equations).
+"""Small helpers for the methods + results PDF (reportlab + matplotlib mathtext equations).
 
 Fonts: NanumGothic (text) and DejaVu Sans (symbols NanumGothic lacks: Angstrom, Greek, arrows, ...).
 Equations: matplotlib mathtext (Computer Modern), rendered once to PNG and cached by a hash of the source.
@@ -184,7 +184,7 @@ class Kit:
         block = []
         if caption:
             self.n_tab += 1
-            block.append(Paragraph(self.sym(f'<font name="NanumB">표 {self.n_tab}.</font> {caption}'), self.st['cap']))
+            block.append(Paragraph(self.sym(f'<font name="NanumB">Table {self.n_tab}.</font> {caption}'), self.st['cap']))
         block.append(t)
         block.append(Spacer(1, 8))
         self.add(KeepTogether(block) if len(rows) <= 22 else block[0], *([] if len(rows) <= 22 else block[1:]))
@@ -200,7 +200,7 @@ class Kit:
         block = [Image(path, width=fw, height=fh)]
         if caption:
             self.n_fig += 1
-            block.append(Paragraph(self.sym(f'<font name="NanumB">그림 {self.n_fig}.</font> {caption}'), self.st['cap']))
+            block.append(Paragraph(self.sym(f'<font name="NanumB">Figure {self.n_fig}.</font> {caption}'), self.st['cap']))
         self.add(KeepTogether(block))
 
     # ------------------------------------------------------------------ build

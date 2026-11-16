@@ -1,13 +1,18 @@
 # RACEv2 (BAM_V2) dataset provenance and re-preprocessing recipe
 
+> **Note (2026-11-16).** This document was written during development. Paths under `research/` and the documents
+> `docs/HANDOFF*.md` and `docs/local_test_report.md` it mentions were removed from `main`; they are on the `racev2`
+> branch (`research/diag` = `runs/diag`, `research/input` = `input/` there). `<DATA_ROOT>`, `<HOME>` and
+> `<scratchpad>` stand for directories of the machine the work was done on.
+
 Compiled 2026-11-06 from the Claude Code session transcript
-`/home01/t589a02/.claude/projects/-scratch-t589a02-BAM-V2/5ef853ce-88a8-4dac-9612-afaeb18bb68a.jsonl`
+`<session transcript>`
 (tool calls with their exact commands and results; timestamps below are UTC as in the transcript, file
 mtimes are KST = UTC+9), plus the converter scripts and READMEs on disk. Data root on HANGANG:
-`/scratch/t589a02/datasets_ext` (below: `$DS`). Repo: `/scratch/t589a02/BAM_V2`.
+`<DATA_ROOT>/datasets_ext` (below: `$DS`). Repo: `<DATA_ROOT>/BAM_V2`.
 
 > **In this repository:** the converter scripts `convert_*.py` named below are copied to `scripts/data/` (on HANGANG they
-> live in `$DS = /scratch/t589a02/datasets_ext`). The processed splits themselves are in the transfer package
+> live in `$DS = <DATA_ROOT>/datasets_ext`). The processed splits themselves are in the transfer package
 > (`data_splits.tar.gz`, see `docs/HANDOFF.md`); rebuilding from the raw sources is only needed if that package is not
 > available, or to check it. The OAM subsets cannot be rebuilt without the BAM-GAMP shards (section 12), so copy the
 > subset files instead.
@@ -19,7 +24,7 @@ Conventions in this file:
 - "md5 (recorded)" = printed in the transcript at download time. "md5 (computed 2026-11-06)" = computed from the
   file on disk when this file was written (not in the transcript). Output md5s are listed in section 14 so a
   re-run can be checked byte for byte.
-- Paths are hard-coded to `/scratch/t589a02/...` in most commands. On another server, replace them with your own
+- Paths are hard-coded to `<DATA_ROOT>/...` in most commands. On another server, replace them with your own
   data root. `convert_md22.py` is the only converter that finds its data relative to its own location.
 - `*_omat24_cutoff_*_e0_*.pkl` files next to the xyz files are graph caches the trainer writes
   (`race_v2/data/xyz_graphs.py`). They are not data and can be deleted; they are rebuilt on first use.
@@ -28,7 +33,7 @@ Conventions in this file:
 
 | dataset dir | raw source | converter | reproducible from the record? |
 |---|---|---|---|
-| repo `research/dataset_3BPA/` | in git (initial commit 016cd2d); md5-identical to BOTNet-datasets `research/dataset_3BPA/` | none (used as is) | yes |
+| repo `dataset_3BPA/` | in git (initial commit 016cd2d); md5-identical to BOTNet-datasets `dataset_3BPA/` | none (used as is) | yes |
 | `BOTNet-datasets/dataset_3BPA/test_dih.xyz` | git clone github.com/davkovacs/BOTNet-datasets | none | yes |
 | `BOTNet-datasets/dataset_acac` | same clone | none | yes |
 | `rmd17_official` | figshare 10.6084/m9.figshare.12672038.v4 (npz + index csv, md5 recorded) | `convert_rmd17_figshare.py ... 01` | yes |
@@ -39,7 +44,7 @@ Conventions in this file:
 | `si_gap18` | Zenodo 1250555 (GAP-18 training set, md5 recorded) + Zenodo 7003068 (RSS / compression-MD tests) | inline python (verbatim below) | yes |
 | `water_xyz` | git clone github.com/BingqingCheng/ab-initio-thermodynamics-of-water | inline python (verbatim below) | yes |
 | `water_split1393` | same clone | inline python (verbatim below) | yes |
-| `oam_subsets`, `oam_subsets_100k` | BAM-GAMP-jax shards in `/scratch/t589a02/oam_data`, `/scratch/t589a02/mp_data/jax_data_v3_raw` | `race_v2/data/oam_subset.py` | subsets: yes, given the shards. Shards: **partly** (converter and options are on disk; the raw OMat24/sAlex/MPtrj downloads and the MPtrj `jax_data_v3_raw` build are NOT FOUND in transcript) |
+| `oam_subsets`, `oam_subsets_100k` | BAM-GAMP-jax shards in `<DATA_ROOT>/oam_data`, `<DATA_ROOT>/mp_data/jax_data_v3_raw` | `race_v2/data/oam_subset.py` | subsets: yes, given the shards. Shards: **partly** (converter and options are on disk; the raw OMat24/sAlex/MPtrj downloads and the MPtrj `jax_data_v3_raw` build are NOT FOUND in transcript) |
 | `venv_tools` | `python -m venv` from conda env `bam_cue` + pip `pyarrow numpy scikit-learn` | n/a | yes |
 | local `data_local/4ghdnnp/{carbon_chain,ag_cluster,nacl,aumgo}` | Materials Cloud 2020.137 (10.24435/materialscloud:f3-yh) `datasets.tar.gz` (md5 recorded) | `scripts/data/convert_4ghdnnp.py` | yes (section 16) |
 | `tm23_dl`, `zuo2020_dl` | Materials Cloud tcrks-ymp88; github materialsvirtuallab/mlearn | none (inspected only) | not used in results |
@@ -51,16 +56,16 @@ Conventions in this file:
   Python 3.12.15, ase 3.29.0, numpy 2.5.4, matscipy 1.3.1 (versions read 2026-11-06). Used for every ASE-based step
   (water, Si, OAM subsets, MD22, QM9 props).
 - **`$DS/venv_tools`**: a helper venv for conversions that need only numpy / pyarrow / scikit-learn. `pyvenv.cfg`:
-  `home = /home01/t589a02/.conda/envs/bam_cue/bin`, Python 3.12.15, `include-system-site-packages = false`.
+  `home = <HOME>/.conda/envs/bam_cue/bin`, Python 3.12.15, `include-system-site-packages = false`.
   Created 2026-10-28 09:08 (verbatim):
 
 ```bash
-module load miniconda3/py314_26.7.1-1 2>/dev/null; source $(conda info --base)/etc/profile.d/conda.sh; conda activate bam_cue; python -m venv /scratch/t589a02/datasets_ext/venv_tools && /scratch/t589a02/datasets_ext/venv_tools/bin/pip install -q pyarrow numpy 2>&1 | tail -2; /scratch/t589a02/datasets_ext/venv_tools/bin/python -c "import pyarrow, numpy; print(pyarrow.__version__, numpy.__version__)"
+module load miniconda3/py314_26.7.1-1 2>/dev/null; source $(conda info --base)/etc/profile.d/conda.sh; conda activate bam_cue; python -m venv <DATA_ROOT>/datasets_ext/venv_tools && <DATA_ROOT>/datasets_ext/venv_tools/bin/pip install -q pyarrow numpy 2>&1 | tail -2; <DATA_ROOT>/datasets_ext/venv_tools/bin/python -c "import pyarrow, numpy; print(pyarrow.__version__, numpy.__version__)"
 ```
   (result: pyarrow 26.0.0, numpy 2.5.4). scikit-learn was added 2026-10-30 04:53 for LiPS (verbatim):
 
 ```bash
-cd /scratch/t589a02/datasets_ext && venv_tools/bin/pip install -q scikit-learn 2>&1 | tail -2; venv_tools/bin/python -I -c "import sklearn; print(sklearn.__version__)"
+cd <DATA_ROOT>/datasets_ext && venv_tools/bin/pip install -q scikit-learn 2>&1 | tail -2; venv_tools/bin/python -I -c "import sklearn; print(sklearn.__version__)"
 ```
   (result: scikit-learn 1.9.1). The venv also holds scipy 1.18.1, joblib, threadpoolctl (sklearn deps),
   cloudpickle 3.1.2 and narwhals 2.28.0; the install of the last two is NOT FOUND in transcript.
@@ -73,10 +78,10 @@ cd /scratch/t589a02/datasets_ext && venv_tools/bin/pip install -q scikit-learn 2
   ASE writes the extxyz headers, so the byte-level md5 of ASE-written files can change with the ASE version even when
   the data are identical.
 
-## 2. 3BPA (repo `research/dataset_3BPA/` and BOTNet `research/dataset_3BPA/test_dih.xyz`)
+## 2. 3BPA (repo `dataset_3BPA/` and BOTNet `dataset_3BPA/test_dih.xyz`)
 
 **Source.** The four training/test files are tracked in git in the repo (`git log -- dataset_3BPA` = `016cd2d Initial
-commit`; the session started from them: "데이터는 `research/dataset_3BPA/*.xyz`로 저장소에 포함"). Their origin before the repo
+commit`; the session started from them: "the data are included in the repository as `dataset_3BPA/*.xyz`"). Their origin before the repo
 is NOT FOUND in transcript, but they are byte-identical to the BOTNet-datasets copies (md5 computed 2026-11-06):
 
 | file | md5 (repo = BOTNet clone) |
@@ -92,21 +97,21 @@ is NOT FOUND in transcript, but they are byte-identical to the BOTNet-datasets c
 BOTNet-datasets: https://github.com/davkovacs/BOTNet-datasets, cloned commit
 `29e6d467317e4b5967b7ea5cbee54de953fa0d45` (2022-08-30, "update ethanol dataset with N energy of revMD17"). Its README:
 "datasets used for the paper The Design Space of E(3)-Equivariant Atom-Centered Interatomic Potentials ... cite
-https://arxiv.org/abs/2205.06643". `research/dataset_3BPA/README.md`: units Å, eV, eV/Å; keys `energy`, `forces`;
+https://arxiv.org/abs/2205.06643". `dataset_3BPA/README.md`: units Å, eV, eV/Å; keys `energy`, `forces`;
 train_300K = 500 configs from 300 K MD. (The README names `test_dih_beta.xyz`, the file in the repo is `test_dih.xyz`.)
 
 **Download (verbatim, 2026-10-28 06:40).** Note from the session: git works on the HANGANG login node, raw http did not.
 
 ```bash
-mkdir -p /scratch/t589a02/datasets_ext && cd /scratch/t589a02/datasets_ext && timeout 300 git clone --depth 1 https://github.com/davkovacs/BOTNet-datasets 2>&1 | tail -2; ls BOTNet-datasets; ls BOTNet-datasets/dataset_3BPA BOTNet-datasets/dataset_acac 2>/dev/null; du -sh BOTNet-datasets 2>/dev/null; cd /scratch/t589a02/BAM_V2
+mkdir -p <DATA_ROOT>/datasets_ext && cd <DATA_ROOT>/datasets_ext && timeout 300 git clone --depth 1 https://github.com/davkovacs/BOTNet-datasets 2>&1 | tail -2; ls BOTNet-datasets; ls BOTNet-datasets/dataset_3BPA BOTNet-datasets/dataset_acac 2>/dev/null; du -sh BOTNet-datasets 2>/dev/null; cd <DATA_ROOT>/BAM_V2
 ```
-Result: `research/dataset_3BPA/ iso_atoms.xyz README.md test_1200K.xyz test_300K.xyz test_600K.xyz test_dih.xyz train_300K.xyz train_mixedT.xyz`, 44M total.
+Result: `dataset_3BPA/ iso_atoms.xyz README.md test_1200K.xyz test_300K.xyz test_600K.xyz test_dih.xyz train_300K.xyz train_mixedT.xyz`, 44M total.
 
 **Preprocessing.** None. Files are used as is. `test_dih.xyz`: 7047 frames × 27 atoms, header has `dihedrals="_JSON [a, b, g]"`.
 
 **Use.**
 - Training/test: every 3BPA config, e.g. the final recipe `research/input/input_3bpa_omat24_r37_uffw03_s4{2,3,4}_cue.json`
-  (also `v9a_rp_*`, `r28_soap_*`, `abl3_*`, ~300 configs): `train_path research/dataset_3BPA/train_300K.xyz`,
+  (also `v9a_rp_*`, `r28_soap_*`, `abl3_*`, ~300 configs): `train_path dataset_3BPA/train_300K.xyz`,
   `test_paths` = test_300K / test_600K / test_1200K, `valid_frac 0.1`. Its `atom_energies` (H, C, N, O =
   −13.587222780835477, −1029.4889999855063, −1484.9814568572233, −2041.9816003861047 eV) are the `iso_atoms.xyz` energies.
 - Dihedral slices: no training config; evaluated with `race_v2.eval.eval_sets` through `runs/sbatch_eval_sets.sh`, e.g.
@@ -171,10 +176,10 @@ CSV format". It warns not to train on more than 1000 samples.
 script):
 
 ```bash
-D=/scratch/t589a02/datasets_ext/rmd17_figshare; mkdir -p $D && cd $D && ls -A | head; 
-cat > /tmp/claude-500030602/-scratch-t589a02-BAM-V2/5ef853ce-88a8-4dac-9612-afaeb18bb68a/scratchpad/dl_rmd17.sh <<'EOF'
+D=<DATA_ROOT>/datasets_ext/rmd17_figshare; mkdir -p $D && cd $D && ls -A | head; 
+cat > <scratchpad>/dl_rmd17.sh <<'EOF'
 set -e
-D=/scratch/t589a02/datasets_ext/rmd17_figshare; cd $D
+D=<DATA_ROOT>/datasets_ext/rmd17_figshare; cd $D
 timeout 60 curl -sS -L "https://api.figshare.com/v2/articles/12672038" -o article.json
 python3 - <<'PY' > files.tsv
 import json; d=json.load(open("article.json"))
@@ -192,7 +197,7 @@ echo written
 ```
 run as (verbatim):
 ```bash
-bash /tmp/claude-500030602/-scratch-t589a02-BAM-V2/5ef853ce-88a8-4dac-9612-afaeb18bb68a/scratchpad/dl_rmd17.sh > /tmp/claude-500030602/-scratch-t589a02-BAM-V2/5ef853ce-88a8-4dac-9612-afaeb18bb68a/scratchpad/dl_rmd17.log 2>&1
+bash <scratchpad>/dl_rmd17.sh > <scratchpad>/dl_rmd17.log 2>&1
 ```
 
 Failed earlier attempt (kept for the record): `curl -sL -o rmd17.tar.bz2 https://figshare.com/ndownloader/files/23950376`
@@ -267,7 +272,7 @@ if __name__ == "__main__":
 ```
 Command (verbatim, 2026-10-29 04:28, the final run after the sed fix):
 ```bash
-cd /scratch/t589a02/datasets_ext && /scratch/t589a02/datasets_ext/venv_tools/bin/python -I convert_rmd17_figshare.py /scratch/t589a02/datasets_ext/rmd17_figshare /scratch/t589a02/datasets_ext/rmd17_official 01
+cd <DATA_ROOT>/datasets_ext && <DATA_ROOT>/datasets_ext/venv_tools/bin/python -I convert_rmd17_figshare.py <DATA_ROOT>/datasets_ext/rmd17_figshare <DATA_ROOT>/datasets_ext/rmd17_official 01
 ```
 Split: official split 01 only (`index_train_01.csv` / `index_test_01.csv`, 1000 / 1000 rows, used in csv order).
 Units: kcal/mol → eV with 4.184/96.48533212. No filtering. Output per molecule (10 molecules):
@@ -287,7 +292,7 @@ original link 10.6084/m9.figshare.12672038.v3). Energies eV, forces eV/Å as sto
 
 **Download (verbatim, 2026-10-28 09:07):**
 ```bash
-mkdir -p /scratch/t589a02/datasets_ext/rmd17_colabfit && cd /scratch/t589a02/datasets_ext/rmd17_colabfit && for f in README.md ds.parquet cs/cs_0.parquet co/co_0.parquet co/co_1.parquet cs_co_map/cs_co_map_0.parquet; do mkdir -p $(dirname $f); timeout 600 curl -sL -o $f "https://huggingface.co/datasets/colabfit/rMD17/resolve/main/$f"; echo "$f $(stat -c %s $f)"; done; head -c 1500 README.md
+mkdir -p <DATA_ROOT>/datasets_ext/rmd17_colabfit && cd <DATA_ROOT>/datasets_ext/rmd17_colabfit && for f in README.md ds.parquet cs/cs_0.parquet co/co_0.parquet co/co_1.parquet cs_co_map/cs_co_map_0.parquet; do mkdir -p $(dirname $f); timeout 600 curl -sL -o $f "https://huggingface.co/datasets/colabfit/rMD17/resolve/main/$f"; echo "$f $(stat -c %s $f)"; done; head -c 1500 README.md
 ```
 Sizes: co_0 523,387,868 B, co_1 523,625,563 B, cs_co_map_0 10,419,419 B. md5 not recorded; computed 2026-11-06:
 co/co_0.parquet acff44468508118937821ca09fd79192, co/co_1.parquet 1cec17687014b775fca35d7f553686aa,
@@ -333,7 +338,7 @@ for m, rows in per.items():
 ```
 Command (verbatim, from the same tool call):
 ```bash
-cd /scratch/t589a02/datasets_ext && OMP_NUM_THREADS=1 timeout 1800 venv_tools/bin/python convert_rmd17.py rmd17_colabfit rmd17_xyz; ls rmd17_xyz; du -sh rmd17_xyz
+cd <DATA_ROOT>/datasets_ext && OMP_NUM_THREADS=1 timeout 1800 venv_tools/bin/python convert_rmd17.py rmd17_colabfit rmd17_xyz; ls rmd17_xyz; du -sh rmd17_xyz
 ```
 Split: per molecule, rows sorted by ColabFit `MD17-index` (= original-MD17 index), `RandomState(1234).permutation`,
 first 1000 → `train_1000.xyz`, next 2000 → `test_2000.xyz`. Not the official rMD17 split (that is why it was replaced
@@ -343,7 +348,7 @@ by section 4 on 2026-10-29). Frame counts per molecule after ColabFit: 99,976–
 variants). Not used for reported numbers.
 
 **Other rMD17 copies (not used in configs).**
-- `$DS/rmd17_frodo`: unpacked from `/scratch/t589a02/rmd17_from_frodo.tar.gz`, a tarball the user brought from another
+- `$DS/rmd17_frodo`: unpacked from `<DATA_ROOT>/rmd17_from_frodo.tar.gz`, a tarball the user brought from another
   machine (`frodo:/home/gbsim`; FAENet-era ASE `.traj` files for 7 molecules, 1000/1000 frames, plus `splits/*.csv`). How the
   tarball was made: NOT FOUND in transcript (its `rmd17/README.md` describes it). Only used for cross-checks on 2026-10-28.
 - `$DS/rmd17.tar.bz2`: 0-byte failed download (section 4).
@@ -355,7 +360,7 @@ file `lips.xyz`: 25,001 frames × 83 atoms (Li, P, S), periodic. md5 (recorded) 
 
 **Download (verbatim, 2026-10-30 04:33):**
 ```bash
-mkdir -p /scratch/t589a02/datasets_ext/lips_src && cd /scratch/t589a02/datasets_ext/lips_src && curl -sL -o lips.xyz "https://archive.materialscloud.org/records/ycbvx-knj69/files/lips.xyz?download=1" && md5sum lips.xyz && grep -c Lattice lips.xyz && head -2 lips.xyz | cut -c1-400
+mkdir -p <DATA_ROOT>/datasets_ext/lips_src && cd <DATA_ROOT>/datasets_ext/lips_src && curl -sL -o lips.xyz "https://archive.materialscloud.org/records/ycbvx-knj69/files/lips.xyz?download=1" && md5sum lips.xyz && grep -c Lattice lips.xyz && head -2 lips.xyz | cut -c1-400
 ```
 
 **Conversion.** `$DS/convert_lips.py` (on disk, written 2026-10-30 04:54, unchanged):
@@ -440,7 +445,7 @@ if __name__ == "__main__":
 ```
 Command (verbatim, 2026-10-30 04:54):
 ```bash
-cd /scratch/t589a02/datasets_ext && venv_tools/bin/python -I convert_lips.py lips_src/lips.xyz lips && ls -la lips && grep -c Lattice lips/fu_test.xyz
+cd <DATA_ROOT>/datasets_ext && venv_tools/bin/python -I convert_lips.py lips_src/lips.xyz lips && ls -la lips && grep -c Lattice lips/fu_test.xyz
 ```
 Splits: protocol F (Fu et al. TMLR 2023 / MDsim): `train_test_split(arange(25001), train_size=20000, test_size=5001,
 random_state=123)`, then the 20000 pool → 19000 train / 1000 valid (random_state=123). Protocol L (learning curve):
@@ -474,7 +479,7 @@ md5 not recorded; computed 2026-11-06 on the files in `$DS/md22`:
 
 **Download (verbatim, 2026-11-04 14:56; run on data-mover node dm01 over ssh):**
 ```bash
-timeout 600 ssh -o BatchMode=yes dm01 'mkdir -p /scratch/t589a02/datasets_ext/md22 && cd /scratch/t589a02/datasets_ext/md22 && for m in Ac-Ala3-NHMe DHA stachyose AT-AT AT-AT-CG-CG buckyball-catcher double-walled_nanotube; do curl -sL --max-time 300 -o md22_$m.npz http://www.quantum-machine.org/gdml/repo/datasets/md22_$m.npz; echo "$m $(stat -c %s md22_$m.npz) $(head -c 2 md22_$m.npz | od -An -c | tr -d " ")"; done' 2>&1 | tail -8
+timeout 600 ssh -o BatchMode=yes dm01 'mkdir -p <DATA_ROOT>/datasets_ext/md22 && cd <DATA_ROOT>/datasets_ext/md22 && for m in Ac-Ala3-NHMe DHA stachyose AT-AT AT-AT-CG-CG buckyball-catcher double-walled_nanotube; do curl -sL --max-time 300 -o md22_$m.npz http://www.quantum-machine.org/gdml/repo/datasets/md22_$m.npz; echo "$m $(stat -c %s md22_$m.npz) $(head -c 2 md22_$m.npz | od -An -c | tr -d " ")"; done' 2>&1 | tail -8
 ```
 
 **Conversion.** `$DS/convert_md22.py` (on disk, written 2026-11-04 15:00, unchanged):
@@ -541,7 +546,7 @@ if __name__ == "__main__":
 ```
 Run inside Slurm job `md22prep` (job 1215622, script `scripts/data/md22_prep.sh`, queued from `runs/queue_1103b.txt` as
 `-J md22prep --gres=gpu:4 -t 02:00:00 scripts/data/md22_prep.sh`) with the `bam_cue` python:
-`cd /scratch/t589a02/datasets_ext && python convert_md22.py` (no arguments = all seven). Log
+`cd <DATA_ROOT>/datasets_ext && python convert_md22.py` (no arguments = all seven). Log
 (`runs/slurm/md22prep_1215622.out`):
 ```
 Ac-Ala3-NHMe: 85109 frames x 42 atoms -> train 6000 / test 79109
@@ -567,12 +572,12 @@ bucky, dwnt (`md22T_<short>` = 2-epoch timing runs).
 
 **Download (verbatim, 2026-10-30 04:34):**
 ```bash
-mkdir -p /scratch/t589a02/datasets_ext/qm9_src && cd /scratch/t589a02/datasets_ext/qm9_src && curl -sL -o dsgdb9nsd.xyz.tar.bz2 https://ndownloader.figshare.com/files/3195389 ; curl -sL -o uncharacterized.txt https://ndownloader.figshare.com/files/3195404 ; ls -la; file *; md5sum *
+mkdir -p <DATA_ROOT>/datasets_ext/qm9_src && cd <DATA_ROOT>/datasets_ext/qm9_src && curl -sL -o dsgdb9nsd.xyz.tar.bz2 https://ndownloader.figshare.com/files/3195389 ; curl -sL -o uncharacterized.txt https://ndownloader.figshare.com/files/3195404 ; ls -la; file *; md5sum *
 ```
 **Unpack (verbatim, 2026-10-30 11:37)** (133,885 files in `qm9_src/xyz/`; an earlier identical attempt at 04:34 was
 rejected by the user and not run):
 ```bash
-cd /scratch/t589a02/datasets_ext/qm9_src && mkdir -p xyz && tar -xjf dsgdb9nsd.xyz.tar.bz2 -C xyz && ls xyz | wc -l && sed -n 1,12p uncharacterized.txt && tail -3 uncharacterized.txt && sed -n 1,4p xyz/dsgdb9nsd_000001.xyz
+cd <DATA_ROOT>/datasets_ext/qm9_src && mkdir -p xyz && tar -xjf dsgdb9nsd.xyz.tar.bz2 -C xyz && ls xyz | wc -l && sed -n 1,12p uncharacterized.txt && tail -3 uncharacterized.txt && sed -n 1,4p xyz/dsgdb9nsd_000001.xyz
 ```
 
 **U0 conversion.** `$DS/convert_qm9.py` (on disk, written 2026-10-30 11:40, unchanged):
@@ -642,9 +647,9 @@ if __name__ == "__main__":
 ```
 Command (verbatim, 2026-10-30 11:40; `python3` = system `/usr/bin/python3`):
 ```bash
-cd /scratch/t589a02/datasets_ext && ls qm9_src/xyz | grep -v dsgdb9nsd_ | head; python3 -I convert_qm9.py qm9_src/xyz qm9_src/uncharacterized.txt qm9 && ls -la qm9 && head -3 qm9/test.xyz && ~/.conda/envs/bam_cue/bin/python -I -c "
+cd <DATA_ROOT>/datasets_ext && ls qm9_src/xyz | grep -v dsgdb9nsd_ | head; python3 -I convert_qm9.py qm9_src/xyz qm9_src/uncharacterized.txt qm9 && ls -la qm9 && head -3 qm9/test.xyz && ~/.conda/envs/bam_cue/bin/python -I -c "
 from ase.io import read; import numpy as np
-fr=read('/scratch/t589a02/datasets_ext/qm9/train.xyz',':')
+fr=read('<DATA_ROOT>/datasets_ext/qm9/train.xyz',':')
 print(len(fr), sorted(set(np.concatenate([a.numbers for a in fr]))), np.mean([len(a) for a in fr]))"
 ```
 Split: drop the 3,054 uncharacterized molecules (130,831 left, files sorted by name), `RandomState(42).permutation`,
@@ -726,8 +731,8 @@ Run inside Slurm job `qm9props` (job 1215668, `scripts/data/qm9_props_prep.sh`, 
 module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
-cd /scratch/t589a02/datasets_ext
-python -I convert_qm9_props.py qm9_src/dsgdb9nsd.xyz.tar.bz2 qm9 . | tee /scratch/t589a02/BAM_V2/runs/diag/qm9_props_prep.log
+cd <DATA_ROOT>/datasets_ext
+python -I convert_qm9_props.py qm9_src/dsgdb9nsd.xyz.tar.bz2 qm9 . | tee <DATA_ROOT>/BAM_V2/runs/diag/qm9_props_prep.log
 ```
 Same molecules and order as the U0 files (read from `qm9/splits_seed42.npz`). U, H, G, ZPVE in eV; Cv kept in
 cal/(mol K) in the `energy` field. Output: `qm9_<T>/{train,valid,test}.xyz` (110000 / 10000 / 10831).
@@ -750,14 +755,14 @@ computed 2026-11-06 `9bc2b0a324e83047cdfdf90f2171bcd7`). The pointer to this fil
 
 Download (verbatim, 2026-10-30 00:41):
 ```bash
-D=/scratch/t589a02/datasets_ext/si_gap18_zenodo; mkdir -p $D; cd $D; timeout 60 curl -sS "https://zenodo.org/api/records/1250555" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['metadata']['title']); [print(f['key'], f['size'], f['checksum'], f['links']['self']) for f in d['files']]"
+D=<DATA_ROOT>/datasets_ext/si_gap18_zenodo; mkdir -p $D; cd $D; timeout 60 curl -sS "https://zenodo.org/api/records/1250555" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['metadata']['title']); [print(f['key'], f['size'], f['checksum'], f['links']['self']) for f in d['files']]"
 ```
 ```bash
-D=/scratch/t589a02/datasets_ext/si_gap18_zenodo; cd $D && timeout 1200 curl -sSL --retry 3 -o stf-v1.0.zip "https://zenodo.org/api/records/1250555/files/libAtoms/silicon-testing-framework-v1.0.zip/content" && md5sum stf-v1.0.zip && unzip -q -o stf-v1.0.zip "*/models/GAP/gp_iter6_sparse9k.xml.xyz" && find . -name "gp_iter6_sparse9k.xml.xyz" -exec ls -la {} \;
+D=<DATA_ROOT>/datasets_ext/si_gap18_zenodo; cd $D && timeout 1200 curl -sSL --retry 3 -o stf-v1.0.zip "https://zenodo.org/api/records/1250555/files/libAtoms/silicon-testing-framework-v1.0.zip/content" && md5sum stf-v1.0.zip && unzip -q -o stf-v1.0.zip "*/models/GAP/gp_iter6_sparse9k.xml.xyz" && find . -name "gp_iter6_sparse9k.xml.xyz" -exec ls -la {} \;
 ```
 Apollo copy (verbatim, 2026-10-30 04:12; only used for the md5 cross-check):
 ```bash
-D=/scratch/t589a02/datasets_ext/si_prx_gap_apollo; mkdir -p $D; cd $D; timeout 900 curl -sSL -o Si_PRX_GAP.zip -w "%{http_code} %{size_download}\n" "https://www.repository.cam.ac.uk/bitstreams/f17c105a-8466-4729-9fab-94ac03e48106/download"; file Si_PRX_GAP.zip; unzip -l Si_PRX_GAP.zip 2>/dev/null | head -30
+D=<DATA_ROOT>/datasets_ext/si_prx_gap_apollo; mkdir -p $D; cd $D; timeout 900 curl -sSL -o Si_PRX_GAP.zip -w "%{http_code} %{size_download}\n" "https://www.repository.cam.ac.uk/bitstreams/f17c105a-8466-4729-9fab-94ac03e48106/download"; file Si_PRX_GAP.zip; unzip -l Si_PRX_GAP.zip 2>/dev/null | head -30
 ```
 
 **Test-set source (RSS, compression MD).** Zenodo record 7003068, files `README.txt` and `structural_data.tar.gz`
@@ -769,16 +774,16 @@ e5a09c798cd3db5e320e347bc2e51ab4, test_set_compressionMD.xyz f172afc96cadc46187a
 
 Download and extraction (verbatim, 2026-10-30 04:13 and 04:17):
 ```bash
-D=/scratch/t589a02/datasets_ext/si_ext_tests; mkdir -p $D/rss $D/mqmd; cd $D/rss; timeout 60 curl -sSL -o README.txt "https://zenodo.org/api/records/7003068/files/README.txt/content"; cat README.txt; timeout 900 curl -sSL -o structural_data.tar.gz "https://zenodo.org/api/records/7003068/files/structural_data.tar.gz/content"; ls -la; tar -tzf structural_data.tar.gz | head -40
+D=<DATA_ROOT>/datasets_ext/si_ext_tests; mkdir -p $D/rss $D/mqmd; cd $D/rss; timeout 60 curl -sSL -o README.txt "https://zenodo.org/api/records/7003068/files/README.txt/content"; cat README.txt; timeout 900 curl -sSL -o structural_data.tar.gz "https://zenodo.org/api/records/7003068/files/structural_data.tar.gz/content"; ls -la; tar -tzf structural_data.tar.gz | head -40
 ```
 ```bash
-cd /scratch/t589a02/datasets_ext/si_ext_tests/rss; tar -xzf structural_data.tar.gz test_set_RSS.xyz test_set_compressionMD.xyz
+cd <DATA_ROOT>/datasets_ext/si_ext_tests/rss; tar -xzf structural_data.tar.gz test_set_RSS.xyz test_set_compressionMD.xyz
 ```
 
 **Conversion 1: stratified and extrapolation splits (verbatim, 2026-10-30 00:49, `bam_cue` python, unquoted heredoc
 so `$S`/`$O` expand):**
 ```bash
-module load miniconda3/py314_26.7.1-1 >/dev/null 2>&1; source $(conda info --base)/etc/profile.d/conda.sh; conda activate bam_cue; S=/scratch/t589a02/datasets_ext/si_gap18_zenodo; O=/scratch/t589a02/datasets_ext/si_gap18; mkdir -p $O; cd /scratch/t589a02/datasets_ext && python -I - <<EOF
+module load miniconda3/py314_26.7.1-1 >/dev/null 2>&1; source $(conda info --base)/etc/profile.d/conda.sh; conda activate bam_cue; S=<DATA_ROOT>/datasets_ext/si_gap18_zenodo; O=<DATA_ROOT>/datasets_ext/si_gap18; mkdir -p $O; cd <DATA_ROOT>/datasets_ext && python -I - <<EOF
 import ase.io, numpy as np, collections
 from ase.calculators.singlepoint import SinglePointCalculator
 fr = ase.io.read("$S/libAtoms-silicon-testing-framework-fc252cb/models/GAP/gp_iter6_sparse9k.xml.xyz", index=":")
@@ -819,7 +824,7 @@ Extrapolation: config types crack_111_1-10, crack_110_1-10, screw_disloc, 111ada
 
 **Conversion 2: RSS / compression tests and the full training set (verbatim, 2026-10-30 04:22):**
 ```bash
-module load miniconda3/py314_26.7.1-1 >/dev/null 2>&1; source $(conda info --base)/etc/profile.d/conda.sh; conda activate bam_cue; O=/scratch/t589a02/datasets_ext/si_gap18; R=/scratch/t589a02/datasets_ext/si_ext_tests/rss; cd /scratch/t589a02/datasets_ext && python -I - <<EOF
+module load miniconda3/py314_26.7.1-1 >/dev/null 2>&1; source $(conda info --base)/etc/profile.d/conda.sh; conda activate bam_cue; O=<DATA_ROOT>/datasets_ext/si_gap18; R=<DATA_ROOT>/datasets_ext/si_ext_tests/rss; cd <DATA_ROOT>/datasets_ext && python -I - <<EOF
 import ase.io, numpy as np
 from ase.calculators.singlepoint import SinglePointCalculator
 for src, dst in (("$R/test_set_RSS.xyz", "$O/test_rss.xyz"), ("$R/test_set_compressionMD.xyz", "$O/test_compressionMD.xyz")):
@@ -852,13 +857,13 @@ frames × 192 atoms = 64 H2O; `TotEnergy` and `force` in atomic units, Hartree /
 
 **Download (verbatim, 2026-10-28 09:06; the same call also made the failed rMD17 tar download):**
 ```bash
-cd /scratch/t589a02/datasets_ext && (timeout 600 curl -sL -o rmd17.tar.bz2 https://figshare.com/ndownloader/files/23950376; echo "rmd17 curl exit $?"; ls -la rmd17.tar.bz2; file rmd17.tar.bz2) ; (timeout 300 git clone --depth 1 https://github.com/BingqingCheng/ab-initio-thermodynamics-of-water water_cheng 2>&1 | tail -1; ls water_cheng/training-set 2>/dev/null | head; du -sh water_cheng 2>/dev/null)
+cd <DATA_ROOT>/datasets_ext && (timeout 600 curl -sL -o rmd17.tar.bz2 https://figshare.com/ndownloader/files/23950376; echo "rmd17 curl exit $?"; ls -la rmd17.tar.bz2; file rmd17.tar.bz2) ; (timeout 300 git clone --depth 1 https://github.com/BingqingCheng/ab-initio-thermodynamics-of-water water_cheng 2>&1 | tail -1; ls water_cheng/training-set 2>/dev/null | head; du -sh water_cheng 2>/dev/null)
 ```
 
 **Conversion to train.xyz / test.xyz (verbatim, 2026-10-28 09:13).** This is the run that produced the current files.
 A first run one minute earlier (09:12) treated the values as eV/Å and was overwritten by this one.
 ```bash
-cd /scratch/t589a02/datasets_ext && module load miniconda3/py314_26.7.1-1 2>/dev/null; source $(conda info --base)/etc/profile.d/conda.sh; conda activate bam_cue; OMP_NUM_THREADS=1 python - <<'EOF'
+cd <DATA_ROOT>/datasets_ext && module load miniconda3/py314_26.7.1-1 2>/dev/null; source $(conda info --base)/etc/profile.d/conda.sh; conda activate bam_cue; OMP_NUM_THREADS=1 python - <<'EOF'
 import ase.io, numpy as np
 from ase.units import Bohr, Hartree
 from ase.calculators.singlepoint import SinglePointCalculator
@@ -888,19 +893,19 @@ cell × `ase.units.Bohr`, energy × `ase.units.Hartree`, forces × Hartree/Bohr 
 test.xyz = original frame 383, min interatomic distance 0.703 Å). The `sed` lines at the start print a literature PDF
 from the scratchpad and do not affect the data.
 ```bash
-S=/tmp/claude-500030602/-scratch-t589a02-BAM-V2/5ef853ce-88a8-4dac-9612-afaeb18bb68a/scratchpad; sed -n 1416,1432p $S/nemp.txt | cut -c1-130; sed -n 1036,1046p $S/nemp.txt | cut -c1-130; export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1; ~/.conda/envs/bam_cue/bin/python -I -c "
+S=<scratchpad>; sed -n 1416,1432p $S/nemp.txt | cut -c1-130; sed -n 1036,1046p $S/nemp.txt | cut -c1-130; export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1; ~/.conda/envs/bam_cue/bin/python -I -c "
 from ase.io import read,write; import numpy as np, matscipy.neighbours as mn
-fr=read('/scratch/t589a02/datasets_ext/water_xyz/test.xyz',':')
+fr=read('<DATA_ROOT>/datasets_ext/water_xyz/test.xyz',':')
 d=[mn.neighbour_list('d',a,3.0).min() for a in fr]; i=np.argsort(d)[:4]; print(i,np.array(d)[i])
-write('/scratch/t589a02/datasets_ext/water_xyz/test_noout.xyz',[a for k,a in enumerate(fr) if k!=i[0]],format='extxyz'); print(len(fr)-1)" 2>&1 | tail -3
+write('<DATA_ROOT>/datasets_ext/water_xyz/test_noout.xyz',[a for k,a in enumerate(fr) if k!=i[0]],format='extxyz'); print(len(fr)-1)" 2>&1 | tail -3
 ```
 Result: indices `[138 90 28 123]`, distances `[0.703 0.740 0.752 0.756]`; 158 frames written.
 
 **train_only.xyz / valid.xyz (verbatim, 2026-11-01 12:58):** the trainer's internal 90/10 split written to fixed files.
 ```bash
-cd /scratch/t589a02/datasets_ext/water_xyz; head -2 train.xyz | cut -c1-400; export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1; ~/.conda/envs/bam_cue/bin/python -I - <<'EOF' 2>&1 | grep -v -i openblas
+cd <DATA_ROOT>/datasets_ext/water_xyz; head -2 train.xyz | cut -c1-400; export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1; ~/.conda/envs/bam_cue/bin/python -I - <<'EOF' 2>&1 | grep -v -i openblas
 from ase.io import read, write; import numpy as np, matscipy.neighbours as mn
-tr=read('/scratch/t589a02/datasets_ext/water_xyz/train.xyz',':'); te=read('/scratch/t589a02/datasets_ext/water_xyz/test.xyz',':')
+tr=read('<DATA_ROOT>/datasets_ext/water_xyz/train.xyz',':'); te=read('<DATA_ROOT>/datasets_ext/water_xyz/test.xyz',':')
 def mind(a): return mn.neighbour_list('d',a,2.0).min()
 dtr=np.array([mind(a) for a in tr]); dte=np.array([mind(a) for a in te])
 print('train min-dist: <0.72:',(dtr<0.72).sum(),'<0.76:',(dtr<0.76).sum(),'<0.80:',(dtr<0.80).sum(),'min %.3f'%dtr.min(),'median %.3f'%np.median(dtr))
@@ -909,8 +914,8 @@ vol=np.array([a.get_volume() for a in tr]); print('train volume A^3: min %.0f ma
 print('info keys', list(tr[0].info.keys()), 'cell', np.round(tr[0].cell.lengths(),2))
 # reproduce the loader split: RandomState(42).permutation, n_train = int(N*0.9)
 perm=np.random.RandomState(42).permutation(len(tr)); n=int(len(tr)*0.9)
-write('/scratch/t589a02/datasets_ext/water_xyz/train_only.xyz',[tr[i] for i in perm[:n]],format='extxyz')
-write('/scratch/t589a02/datasets_ext/water_xyz/valid.xyz',[tr[i] for i in perm[n:]],format='extxyz')
+write('<DATA_ROOT>/datasets_ext/water_xyz/train_only.xyz',[tr[i] for i in perm[:n]],format='extxyz')
+write('<DATA_ROOT>/datasets_ext/water_xyz/valid.xyz',[tr[i] for i in perm[n:]],format='extxyz')
 print('wrote train_only',n,'valid',len(tr)-n)
 E=np.array([a.get_potential_energy() for a in tr]); print('corr(E, volume) = %.3f'%np.corrcoef(E,vol)[0,1])
 EOF
@@ -930,25 +935,25 @@ for MACE itself in the session notes.
 **Conversion (verbatim, 2026-11-02 09:04).** This run produced the current files; an earlier run at 08:59 wrote the
 same split with `b.info={'orig_index':k,'energy':E}` and a leftover `force` array and was overwritten by this one.
 ```bash
-cd /scratch/t589a02/BAM_V2; squeue -h -u t589a02 -n w8s1393 -o %i | xargs -r scancel; export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1; ~/.conda/envs/bam_cue/bin/python -I - <<'EOF' 2>&1 | grep -v -i openblas
+cd <DATA_ROOT>/BAM_V2; squeue -h -u <user> -n w8s1393 -o %i | xargs -r scancel; export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1; ~/.conda/envs/bam_cue/bin/python -I - <<'EOF' 2>&1 | grep -v -i openblas
 import numpy as np, os
 from ase.io import read, write
 from ase.calculators.singlepoint import SinglePointCalculator
 B=0.529177; HA=27.211386
-orig=read('/scratch/t589a02/datasets_ext/water_cheng/training-set/dataset_1593.xyz',':')
+orig=read('<DATA_ROOT>/datasets_ext/water_cheng/training-set/dataset_1593.xyz',':')
 out=[]
 for k,a in enumerate(orig):
     b=a.copy(); b.set_positions(a.positions*B); b.set_cell(a.cell*B,scale_atoms=False); b.pbc=True
     E=float(a.info['TotEnergy'])*HA; F=np.asarray(a.arrays['force'])*HA/B
     b.info={'orig_index':k}; b.arrays.pop('force',None); b.calc=SinglePointCalculator(b,energy=E,forces=F); out.append(b)
-te=read('/scratch/t589a02/datasets_ext/water_xyz/test.xyz',':'); t=te[138]
+te=read('<DATA_ROOT>/datasets_ext/water_xyz/test.xyz',':'); t=te[138]
 k=[i for i,b in enumerate(out) if np.allclose(b.positions,t.positions,atol=1e-4)][0]
 print('check orig',k,'dE %.2e eV, dF max %.2e eV/A, cell diff %.1e'%(out[k].get_potential_energy()-t.get_potential_energy(), np.abs(out[k].get_forces()-t.get_forces()).max(), np.abs(out[k].cell.array-t.cell.array).max()))
-D='/scratch/t589a02/datasets_ext/water_split1393'; os.makedirs(D,exist_ok=True)
+D='<DATA_ROOT>/datasets_ext/water_split1393'; os.makedirs(D,exist_ok=True)
 write(f'{D}/train_first1393.xyz',out[:1393],format='extxyz'); write(f'{D}/test_last200.xyz',out[1393:],format='extxyz')
 r=read(f'{D}/test_last200.xyz',':'); print('written train 1393 / test',len(r),'; reread energy ok:',abs(r[0].get_potential_energy()-out[1393].get_potential_energy())<1e-6, 'forces present:', r[0].get_forces().shape)
 EOF
-ls -la /scratch/t589a02/datasets_ext/water_split1393/
+ls -la <DATA_ROOT>/datasets_ext/water_split1393/
 ```
 Result: `check orig 383 dE 2.69e-05 eV, dF max 6.52e-06 eV/A, cell diff 5.3e-06` (against water_xyz test frame 138);
 `train_first1393.xyz` = original frames 0–1392, `test_last200.xyz` = frames 1393–1592; `info` holds `orig_index`.
@@ -968,9 +973,9 @@ Reads the packed super-batch shards of BAM-GAMP-jax (``bam_jax.data.schema``: on
 super-batches with positions, species index, cell, raw DFT energy, forces, stress) and writes
 ``<out>/<name>_{train,valid,test}.xyz`` plus ``<out>/<name>_meta.json``.
 
-    python -m race_v2.data.oam_subset --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
-        --eval-root /scratch/t589a02/oam_data/omat24_val --atom-ref /scratch/t589a02/oam_data/refs/omat24_train_ls.npz \
-        --n-train 10000 --n-valid 1000 --n-test 1000 --out /scratch/t589a02/datasets_ext/oam_subsets
+    python -m race_v2.data.oam_subset --name omat24 --train-root <DATA_ROOT>/oam_data/omat24_train \
+        --eval-root <DATA_ROOT>/oam_data/omat24_val --atom-ref <DATA_ROOT>/oam_data/refs/omat24_train_ls.npz \
+        --n-train 10000 --n-valid 1000 --n-test 1000 --out <DATA_ROOT>/datasets_ext/oam_subsets
 
 Conventions of the shards (scripts/convert_aselmdb_to_shards.py): energy = raw total DFT energy (eV), forces eV/A,
 stress eV/A^3 with ASE sign (positive = tensile) and ASE Voigt order (xx, yy, zz, yz, xz, xy).  Species are encoded
@@ -1119,17 +1124,17 @@ module load miniconda3/py314_26.7.1-1
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate bam_cue
 export OPENBLAS_NUM_THREADS=4 OMP_NUM_THREADS=4
-OUT=/scratch/t589a02/datasets_ext/oam_subsets
+OUT=<DATA_ROOT>/datasets_ext/oam_subsets
 N_TRAIN=${N_TRAIN:-10000}
 set -x
-python -I race_v2/data/oam_subset.py --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
-  --eval-root /scratch/t589a02/oam_data/omat24_val --atom-ref /scratch/t589a02/oam_data/refs/omat24_train_ls.npz \
+python -I race_v2/data/oam_subset.py --name omat24 --train-root <DATA_ROOT>/oam_data/omat24_train \
+  --eval-root <DATA_ROOT>/oam_data/omat24_val --atom-ref <DATA_ROOT>/oam_data/refs/omat24_train_ls.npz \
   --n-train $N_TRAIN --n-valid 1000 --n-test 1000 --out $OUT > $OUT.omat24.log 2>&1 &
-python -I race_v2/data/oam_subset.py --name mptrj --train-root /scratch/t589a02/mp_data/jax_data_v3_raw/train \
-  --eval-root /scratch/t589a02/mp_data/jax_data_v3_raw/valid --atom-ref /scratch/t589a02/oam_data/refs/mptrj_raw_ls.npz \
+python -I race_v2/data/oam_subset.py --name mptrj --train-root <DATA_ROOT>/mp_data/jax_data_v3_raw/train \
+  --eval-root <DATA_ROOT>/mp_data/jax_data_v3_raw/valid --atom-ref <DATA_ROOT>/oam_data/refs/mptrj_raw_ls.npz \
   --n-train $N_TRAIN --n-valid 1000 --n-test 1000 --out $OUT > $OUT.mptrj.log 2>&1 &
-python -I race_v2/data/oam_subset.py --name salex --train-root /scratch/t589a02/oam_data/salex_train \
-  --eval-root /scratch/t589a02/oam_data/salex_val --atom-ref /scratch/t589a02/oam_data/refs/salex_train_ls.npz \
+python -I race_v2/data/oam_subset.py --name salex --train-root <DATA_ROOT>/oam_data/salex_train \
+  --eval-root <DATA_ROOT>/oam_data/salex_val --atom-ref <DATA_ROOT>/oam_data/refs/salex_train_ls.npz \
   --n-train $N_TRAIN --n-valid 1000 --n-test 1000 --out $OUT > $OUT.salex.log 2>&1 &
 wait
 ```
@@ -1142,10 +1147,10 @@ per-element least-squares reference energies of the full training split, used as
 Built by `scripts/train/size_screen.sh` on its first run (job `szsmk`, 2026-11-05 22:08 UTC; files 2026-11-06 07:12 KST).
 Data part (verbatim from the script on disk):
 ```bash
-OUT=/scratch/t589a02/datasets_ext/oam_subsets_100k
+OUT=<DATA_ROOT>/datasets_ext/oam_subsets_100k
 if [ ! -f $OUT/omat24_meta.json ]; then
-  python -I race_v2/data/oam_subset.py --name omat24 --train-root /scratch/t589a02/oam_data/omat24_train \
-    --eval-root /scratch/t589a02/oam_data/omat24_val --atom-ref /scratch/t589a02/oam_data/refs/omat24_train_ls.npz \
+  python -I race_v2/data/oam_subset.py --name omat24 --train-root <DATA_ROOT>/oam_data/omat24_train \
+    --eval-root <DATA_ROOT>/oam_data/omat24_val --atom-ref <DATA_ROOT>/oam_data/refs/omat24_train_ls.npz \
     --n-train 100000 --n-valid 2000 --n-test 1000 --per-shard 50 --out $OUT 2>&1 | tail -n 5
 fi
 ```
@@ -1157,31 +1162,31 @@ and the count uses the first 500 training graphs.
 `sz100k_L{4,5,6}x{64,128,192}_omat24_v2_s42`, `szsmk_*` (made by `make_oam_configs.py` inside `size_screen.sh`).
 
 **Where the shards come from.**
-- OMat24 and sAlex shards (`/scratch/t589a02/oam_data/{omat24,salex}_{train,val}`) were written by
+- OMat24 and sAlex shards (`<DATA_ROOT>/oam_data/{omat24,salex}_{train,val}`) were written by
   `~/prog/BAM-GAMP-jax/scripts/convert_aselmdb_to_shards.py` (converter version 2). Its options are pinned in each
   `convert_config.json` (read 2026-11-06):
 
   | shard dir | `src` (raw aselmdb) | files | key options |
   |---|---|---|---|
-  | omat24_train | /scratch/t589a02/oam_lmdb/omat24_train | 5300 | `--dataset omat24 --rows_per_task 10000` |
-  | omat24_val | /scratch/t589a02/oam_lmdb/omat24_val | 11 | `--dataset omat24 --rows_per_task 10000` |
-  | salex_train | /scratch/t589a02/oam_lmdb/salex_train/train | 350 | `--dataset salex --rows_per_task 20000` |
-  | salex_val | /scratch/t589a02/oam_lmdb/salex_val/val | 348 | `--dataset salex --rows_per_task 20000` |
+  | omat24_train | <DATA_ROOT>/oam_lmdb/omat24_train | 5300 | `--dataset omat24 --rows_per_task 10000` |
+  | omat24_val | <DATA_ROOT>/oam_lmdb/omat24_val | 11 | `--dataset omat24 --rows_per_task 10000` |
+  | salex_train | <DATA_ROOT>/oam_lmdb/salex_train/train | 350 | `--dataset salex --rows_per_task 20000` |
+  | salex_val | <DATA_ROOT>/oam_lmdb/salex_val/val | 348 | `--dataset salex --rows_per_task 20000` |
 
   All four: cutoff 6.0, max_force 50 eV/Å, max_stress 80 GPa, max_energy_per_atom 0.0, min_energy_residual −5.0
   eV/atom with `scripts/data/energy_floor_ref_mptrj.json` (sha d8a71267a6b55795), max_atoms 512, seed 0,
-  batches_per_shard 200, `atom_ref /scratch/t589a02/mp_data/atom_ref.npz` (species_encoding sha bd91e2c24fdae3a5),
-  shapes from `/scratch/t589a02/mp_data/jax_data_v3/train/manifest.json` (sha 6ce85154f0bb081a). Energies are raw
+  batches_per_shard 200, `atom_ref <DATA_ROOT>/mp_data/atom_ref.npz` (species_encoding sha bd91e2c24fdae3a5),
+  shapes from `<DATA_ROOT>/mp_data/jax_data_v3/train/manifest.json` (sha 6ce85154f0bb081a). Energies are raw
   total DFT energies (eV), forces eV/Å, stress eV/Å³ with ASE sign and Voigt order (xx, yy, zz, yz, xz, xy).
   The script's docstring gives the run pattern (`srun ... python scripts/convert_aselmdb_to_shards.py --dataset omat24
-  --src <omat24_train_dir> --dst /scratch/t589a02/oam_data/omat24_train --rows_per_task 10000`). The actual runs
+  --src <omat24_train_dir> --dst <DATA_ROOT>/oam_data/omat24_train --rows_per_task 10000`). The actual runs
   (2026-10-29/30) are not in this transcript: **NOT FOUND in transcript** (the exact commands, job ids, and the
   `oam_data/refs/*_ls.npz` fits; the job script of 2026-11-05 points to "step d of the 2026-10-30 slot job (markers
   d_omat24_train, d_fit_omat24, ... in jobs_2026-10-30/markers/)", which belongs to another session or workflow).
-- Raw OMat24 / sAlex aselmdb downloads into `/scratch/t589a02/oam_lmdb`: **NOT FOUND in transcript** (no URL, no
+- Raw OMat24 / sAlex aselmdb downloads into `<DATA_ROOT>/oam_lmdb`: **NOT FOUND in transcript** (no URL, no
   command). The transcript only shows the row format as verified "on the extracted OMat24 val, sAlex val and
   OMat24-1M files".
-- MPtrj shards `/scratch/t589a02/mp_data/jax_data_v3_raw/{train,valid}` and `oam_data/refs/mptrj_raw_ls.npz`:
+- MPtrj shards `<DATA_ROOT>/mp_data/jax_data_v3_raw/{train,valid}` and `oam_data/refs/mptrj_raw_ls.npz`:
   **NOT FOUND in transcript** (pre-existing on 2026-10-26; how they were made and from which MPtrj release is not
   recorded here).
 - Reference energy files `oam_data/refs/{omat24_train,mptrj_raw,salex_train}_ls.npz` (keys `species_encoding`,
@@ -1194,18 +1199,18 @@ and the count uses the first 500 training graphs.
   `benchmarking_master_collection-20240316T202423Z-001.zip` saved as `tm23.zip` (936,628,742 B, md5 recorded
   `52b2c471591c8a8a88717f3fbdff6e37`), unzipped to `benchmarking_master_collection/`. Download (verbatim):
 ```bash
-cd /scratch/t589a02/datasets_ext/tm23_dl && curl -sL --max-time 60 -o README.md "https://archive.materialscloud.org/records/tcrks-ymp88/files/README.md?download=1" && curl -sL --max-time 60 -o files_description.md "https://archive.materialscloud.org/records/tcrks-ymp88/files/files_description.md?download=1" && cat README.md files_description.md; curl -sL --max-time 580 -o tm23.zip "https://archive.materialscloud.org/records/tcrks-ymp88/files/benchmarking_master_collection-20240316T202423Z-001.zip?download=1"; ls -la tm23.zip; md5sum tm23.zip
+cd <DATA_ROOT>/datasets_ext/tm23_dl && curl -sL --max-time 60 -o README.md "https://archive.materialscloud.org/records/tcrks-ymp88/files/README.md?download=1" && curl -sL --max-time 60 -o files_description.md "https://archive.materialscloud.org/records/tcrks-ymp88/files/files_description.md?download=1" && cat README.md files_description.md; curl -sL --max-time 580 -o tm23.zip "https://archive.materialscloud.org/records/tcrks-ymp88/files/benchmarking_master_collection-20240316T202423Z-001.zip?download=1"; ls -la tm23.zip; md5sum tm23.zip
 ```
   `tm23_paper_tables.json` / `tm23_dataset_summary.json` are summaries the session wrote. TM23 was declined by the user.
 - **`zuo2020_dl`** (Zuo et al. 2020 mlearn data, 2026-11-03): `training.json` and `test.json` for Cu, Ge, Li, Mo, Ni, Si
   from `https://raw.githubusercontent.com/materialsvirtuallab/mlearn/master/data/<el>/<f>` (verbatim):
 ```bash
-cd /scratch/t589a02/datasets_ext/zuo2020_dl && for el in Cu Ge Li Mo Ni Si; do mkdir -p $el; for f in training.json test.json; do curl -sL --max-time 120 -o $el/$f https://raw.githubusercontent.com/materialsvirtuallab/mlearn/master/data/$el/$f; done; done; ls -la Cu; ~/.conda/envs/bam_cue/bin/python -I - <<'EOF'
+cd <DATA_ROOT>/datasets_ext/zuo2020_dl && for el in Cu Ge Li Mo Ni Si; do mkdir -p $el; for f in training.json test.json; do curl -sL --max-time 120 -o $el/$f https://raw.githubusercontent.com/materialsvirtuallab/mlearn/master/data/$el/$f; done; done; ls -la Cu; ~/.conda/envs/bam_cue/bin/python -I - <<'EOF'
 import json,glob,collections,numpy as np
 for el in ['Ni','Cu','Li','Mo','Si','Ge']:
     out=[]
     for sp in ['training','test']:
-        try: d=json.load(open(f'/scratch/t589a02/datasets_ext/zuo2020_dl/{el}/{sp}.json'))
+        try: d=json.load(open(f'<DATA_ROOT>/datasets_ext/zuo2020_dl/{el}/{sp}.json'))
         except Exception as e: out.append(f"{sp}: ERR {e}"); continue
         n=len(d); nat=[len(x['structure']['sites']) for x in d]
         tags=collections.Counter(x.get('tag','?') for x in d)
@@ -1350,11 +1355,11 @@ Not hashed (large; rebuild and compare frame counts): `rmd17_official/*/rest_spl
 
 ## 15. Gaps in the record
 
-1. OAM raw data: the OMat24 / sAlex aselmdb downloads (`/scratch/t589a02/oam_lmdb`), the shard conversion runs, the
+1. OAM raw data: the OMat24 / sAlex aselmdb downloads (`<DATA_ROOT>/oam_lmdb`), the shard conversion runs, the
    `refs/*_ls.npz` fits, and the whole MPtrj `jax_data_v3_raw` pipeline are NOT FOUND in transcript. The subset step
    is reproducible only from the existing shards; copy `oam_data/{omat24,salex}_{train,val}`, `oam_data/refs`,
    `mp_data/jax_data_v3_raw`, or simply the finished `oam_subsets*` xyz + meta files.
-2. Repo `research/dataset_3BPA/`: its pre-repo origin is NOT FOUND in transcript, but the files equal the BOTNet copies byte for
+2. Repo `dataset_3BPA/`: its pre-repo origin is NOT FOUND in transcript, but the files equal the BOTNet copies byte for
    byte, so re-downloading BOTNet-datasets reproduces them.
 3. No md5 was recorded at download time for MD22, ColabFit rMD17, the Zenodo 7003068 tarball, the water repo file,
    and the BOTNet files; the md5s above were computed on 2026-11-06 from the files on disk.

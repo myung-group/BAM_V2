@@ -3,7 +3,7 @@
 Molecular (non-periodic) systems, single-node (one or more GPUs via JAX sharding).
 
 Usage:
-    python -m race_v2.training.train research/input/input_3bpa.json
+    python -m race_v2.training.train configs/base/race_v2_base_recipe.json
 
 Config keys (in addition to the model hyper-parameters, see README):
     train_path, test_path | test_paths, valid_frac | valid_path (fixed validation file), atomic_numbers, atom_energies
@@ -153,7 +153,7 @@ Config keys (in addition to the model hyper-parameters, see README):
     graph_workers    : processes for the neighbour searches (default 1; 0 = CPUs of the Slurm task, <= 64)
     data_format      : "xyz" (default: graphs built once, pickle-cached, held in memory) | "stream" (no graphs on disk
                        or in memory: worker processes read the structures and build the graphs every step; for
-                       OMol25 / OMat24 scale; docs/stream_loader_design.md, docs/HANDOFF_stream_loader.md).  Options in
+                       OMol25 / OMat24 scale; docs/stream_loader_design.md, docs/HANDOFF_stream_loader.md on branch racev2).  Options in
                        "stream":
                          train / valid: ["extxyz:<file>" | "aselmdb:<file or dir>", ...] or {"sources": [...],
                                   "sizes": <size-table dir> (default <log dir>/stream_sizes_<split>, made at start by
@@ -168,7 +168,7 @@ Config keys (in addition to the model hyper-parameters, see README):
                        boltzmann_tilt, node_weight, taylor_aug, e0_mode "regression", train_path (gauge_refit
                        uses a seeded training subset of stream.gauge_structures, default 20000).
                        Neighbour list: BAM_NEIGHBORS=vesin (environment) is much faster for periodic cells.
-                       Multi-dataset training (2026-11-11; docs/HANDOFF_multidataset_thole.md): a source may be a
+                       Multi-dataset training (2026-11-11; docs/HANDOFF_multidataset_thole.md on branch racev2): a source may be a
                        dict {"path": "aselmdb:<dir>", "name", "max_frames_per_shard", "subset_seed", "meta_dir",
                        "task", "task_rules", "energy_key", "charge_label_key", "charge_label_scale", "dipole"}
                        (race_v2/data/stream_io.py module docstring), with the stream options
@@ -386,7 +386,7 @@ def build_datasets(cfg: Dict, fout):
     atomic_numbers = list(_get(cfg, 'atomic_numbers', DEFAULT_ATOMIC_NUMBERS))
     atom_indices = atomic_numbers_to_indices(atomic_numbers)
     cutoff = float(_get(cfg, 'cutoff', 5.0))
-    train_path = Path(_get(cfg, 'train_path', 'research/dataset_3BPA/train_300K.xyz'))
+    train_path = Path(_get(cfg, 'train_path', 'dataset_3BPA/train_300K.xyz'))
 
     train_frames = load_frames(train_path)
     ref_e0 = np.asarray(_get(cfg, 'atom_energies', DEFAULT_ATOM_ENERGIES), dtype=np.float64)
@@ -1711,7 +1711,7 @@ def train(cfg: Dict):
 
 
 if __name__ == "__main__":
-    cfg_path = sys.argv[1] if len(sys.argv) > 1 else 'research/input/input_3bpa.json'
+    cfg_path = sys.argv[1] if len(sys.argv) > 1 else 'configs/base/race_v2_base_recipe.json'
     with open(cfg_path) as f:
         config = json.load(f)
     train(config)

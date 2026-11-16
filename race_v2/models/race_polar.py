@@ -1,4 +1,4 @@
-"""RACE_POLAR: RACEv2 with Thole-type polarizable electrostatics (2026-11-11; docs/HANDOFF_multidataset_thole.md).
+"""RACE_POLAR: RACEv2 with Thole-type polarizable electrostatics (2026-11-11; docs/HANDOFF_multidataset_thole.md on branch racev2).
 
 JAX port of the "polar" block of BAM-torch (bam_ufo/model/thole.py, TholeElectrostaticsBlock, mode "pbc_split");
 the electrostatics are in race_v2/models/thole.py.  RACE and RACE_LR are unchanged; this subclass of RACE_LR (for its

@@ -5,7 +5,7 @@ Posterior precision of every SOAP matrix leaf, diagonal in the SOAP eigenbasis:
 Adam leaves: diag(kappa * nu + lam).  Skip leaves: fixed.  Samples are drawn around the EMA weights.
 Periodic cells supported (cell and cutoff globals; forces only, no stress yet).
 
-Three curvatures for nu (docs/local_test_report.md sections 18-19):
+Three curvatures for nu (docs/local_test_report.md on branch racev2 sections 18-19):
   * optimizer nu (default): the SOAP/Adam second moment of the loss gradient.  Run 2026-11-09: an empirical Fisher,
     tiny at convergence (median 1e-15) and concentrated in a few directions -> isotropic prior or over-confident.
   * --recollect N: the same quantity recomputed at the EMA weights from N training structures.  Same picture.
@@ -456,7 +456,7 @@ def main():
 
     def evaluate(gs, kappa, lam, seed, netE, netF, dump=None):
         """Calibration with two centres: the sample mean ('mean') and the network itself ('map', sigma = sample std).
-        dump: path of an npz with the per-structure arrays (OOD analyses, research/diag/ood_summary.py)."""
+        dump: path of an npz with the per-structure arrays (OOD analyses)."""
         Es, Fs = mc(gs, kappa, lam, seed) if a.predictive == 'mc' else mc_lin(gs, kappa, lam, seed, netE, netF)
         if not (np.isfinite(Es).all() and np.isfinite(Fs).all()):
             return None

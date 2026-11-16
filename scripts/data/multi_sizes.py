@@ -1,8 +1,8 @@
 """Size tables (n_atoms, n_edges, cell per structure) of a multi-dataset stream config, made ahead of the training
-with many workers (JAX-free; docs/HANDOFF_multidataset_thole.md).  Needs "sizes" directories in the config
+with many workers (JAX-free; docs/HANDOFF_multidataset_thole.md on branch racev2).  Needs "sizes" directories in the config
 (make_multidataset_configs.py --sizes-dir).
 
-    BAM_NEIGHBORS=vesin python -I scripts/data/multi_sizes.py research/input/multi/<name>.json [--workers 11] [--splits train valid]
+    BAM_NEIGHBORS=vesin python -I scripts/data/multi_sizes.py configs/multi/<name>.json [--workers 11] [--splits train valid]
 """
 import argparse
 import json

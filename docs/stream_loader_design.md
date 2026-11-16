@@ -1,8 +1,13 @@
 # Large-scale streaming data pipeline for the RACEv2 trainer (BAM_V2)
 
+> **Note (2026-11-16).** This document was written during development. Paths under `research/` and the documents
+> `docs/HANDOFF*.md` and `docs/local_test_report.md` it mentions were removed from `main`; they are on the `racev2`
+> branch (`research/diag` = `runs/diag`, `research/input` = `input/` there). `<DATA_ROOT>`, `<HOME>` and
+> `<scratchpad>` stand for directories of the machine the work was done on.
+
 Date: 2026-11-06. Read-only investigation; nothing in either repository was changed.
 
-Repositories: `BG` = `/home01/t589a02/prog/BAM-GAMP-jax`, `BV` = `/scratch/t589a02/BAM_V2`.
+Repositories: `BG` = `<HOME>/prog/BAM-GAMP-jax`, `BV` = `<DATA_ROOT>/BAM_V2`.
 Every `path:line` is relative to one of them. Data measurements are marked **[measured]** and come from manifest
 reads, one unpickled shard, `ls -l` of two source directories and a 200-row lmdb probe (glogin01, no JAX).
 
@@ -233,7 +238,7 @@ zero for r ≥ r_c (`models/blocks.py:57`).
 * RACEv2 stores E − Σ_i E0[species_i] and trains with `l_train=True`; the model does not add E0
   (`data/xyz_graphs.py:8-11, 58, 66`; `models/blocks.py:365-368`; `BV/race_v2/training/train.py:424`).
 * The raw shards and aselmdb store raw E. **The worker subtracts E0 in float64.**
-* E0 = `atom_ref` of `/scratch/t589a02/oam_data/refs/<ds>_ls.npz` (keys `atom_ref` (89,), `species_encoding` (95,),
+* E0 = `atom_ref` of `<DATA_ROOT>/oam_data/refs/<ds>_ls.npz` (keys `atom_ref` (89,), `species_encoding` (95,),
   …; [measured]). These are the least-squares references of the full training split (`BV/race_v2/data/oam_subset.py:17-19,
   108-114, 125`). `atom_ref` is indexed by the encoded species index (§3.5).
 * Mixing sources with different references (MPtrj + sAlex) needs one table (BAM-GAMP's "k = 1" convention,
@@ -531,19 +536,19 @@ New config keys (document them in the docstring, `training/train.py:1-139`):
 ```json
 "data_format": "stream",
 "stream": {
-  "train": [{"name": "omat24", "type": "aselmdb", "root": "/scratch/t589a02/oam_lmdb/omat24_train",
-             "sizes": "/scratch/t589a02/oam_sizes/omat24_train_c5", "repeat": 1}],
-  "valid": [{"name": "omat24", "type": "aselmdb", "root": "/scratch/t589a02/oam_lmdb/omat24_val",
-             "sizes": "/scratch/t589a02/oam_sizes/omat24_val_c5", "max_structures": 100000}],
+  "train": [{"name": "omat24", "type": "aselmdb", "root": "<DATA_ROOT>/oam_lmdb/omat24_train",
+             "sizes": "<DATA_ROOT>/oam_sizes/omat24_train_c5", "repeat": 1}],
+  "valid": [{"name": "omat24", "type": "aselmdb", "root": "<DATA_ROOT>/oam_lmdb/omat24_val",
+             "sizes": "<DATA_ROOT>/oam_sizes/omat24_val_c5", "max_structures": 100000}],
   "test":  {"omat24_val_full": {"type": "aselmdb", "root": "...", "sizes": "..."}},
-  "species_encoding": "/scratch/t589a02/oam_data/refs/omat24_train_ls.npz",
-  "atom_energies_from": "/scratch/t589a02/oam_data/refs/omat24_train_ls.npz",
+  "species_encoding": "<DATA_ROOT>/oam_data/refs/omat24_train_ls.npz",
+  "atom_energies_from": "<DATA_ROOT>/oam_data/refs/omat24_train_ls.npz",
   "block_rows": 128, "n_buckets": 1, "buckets": null, "graphs_per_pack": 110, "pack_max_graphs": 512,
   "workers_per_host": 32, "prefetch": 4, "steps_per_epoch": 20000, "seed": 0
 }
 ```
 
-For MPtrj, use `{"type": "shards", "root": "/scratch/t589a02/mp_data/jax_data_v3_raw/train", …}`. A shard root as an
+For MPtrj, use `{"type": "shards", "root": "<DATA_ROOT>/mp_data/jax_data_v3_raw/train", …}`. A shard root as an
 OMat24 source is optional.
 
 Edits:
@@ -588,7 +593,7 @@ Slurm jobs.
   * Also check that the copied `decode_row`/`check_row` agree with the converter's functions on 200 rows (import the
     script by path).
 * **T2 Graph equivalence with the xyz path.**
-  * Take the 1,000 structures of `/scratch/t589a02/datasets_ext/oam_subsets/omat24_valid.xyz`, which `oam_subset.py`
+  * Take the 1,000 structures of `<DATA_ROOT>/datasets_ext/oam_subsets/omat24_valid.xyz`, which `oam_subset.py`
     made from the shards.
   * Compare each `stream_io.graph_arrays` record against `data_3bpa.preprocess_graph` on the same `ase.Atoms`.
   * Assert equal edge multisets (sorted by (receiver, sender, Sij)), |r| < r_c for all edges, equal energy (E − ΣE0),

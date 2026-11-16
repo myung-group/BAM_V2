@@ -4,7 +4,7 @@ use for a RACEv2 pretraining on OMol25, compared at the same budget on a subset 
     python -I scripts/train/make_omol_configs.py <subset_dir> [--tag omol100k] [--epochs 30] [--layers 5 --hidden 128]
         [--models race race_cs racelr racelr_q] [--opts soap_f64 amsgrad_f32] [--seed 42] [--batch 16]
         [--elements universal|subset] [--n-tasks 8]
--> research/input/omol/<tag>[_u94]_<model>_<opt>_s<seed>.json, logs and checkpoints under runs/omol/<same name>/
+-> configs/omol/<tag>[_u94]_<model>_<opt>_s<seed>.json, logs and checkpoints under runs/omol/<same name>/
 
 --elements universal (default since 2026-11-10; name gets "_u94"): atomic_numbers = Z 1..94, so that a model trained
         on OMol25 can later be continued on, or get heads for, OMat24 / MPtrj / Alexandria / OC20 without changing the

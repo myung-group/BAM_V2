@@ -8,7 +8,7 @@ OMC25), streamed (data_format "stream", stream option "mixed"), 2026-11-11.  The
 
 --frames N: max_frames_per_shard of every source (default: the BAM-torch input.json values = about 1M frames per
 weight unit); --one-shard: first shard of every source only (smoke tests); --sources: subset of the source names.
--> research/input/multi/<name>.json
+-> configs/multi/<name>.json
 """
 import argparse
 import ast

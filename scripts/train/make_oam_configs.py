@@ -2,7 +2,7 @@
 one per dataset (omat24, mptrj, salex), from the 3BPA ablation baseline and the subset meta files.
 
     python -I scripts/train/make_oam_configs.py <subset_dir> [--epochs N] [--tag oam] [--seeds 42]
--> research/input/input_3bpa_omat24_<tag>_<dataset>_<variant>_s<seed>_cue.json  (name pattern of runs/run_cue.sh)
+-> configs/oam_subset/input_3bpa_omat24_<tag>_<dataset>_<variant>_s<seed>_cue.json  (name pattern of runs/run_cue.sh)
 
 avg_n_neighbors (2026-11-06): the atom-weighted mean neighbour count of the FULL training split at the model cutoff
 (sum of edges / sum of atoms, the same statistic the trainer prints as "avg_n_neighbors" in the training-set

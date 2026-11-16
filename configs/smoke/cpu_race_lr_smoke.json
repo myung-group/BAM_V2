@@ -1,9 +1,9 @@
 {
  "model": "RACE_LR",
  "cutoff": 5.0,
- "train_path": "research/dataset_3BPA/train_300K.xyz",
+ "train_path": "dataset_3BPA/train_300K.xyz",
  "test_paths": [
-  "research/dataset_3BPA/test_300K.xyz"
+  "dataset_3BPA/test_300K.xyz"
  ],
  "valid_frac": 0.1,
  "atomic_numbers": [

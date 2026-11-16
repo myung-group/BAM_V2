@@ -1,53 +1,53 @@
-# RACE v2 LR-POLAR (OMol25 4M) 결과 모음
+# RACE v2 LR-POLAR (OMol25 4M) results
 
-이름: 모델의 이름은 **RACE v2 LR-POLAR**다. 학습 실행 폴더와 체크포인트 폴더 이름에 남아 있는 `v3`(예: `BAM_V2_run_v3`,
-`omol4m_v3_polarqeq_...`)는 학습 당시의 내부 실행 이름이다. 이 폴더 안의 이름은 `epoch020`, `epoch070`, `final`로 바꿨다
-(원본 평가 폴더는 `md_water/eval/v3_e20`, `v3_e70`, `v3_final`).
+Name: the model is called **RACE v2 LR-POLAR**. The `v3` that remains in the names of the training run folder and the checkpoint folder
+(e.g. `BAM_V2_run_v3`, `omol4m_v3_polarqeq_...`) is the internal run name used at training time. Inside this folder the names were changed
+to `epoch020`, `epoch070` and `final` (the original evaluation folders are `md_water/eval/v3_e20`, `v3_e70`, `v3_final`).
 
-2026-11-15~16 계산 창(exclusive06, 11/16 09:00 종료)에서 나온 결과를 패키지 안에 따로 모아 둔 폴더다.
-원본은 `/scratch/t510a13/md_water`에 있는데, `/scratch`는 15일 동안 쓰지 않으면 지워지므로 작은 결과 파일(텍스트,
-JSON, 그림)만 여기로 복사했다. 체크포인트, 크기표, extxyz 표본은 넣지 않았다.
+This folder collects, separately inside the package, the results of the 2026-11-15~16 compute window (exclusive06, ended 11/16 09:00).
+The originals are in `/scratch/t510a13/md_water`, but `/scratch` is purged after 15 days without use, so only the small result files
+(text, JSON, figures) were copied here. Checkpoints, size tables and extxyz samples are not included.
 
-방법론(수식)과 결과를 정리한 문서는 `report/RACEv2_LR-POLAR_methods_results_ko.pdf`다.
+The document that summarises the methods (equations) and the results is `report/RACEv2_LR-POLAR_methods_results.pdf`.
 
-## 학습 설정 요약
+## Training setup summary
 
-- 모델: RACE_POLAR, 파라미터 19,919,663개. Qeq + 전도도 전하 이동(학습되는 감쇠), 국소 전하·스핀 입력
-  (cs_local [4.5, 6.0]), 스핀 에너지, NBO 헤드, 유도 분극, C6 분산. cutoff 6 Å, 5층 x 128채널, lmax 3.
-- 데이터: OMol25 4M (학습 3,936,920 구조). 3노드 x GPU 4개, 에폭당 1306 스텝.
-- 일정: 170 에폭, cosine 학습률(최대 0.01), SOAP 옵티마이저, 에너지 가중치 10. 에폭당 약 448초, 총 21.1시간.
-- 코드: 작업 폴더 `BAM_V2_run_v3`, 커밋 d90bdc5. 전체 설정은 `training/loss_log.txt` 맨 앞에 있다.
-- Slurm 작업: 1280748 (11/15 07:15 재시작, 11/16 04:20 정상 종료).
-- 최종 체크포인트: `/appsdata/t510a13/race_runs/omol4m/omol4m_v3_polarqeq_c6_cs_ct_L5x128_r12p6_spec_hub_spinE_nbo_csloc_decL_disp_xrn3_lr1e-2_soap_g48x12_s42`
+- Model: RACE_POLAR, 19,919,663 parameters. Qeq + conductance charge transfer (learned decay), local charge / spin inputs
+  (cs_local [4.5, 6.0]), spin energy, NBO head, induced polarisation, C6 dispersion. cutoff 6 Å, 5 layers x 128 channels, lmax 3.
+- Data: OMol25 4M (3,936,920 training structures). 3 nodes x 4 GPUs, 1306 steps per epoch.
+- Schedule: 170 epochs, cosine learning rate (max 0.01), SOAP optimiser, energy weight 10. About 448 s per epoch, 21.1 hours in total.
+- Code: working folder `BAM_V2_run_v3`, commit d90bdc5. The full configuration is at the very top of `training/loss_log.txt`.
+- Slurm job: 1280748 (restarted 11/15 07:15, finished normally 11/16 04:20).
+- Final checkpoint: `/appsdata/t510a13/race_runs/omol4m/omol4m_v3_polarqeq_c6_cs_ct_L5x128_r12p6_spec_hub_spinE_nbo_csloc_decL_disp_xrn3_lr1e-2_soap_g48x12_s42`
 
-## 폴더 구성
+## Folder layout
 
-| 폴더 | 내용 |
+| Folder | Contents |
 |---|---|
-| `report/` | 한글 PDF와 그것을 만든 스크립트(`build_report.py`, `pdfkit.py`), 그림 스크립트, 코드에서 추출한 수식 정리(`methods_formulas.md`) |
-| `training/loss_log.txt` | 학습 로그 원본(`loss.out`): 설정, 에폭별 로스 표, 16 에폭마다의 neutral_val 테스트, 최종 평가 |
-| `eval/<라벨>/` | 체크포인트별 총 테스트. 라벨은 `epoch020`(20 에폭), `epoch070`(70 에폭), `final`(170 에폭) |
-| `official_val/` | OMol25 공식 val 표본 3.2만 개 평가(형식전하 자동 지정): 구조별 결과(`.json.gz`), 그룹별 표(`_summary.txt`), 첫 200개 |
-| `figures/` | 최종 테스트 그림: 에폭별 로스, 요약, 공개 모델(UMA, eSEN)과의 비교 |
+| `report/` | The PDF and the scripts that build it (`build_report.py`, `pdfkit.py`), the figure scripts, and the formulas extracted from the code (`methods_formulas.md`) |
+| `training/loss_log.txt` | Original training log (`loss.out`): configuration, per-epoch loss table, neutral_val test every 16 epochs, final evaluation |
+| `eval/<label>/` | Full test per checkpoint. The labels are `epoch020` (20 epochs), `epoch070` (70 epochs), `final` (170 epochs) |
+| `official_val/` | Evaluation of a 32,000-structure sample of the official OMol25 val set (formal charges assigned automatically): per-structure results (`.json.gz`), per-group table (`_summary.txt`), first 200 |
+| `figures/` | Figures of the final test: per-epoch loss, summary, comparison with public models (UMA, eSEN) |
 
-`eval/<라벨>/` 안의 파일:
+Files inside `eval/<label>/`:
 
-| 파일 | 내용 |
+| File | Contents |
 |---|---|
-| `groups.json` | 내부 검증 6000 구조의 그룹별(도메인, 전하, 스핀, 금속) E/F MAE |
-| `bench_report.txt`, `bench.json`, `bench_report.png` | 물리 벤치마크 곡선(NaCl, LiF, Li+...I-, 염다리, 벤젠, 할로겐 결합, 비활성 기체 등) |
-| `iw/` | 이온-물 상호작용 곡선(DFT 기준과 비교) |
-| `iw_step_0p05A.json` | 이온-물 0.05 Å 간격 스캔(계단 점검) |
-| `size_consistency.txt`, `.json` | 크기 일관성: 떨어진 두 조각의 에너지와 고전 정전기의 차이 |
-| `energy_decomposition.json` | 에너지 항별 분해 |
-| `spin_eval.txt`, `.json` | 스핀 갭(O2, Fe(H2O)6 2+ 등) |
-| `../formal_assign_check_train300.json` | 형식전하 자동 지정 규칙과 레이블 q0의 일치율(학습 샤드 표본) |
+| `groups.json` | E/F MAE per group (domain, charge, spin, metal) for the 6000 internal validation structures |
+| `bench_report.txt`, `bench.json`, `bench_report.png` | Physics benchmark curves (NaCl, LiF, Li+...I-, salt bridge, benzene, halogen bond, noble gases, etc.) |
+| `iw/` | Ion-water interaction curves (compared with the DFT reference) |
+| `iw_step_0p05A.json` | Ion-water scan at 0.05 Å spacing (step check) |
+| `size_consistency.txt`, `.json` | Size consistency: difference between the energy of two separated fragments and classical electrostatics |
+| `energy_decomposition.json` | Decomposition of the energy by term |
+| `spin_eval.txt`, `.json` | Spin gaps (O2, Fe(H2O)6 2+, etc.) |
+| `../formal_assign_check_train300.json` | Agreement rate between the automatic formal-charge assignment rules and the label q0 (sample of training shards) |
 
-## 주요 숫자
+## Key numbers
 
-에폭별 검증(스트림 val = 모든 도메인, neutral_val = 중성 분자 테스트 세트; meV, meV/Å):
+Validation per epoch (stream val = all domains, neutral_val = neutral-molecule test set; meV, meV/Å):
 
-| 에폭 | train 로스 | val 로스 | val E MAE | val F MAE | neutral_val E MAE | neutral_val F MAE |
+| Epoch | train loss | val loss | val E MAE | val F MAE | neutral_val E MAE | neutral_val F MAE |
 |---|---|---|---|---|---|---|
 | 16 | 0.00456 | 0.00349 | 187.9 | 32.8 | 138.5 | 28.2 |
 | 32 | 0.00371 | 0.00292 | 155.4 | 29.3 | 111.3 | 25.0 |
@@ -59,35 +59,35 @@ JSON, 그림)만 여기로 복사했다. 체크포인트, 크기표, extxyz 표�
 | 128 | 0.00194 | 0.00232 | 96.2 | 25.2 | 66.3 | 21.0 |
 | 144 | 0.00179 | 0.00230 | 94.0 | 25.1 | 63.2 | 20.8 |
 | 160 | 0.00169 | 0.00230 | 92.9 | 25.0 | 62.3 | 20.7 |
-| 170 (최종) | 0.00166 | 0.00229 | 92.3 | 25.0 | 62.2 | 20.7 |
+| 170 (final) | 0.00166 | 0.00229 | 92.3 | 25.0 | 62.2 | 20.7 |
 
-총 테스트(70 에폭과 최종 170 에폭; Slurm 작업 1285135~1285139, 1285153):
+Full test (70 epochs and the final 170 epochs; Slurm jobs 1285135~1285139, 1285153):
 
-| 항목 | 70 에폭 | 최종 |
+| Item | 70 epochs | Final |
 |---|---|---|
-| 내부 6000 구조 (E meV / F meV/Å) | 136.7 / 26.0 | 90.9 / 24.2 |
-| 공식 val 3.2만 개, 형식전하 자동 지정 | 448.7 / 24.8 | 363.8 / 23.3 |
-| 공식 val: 중성 / q = ±1 / \|q\| ≥ 2 (E meV) | 278.5 / 342.9 / 1272 | 192.5 / 262.1 / 1178 |
-| 공식 val 첫 200개 (자동 지정) | 274.2 / 19.2 | 183.0 / 17.2 |
-| 염다리 MAE (kcal/mol) | 0.74 | 0.48 |
-| NaCl / LiF 해리 MAE | 26.1 / 12.2 | 9.5 / 20.0 |
-| Li+...I- / 벤젠 / 할로겐 결합 MAE | 4.0 / 0.36 / 1.2 | 2.9 / 0.35 / 1.2 |
+| Internal 6000 structures (E meV / F meV/Å) | 136.7 / 26.0 | 90.9 / 24.2 |
+| Official val, 32,000 structures, formal charges assigned automatically | 448.7 / 24.8 | 363.8 / 23.3 |
+| Official val: neutral / q = ±1 / \|q\| ≥ 2 (E meV) | 278.5 / 342.9 / 1272 | 192.5 / 262.1 / 1178 |
+| Official val, first 200 (automatic assignment) | 274.2 / 19.2 | 183.0 / 17.2 |
+| Salt bridge MAE (kcal/mol) | 0.74 | 0.48 |
+| NaCl / LiF dissociation MAE | 26.1 / 12.2 | 9.5 / 20.0 |
+| Li+...I- / benzene / halogen bond MAE | 4.0 / 0.36 / 1.2 | 2.9 / 0.35 / 1.2 |
 | Ar2 / Li+...Xe MAE | 3.8 / 31.0 | 3.0 / 31.5 |
-| 이온-물 곡선 MAE (kcal/mol) | 0.70~1.93 | 0.33~1.04 |
-| 크기 일관성 (6 Å, kcal/mol) | ±0.5 이내 | ±0.6 이내 |
-| 스핀 갭 O2 (DFT -34.7) / Fe(H2O)6 2+ (DFT -76.6) | -32.4 / -40.4 | -32.5 / -40.9 |
+| Ion-water curve MAE (kcal/mol) | 0.70~1.93 | 0.33~1.04 |
+| Size consistency (6 Å, kcal/mol) | within ±0.5 | within ±0.6 |
+| Spin gap O2 (DFT -34.7) / Fe(H2O)6 2+ (DFT -76.6) | -32.4 / -40.4 | -32.5 / -40.9 |
 
-같은 공식 val 표본에서 공개 모델은 UMA-s-1.2.1이 44.9 meV / 7.9 meV/Å, eSEN-md가 47.9 / 4.8이다.
-공식 val에서 나쁜 그룹은 전해질(453 meV)과 |q| >= 2(1178 meV)이며, 자동 지정 형식전하가 틀린 행(약 10 %)이
-원인으로 의심된다. 레이블 형식전하로 다시 평가하는 작업은 하지 않았다.
+On the same official val sample the public models give 44.9 meV / 7.9 meV/Å (UMA-s-1.2.1) and 47.9 / 4.8 (eSEN-md).
+The bad groups on the official val set are electrolytes (453 meV) and |q| >= 2 (1178 meV); the rows where the automatically assigned
+formal charge is wrong (about 10 %) are the suspected cause. The re-evaluation with the label formal charges has not been done.
 
-## 사전처리 결과
+## Preprocessing results
 
-데이터셋 사전처리 결과(원소별 E0, 메타, 크기표 요약)는 이 폴더가 아니라 `scripts/data/prep_results/`에 따로 있다.
+The dataset preprocessing results (per-element E0, meta, size table summaries) are not in this folder but separately in `scripts/data/prep_results/`.
 
-## 다시 만드는 방법
+## How to rebuild
 
-- 결과 모으기: `bash collect_results.sh v3_e20 v3_e70 v3_final` (작은 파일 `cp`만 한다). 그림은 세션 임시 폴더
-  (스크립트의 `SP`)에서 가져오므로, 다른 세션에서는 `SP`를 그림이 있는 곳으로 바꾼다.
-- PDF: `python -I report/build_report.py <글꼴 폴더> <그림 폴더> <출력.pdf>`. 글꼴은 나눔고딕 두 파일
-  (`docs/fonts/`, git에는 넣지 않음)이고 그림 폴더는 `figures/`다. reportlab과 matplotlib만 쓴다.
+- Collecting the results: `bash collect_results.sh v3_e20 v3_e70 v3_final` (it only does `cp` of small files). The figures are taken from
+  the session temporary folder (`SP` in the script), so in another session change `SP` to the place where the figures are.
+- PDF: `python -I report/build_report.py <font folder> <figure folder> <output.pdf>`. The fonts are the two NanumGothic files
+  (`docs/fonts/`, not put in git) and the figure folder is `figures/`. Only reportlab and matplotlib are used.

@@ -1,49 +1,54 @@
-# 데이터셋 사전처리 결과
+# Dataset preprocessing results
 
-스트림 학습(`data_format: "stream"`)에 쓰는 사전처리 결과 중 작은 파일만 패키지 안에 보관한다.
-큰 크기표(데이터셋당 수백 MB 이상)는 `/appsdata/t510a13/prep/` 아래에 그대로 있다.
+Only the small files of the preprocessing for stream training (`data_format: "stream"`) are kept inside the package.
+The large size tables (hundreds of MB or more per dataset) stay under `/appsdata/t510a13/prep/` on KISTI HANGANG.
 
-## 데이터셋별 현황 (2026-11-16)
+## Status per dataset (2026-11-16)
 
-| 폴더 | 데이터셋 | DFT 수준 | 구조 수(train / valid) | cutoff | 평균 이웃 수 | 최대 원자 / 간선 | E0 원소 수 | E0 잔차 (eV/원자) |
+| Folder | Dataset | DFT level | Structures (train / valid) | cutoff | Mean neighbours | Max atoms / edges | E0 elements | E0 residual (eV/atom) |
 |---|---|---|---|---|---|---|---|---|
 | `omol4m_c5` | OMol25 4M | ωB97M-V/def2-TZVPD | 3,936,920 / 49,834 | 5 | 23.2 | 350 / 17,880 | 83 | 0.420 |
-| `omol4m_c6` | OMol25 4M | 같음 | 3,936,920 / 49,834 | 6 | 32.6 | 350 / 27,172 | (`omol4m_c5`의 E0 사용) | - |
+| `omol4m_c6` | OMol25 4M | same | 3,936,920 / 49,834 | 6 | 32.6 | 350 / 27,172 | (uses the E0 of `omol4m_c5`) | - |
 | `opoly26_c6` | OPoly26 | ωB97M-V/def2-TZVPD | 5,902,827 / 201,865 | 6 | 40.7 | 360 / 23,858 | 25 | 0.037 |
 | `oc25_c6` | OC25 | VASP RPBE+D3 | 7,395,512 / 203,630 | 6 | 47.2 | 300 / 35,068 | 72 | 0.224 |
-| `omol_full_c6` | OMol25 전체 | ωB97M-V/def2-TZVPD | 101,666,280 / 2,762,021 (공식 val) | 6 | 31.8 | 350 / 29,006 | 83 | 0.345 |
+| `omol_full_c6` | OMol25 full | ωB97M-V/def2-TZVPD | 101,666,280 / 2,762,021 (official val) | 6 | 31.8 | 350 / 29,006 | 83 | 0.345 |
 
-- RACE v2 LR-POLAR 학습(내부 실행 이름 v3; OMol25 4M, cutoff 6)은 `omol4m_c6`의 크기표와 `omol4m_c5`의 E0를 썼다.
-- E0는 DFT 수준마다 따로 쓴다. OMol25와 OPoly26은 수준이 같아 섞어 쓸 수 있고, OC25(RPBE+D3)와
-  MPtrj/sAlex(PBE, PBE+U)는 각자의 E0와 출력 헤드가 필요하다.
-- OPoly26과 OMol25 전체의 E0는 파일당 앞 20,000행(합계 160만 행) 표본으로 맞췄다. OMol25 4M은 전체 행으로 맞췄다.
-- OC25(작업 1284769): 모두 주기 구조이고 전하·스핀 레이블이 없다. 크기표 8,832초(파일 20개라 프로세스 20개만 일함), E0는 파일당 20,000행 표본(40만 행).
-- OMol25 전체(작업 1284787): 구조 수가 데이터셋 문서의 101,666,280과 일치한다. 크기표 3,125초, 메모리 최대 701 GB(`--gres=gpu:4`).
-- 전하·스핀 레이블: OMol25 4M은 87행, OPoly26 표본은 1,048행만 Löwdin 전하가 없다. OC25에는 레이블이 없다.
+- The RACE v2 LR-POLAR training (internal run name v3; OMol25 4M, cutoff 6) used the size tables of `omol4m_c6` and the
+  E0 of `omol4m_c5`.
+- E0 is kept separately for each DFT level. OMol25 and OPoly26 share a level and can be mixed; OC25 (RPBE+D3) and
+  MPtrj/sAlex (PBE, PBE+U) each need their own E0 and output head.
+- The E0 of OPoly26 and of the full OMol25 was fitted on a sample of the first 20,000 rows per file (1.6 million rows
+  in total). OMol25 4M was fitted on all rows.
+- OC25 (job 1284769): all structures are periodic and there are no charge or spin labels. Size tables 8,832 s (20
+  files, so only 20 processes work), E0 from a sample of 20,000 rows per file (400,000 rows).
+- Full OMol25 (job 1284787): the number of structures equals the 101,666,280 of the dataset documentation. Size tables
+  3,125 s, peak memory 701 GB (`--gres=gpu:4`).
+- Charge and spin labels: Löwdin charges are missing in only 87 rows of OMol25 4M and 1,048 rows of the OPoly26 sample.
+  OC25 has no labels.
 
-## 폴더 안의 파일
+## Files in each folder
 
-| 파일 | 내용 |
+| File | Content |
 |---|---|
-| `e0.json` | `atomic_numbers`, `atom_energies`(eV): 원소별 기준 에너지. 총에너지를 원소 개수에 최소제곱으로 맞춘 값 |
-| `meta.json` | E0와 함께 구조 수, 잔차, 평균 이웃 수, 전하 레이블 키, train/valid 경로. `scripts/train/make_omol_configs.py`가 읽는 형식 |
-| `sizes_<split>_meta.json` | 크기표 요약: 구조 수, 원자·간선 합, 평균 이웃 수, 최대 원자·간선 수, 주기 구조 수, 파일 목록 |
+| `e0.json` | `atomic_numbers`, `atom_energies` (eV): reference energy per element, a least-squares fit of the total energies to the element counts |
+| `meta.json` | E0 together with the number of structures, the residual, the mean number of neighbours, the charge-label key and the train/valid paths. This is the format read by `scripts/train/make_omol_configs.py` |
+| `sizes_<split>_meta.json` | summary of a size table: number of structures, sums of atoms and edges, mean number of neighbours, maximum atoms and edges, number of periodic structures, file list |
 
-`meta.json`의 `rule` 문구에는 "(official train split, 4M subset)"이라고 적혀 있는데, 스크립트의 고정 문구라서
-OPoly26 등 다른 데이터셋에서도 그대로 나온다. 실제 입력은 `source.files`를 본다.
+The `rule` text of `meta.json` says "(official train split, 4M subset)". It is a fixed string of the script, so it
+appears for OPoly26 and the other datasets too. The actual input is in `source.files`.
 
-## 크기표 원본 위치
+## Where the full size tables are
 
-| 데이터셋 | 경로 |
+| Dataset | Path |
 |---|---|
 | OMol25 4M (cutoff 5 / 6) | `/appsdata/t510a13/omol25/prep_4M`, `/appsdata/t510a13/omol25/prep_4M_c6` |
 | OPoly26 | `/appsdata/t510a13/prep/opoly26_c6.0` (`sizes_train` 341 MB) |
 | OC25 | `/appsdata/t510a13/prep/oc25_c6.0` |
-| OMol25 전체 | `/appsdata/t510a13/prep/omol_full_c6.0` |
+| Full OMol25 | `/appsdata/t510a13/prep/omol_full_c6.0` |
 
-## 만드는 방법
+## How they are made
 
-`scripts/`에 만든 스크립트의 사본이 있다(원본은 `/scratch/t510a13/jobs`).
+Copies of the scripts are in `scripts/` (the originals are in `/scratch/t510a13/jobs`).
 
 ```bash
 cd /scratch/t510a13
@@ -51,8 +56,10 @@ NAME=opoly26 TRAIN=/appsdata/t510a13/opoly26/train VALID=/appsdata/t510a13/opoly
   sbatch --exclude=node[0449-0484,0499-0576] jobs/dataset_prep.sh
 ```
 
-- `dataset_prep.sh`: 크기표(`race_v2/data/stream_io.py sizes`, 64 프로세스)와 E0 적합(`omol4m_e0.py`)을 차례로 돈다.
-- 메모리 주의: 크기표는 프로세스 하나가 aselmdb 파일 하나를 통째로 메모리에 올린다(`stream_io.py`의
-  `_count_task`). 파일이 큰 OMol25 전체(파일당 평균 7 GB, 최대 10.5 GB, 80개)는 GPU 1개 몫(195 GB)으로는
-  메모리 부족으로 죽는다(작업 1284770). `--gres=gpu:4`(780 GB)로 제출해야 한다.
-- 걸린 시간: OPoly26 크기표 178초 + E0 51초. OMol25 전체 55분. OC25는 주기 구조라 원자당 약 12배 느려 2시간 31분.
+- `dataset_prep.sh` runs the size tables (`race_v2/data/stream_io.py sizes`, 64 processes) and then the E0 fit
+  (`omol4m_e0.py`).
+- Memory: for the size tables one process loads a whole aselmdb file into memory (`_count_task` in `stream_io.py`).
+  The full OMol25 (7 GB per file on average, 10.5 GB at most, 80 files) runs out of memory with the share of one GPU
+  (195 GB; job 1284770). Submit it with `--gres=gpu:4` (780 GB).
+- Time: OPoly26 size tables 178 s + E0 51 s. Full OMol25 55 minutes. OC25 is periodic, about 12 times slower per
+  atom: 2 hours 31 minutes.

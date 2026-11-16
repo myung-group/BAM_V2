@@ -1,4 +1,4 @@
-"""RACE v2: methods (with equations) and Matbench Discovery results (MPtrj-only and OAM) -- Korean PDF.
+"""RACE v2: methods (with equations) and Matbench Discovery results (MPtrj-only and OAM) -- PDF.
 
 usage: python -I build_report.py <font_dir> <fig_dir> <out.pdf> [final_results.json]
 Equations follow the code the models were trained with (branch racev2, old package name bam_omat24); see methods_formulas.md.
@@ -14,7 +14,7 @@ from pdfkit import Kit                                                          
 
 FONT_DIR, FIG, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 # OAM row of the tables: label, virtual epoch, F1, MAE, R2, RMSD, kappa SRME, CPS, validation E/F MAE, 3k points
-FINAL = dict(label='가상 에폭 22 (중간 모델, LR 감쇠 전)', interim=True, epoch=22, f1=0.887, mae=0.0220, r2=0.869,
+FINAL = dict(label='virtual epoch 22 (interim model, before LR decay)', interim=True, epoch=22, f1=0.887, mae=0.0220, r2=0.869,
              rmsd=0.0644, ksrme=0.220, cps=0.857, prec=0.880, rank_cps='20', val='11.3 / 36.6', hours='15.9')
 if len(sys.argv) > 4:
     FINAL.update(json.load(open(sys.argv[4])))
@@ -25,243 +25,285 @@ oam = [f"{FINAL['f1']:.3f}", f"{FINAL['mae']:.4f}", f"{FINAL['r2']:.3f}", f"{FIN
        f"{FINAL['cps']:.3f}"]
 
 # =====================================================================================================================
-K.title('RACE v2: 방법론과 Matbench Discovery 결과',
-        '2026-11-16 · 모델 RACE (파라미터 17,757,551개) · 학습 코드 BAM_V2 (브랜치 racev2, 패키지 옛 이름 bam_omat24) · '
+K.title('RACE v2: Methods and Matbench Discovery Results',
+        '2026-11-16 · model RACE (17,757,551 parameters) · training code BAM_V2 (branch racev2, old package name bam_omat24) · '
         'KISTI HANGANG GH200, 2026-11-11~16')
 
-h1('요약')
-p('RACE v2는 등변 메시지 전달 원자간 퍼텐셜이다. 이번 계산 창에서 절단 거리 7 Å 모델을 MPtrj만으로 학습한 버전(MPtrj-only)과, '
-  'OMat24로 사전학습한 뒤 MPtrj와 sAlex로 파인튜닝한 버전(OAM)을 만들고 Matbench Discovery 방식으로 평가했다. 이 문서는 '
-  '구현한 방법을 코드에 있는 수식 그대로 정리하고, 실험 과정과 결과를 싣는다.')
-tb([['모델', 'F1', 'MAE', 'R<super>2</super>', 'RMSD', 'κ SRME', 'CPS'],
+h1('Summary')
+p('RACE v2 is an equivariant message-passing interatomic potential. In this compute window we built two versions of a 7 Å cutoff '
+  'model, one trained on MPtrj only (MPtrj-only) and one pretrained on OMat24 and then fine-tuned on MPtrj and sAlex (OAM), '
+  'and evaluated them the Matbench Discovery way. This document gives the implemented methods, with the equations exactly as '
+  'in the code, and reports the experiments and results.')
+tb([['Model', 'F1', 'MAE', 'R<super>2</super>', 'RMSD', 'κ SRME', 'CPS'],
     [B('RACE v2 OAM') + f"<br/>{FINAL['label']}"] + [B(x) for x in oam],
     [B('RACE v2 MPtrj-only')] + [B(x) for x in ['0.777', '0.040', '0.800', '0.0785', '0.375', '0.761']],
-    [B('BAM-MP-DeNS') + ' (연구실 V1, MPtrj)'] + [B(x) for x in ['0.761', '0.043', '0.797', '0.0832', '0.766', '0.672']],
-    [B('BAM-OAM') + ' (연구실 V1, OAM)', '-', B('0.027'), '-', '-', '-', '-']],
+    [B('BAM-MP-DeNS') + ' (lab V1, MPtrj)'] + [B(x) for x in ['0.761', '0.043', '0.797', '0.0832', '0.766', '0.672']],
+    [B('BAM-OAM') + ' (lab V1, OAM)', '-', B('0.027'), '-', '-', '-', '-']],
    widths=[0.40, 0.09, 0.10, 0.09, 0.10, 0.12, 0.10],
-   caption='핵심 결과. WBM 전체의 고유 원형 215,488개 기준이고, MAE는 eV/원자, RMSD는 Å다. CPS = 0.5 F1 + 0.4 (1 − κ SRME/2) + '
-           '0.1 (1 − RMSD/0.15). BAM 값은 리더보드와 연구실 자료에서 가져왔다.', align_right_from=1)
-bl([B('MPtrj-only:') + ' 같은 데이터와 같은 평가 방법에서 연구실 V1(BAM-MP-DeNS)보다 CPS가 0.089 높다. 차이는 대부분 '
-    '열전도도(κ)에서 나온다. 에너지 지표(F1, MAE)의 차이는 작다. MPtrj만 쓴 리더보드 모델 19개 중 6위다.',
-    B('OAM:') + f" OMat24 2 에폭 사전학습과 MPtrj+sAlex 파인튜닝으로 MAE {FINAL['mae']:.4f} eV/원자, CPS {FINAL['cps']:.3f}이다. "
-    f"BAM-OAM(0.027)보다 MAE가 낮고, 리더보드 전체 49개 모델 중 CPS {FINAL['rank_cps']}위 수준이다.",
-    B('과정에서 찾은 것:') + ' (1) 파인튜닝에서 MPtrj 8벌이 한 곳에 몰려 읽히던 문제를 고치자 WBM MAE가 0.0267에서 0.0225로 '
-    '내려갔다. (2) float32로 학습한 모델로 κ를 float32로 계산하면 0.861, float64로 계산하면 0.220이다. 포논 계산은 float64가 필요하다.',
-    B('아직 부족한 것:') + ' 리더보드 상위 모델(CPS 0.90 이상, MAE 0.017~0.018)과는 거리가 있다. 사전학습이 2 에폭으로 짧고 '
-    '모델이 1,780만 파라미터로 작은 편이다.'])
+   caption='Key results on the 215,488 unique prototypes of the full WBM set; MAE in eV/atom, RMSD in Å. '
+           'CPS = 0.5 F1 + 0.4 (1 − κ SRME/2) + '
+           '0.1 (1 − RMSD/0.15). The BAM values are from the leaderboard and lab records.', align_right_from=1)
+bl([B('MPtrj-only:') + ' With the same data and the same evaluation method, CPS is 0.089 higher than the lab V1 (BAM-MP-DeNS). '
+    'Most of the difference comes from the thermal conductivity (κ). The difference in the energy metrics (F1, MAE) is small. '
+    'It ranks 6th among the 19 leaderboard models that use MPtrj only.',
+    B('OAM:') + f" 2 epochs of OMat24 pretraining and MPtrj+sAlex fine-tuning give MAE {FINAL['mae']:.4f} eV/atom and CPS {FINAL['cps']:.3f}. "
+    f"MAE is below BAM-OAM (0.027) and CPS is about rank {FINAL['rank_cps']} of all 49 leaderboard models.",
+    B('Found along the way:') + ' (1) Fixing a fine-tuning problem in which the 8 copies of MPtrj were read clustered in one place '
+    'lowered the WBM MAE from 0.0267 to 0.0225. (2) For a model trained in float32, κ is 0.861 when computed in float32 and 0.220 '
+    'in float64. Phonon calculations need float64.',
+    B('Still lacking:') + ' There is a gap to the top leaderboard models (CPS 0.90 or higher, MAE 0.017~0.018). The pretraining is '
+    'short at 2 epochs and the model is on the small side at 17.8 million parameters.'])
 
 # =====================================================================================================================
-h1('1. 모델 개요')
-p('총에너지는 원자별 에너지의 합이다. 원자별 에너지는 짧은 거리 쌍 반발 항과, 5개 층이 각각 내는 세 가지 스칼라 에너지를 더한 뒤 '
-  '학습되는 스칼라 s, b로 크기와 기준을 맞춘 값이다. 힘과 응력은 총에너지를 좌표와 격자로 한 번 자동 미분해서 얻으므로 에너지와 '
-  '정확히 일관된다. 전하·분극·분산 같은 장거리 항은 이 모델에 없다(장거리 항은 RACE v2 LR-POLAR 문서에서 다룬다).')
+h1('1. Model overview')
+p('The total energy is the sum of per-atom energies. The per-atom energy is a short-range pair repulsion term plus the three scalar '
+  'energies output by each of the 5 layers, scaled and shifted by the learned scalars s and b. Forces and stress are obtained by '
+  'one automatic differentiation of the total energy with respect to coordinates and lattice, so they are exactly consistent with '
+  'the energy. The model has no long-range terms such as charge, polarisation or dispersion (these are covered in the '
+  'RACE v2 LR-POLAR document).')
 eq(r'E=\sum_i\left[s\left(e^{\mathrm{rep}}_i+\sum_{t=0}^{4}\left(e^{\mathrm{node}}_{t,i}+e^{x}_{t,i}+e^{f}_{t,i}\right)\right)+b\right]'
    r'+\sum_i E^{0}_{Z_i}')
 eq(r'\mathbf{F}_i=-\dfrac{\partial E}{\partial \mathbf{x}_i},\qquad '
    r'\sigma_{uv}=\dfrac{1}{V}\left[\sum_a\dfrac{\partial E}{\partial h_{au}}h_{av}+\sum_i\dfrac{\partial E}{\partial x_{iu}}x_{iv}\right]')
-tb([['항목', '값'],
-    ['구조', '5개 층, 채널 128, 구면 텐서 l = 0~3 (원자당 특징 2,048차원)'],
-    ['절단 거리', '7 Å (평균 이웃 수: MPtrj 92, OMat24 63)'],
-    ['거리 입력', '베셀 함수 12개 + 원자 껍질 지수 함수 16개, 다항식 절단 p = 6'],
-    ['원소', '89종 (Z = 1~83, 89~94). 원소별 가중치 표는 랭크 32로 분해'],
-    ['파라미터', '17,757,551개. 그중 72 %가 원소별 표(분해 후 1,272만 개)'],
-    ['출력', '에너지, 힘, 응력 (주기 경계)']],
-   widths=[0.2, 0.8], caption='모델 설정. MPtrj-only와 OAM 모델이 같은 구조를 쓴다.', align_right_from=-1)
-p('h는 격자 행렬(행이 격자 벡터), V는 부피다. 단위는 Å과 eV이고 응력은 eV/Å<super>3</super>이다. E<super>0</super>는 원소별 기준 '
-  '에너지로 고정값이다. 학습할 때는 레이블에서 빼고 추론할 때 더한다.')
+tb([['Item', 'Value'],
+    ['Architecture', '5 layers, 128 channels, spherical tensors l = 0~3 (2,048-dimensional features per atom)'],
+    ['Cutoff', '7 Å (mean number of neighbours: MPtrj 92, OMat24 63)'],
+    ['Distance input', '12 Bessel functions + 16 atomic-shell exponential functions, polynomial cutoff p = 6'],
+    ['Elements', '89 (Z = 1~83, 89~94). Per-element weight tables are factorised with rank 32'],
+    ['Parameters', '17,757,551. Of these, 72 % are in per-element tables (12.72 million after factorisation)'],
+    ['Output', 'Energy, forces, stress (periodic boundaries)']],
+   widths=[0.2, 0.8], caption='Model settings. The MPtrj-only and OAM models use the same architecture.', align_right_from=-1)
+p('h is the lattice matrix (rows are lattice vectors) and V the volume. Units are Å and eV, with stress in eV/Å<super>3</super>. '
+  'E<super>0</super> is the fixed per-element reference energy, subtracted from the labels in training and added '
+  'back in inference.')
 
 # =====================================================================================================================
-h1('2. 방법론')
-h2('2.1 입력: 그래프와 거리·각도 특징')
-p('원자를 노드로, 7 Å 안의 원자쌍을 간선으로 하는 그래프를 만든다. 주기 경계에서는 격자 이동 s를 포함한 상대 위치를 쓴다. 거리 '
-  '입력은 28개 숫자다. 베셀 함수 12개에는 고정된 가우시안 계수를 곱해 높은 진동수 성분을 작게 시작하게 했고, 원자 껍질 반지름으로 '
-  '만든 지수 함수 16개를 더했다. 모두 다항식 절단 함수를 곱해 7 Å에서 매끄럽게 0이 된다.')
+h1('2. Methods')
+h2('2.1 Input: graph and distance/angle features')
+p('A graph is built with atoms as nodes and atom pairs within 7 Å as edges. With periodic boundaries the relative position includes '
+  'the lattice shift s. The distance input is 28 numbers. The 12 Bessel functions are multiplied by fixed Gaussian coefficients so '
+  'that the high-frequency components start small, and 16 exponential functions built from atomic shell radii are added. All are '
+  'multiplied by the polynomial cutoff function and go smoothly to 0 at 7 Å.')
 eq([r'\mathbf{r}_{ij}=\mathbf{x}_j-\mathbf{x}_i-\mathbf{s}_{ij}\mathbf{h},\qquad '
     r'B_n(r)=\dfrac{2}{r_c}\,\dfrac{\sin(n\pi r/r_c)}{r}\quad(n=1,\ldots,12),\qquad r_c=7\ \mathrm{\AA}',
     r'f_{\mathrm{cut}}(r)=1-28u^{6}+48u^{7}-21u^{8},\qquad u=\dfrac{r}{r_c}'])
 eq([r'\beta_n(r)=B_n(r)\,f_{\mathrm{cut}}(r)\,e^{-(0.224\,n)^{2}},\qquad '
     r'\varsigma_{ab}(r)=\exp\left(-\dfrac{r}{\rho_a(Z_i)+\rho_b(Z_j)}\right)f_{\mathrm{cut}}(r),\quad a,b\in\{s,p,d,f\}'])
-bl(['ρ<sub>a</sub>(Z)는 원소 Z의 가장 바깥 a 껍질의 평균 반지름이다(LDA 원자 계산 표, 고정값). 해당 껍질이 없으면 그 채널은 0이다.',
-    '각도 입력은 단위 벡터의 실수 구면 조화 함수 Y (l = 0~3, 16개 성분)다.',
-    '원소 임베딩 e는 원-핫 벡터에 곱하는 89 × 128 학습 행렬이다.'])
-p('아주 짧은 거리의 반발은 학습 데이터가 드물어서 UFF 표의 값으로 만든 쌍 퍼텐셜을 넣었다. 공유 반지름 합의 1.25배보다 먼 거리에서는 '
-  '시그모이드로 꺼진다.')
+bl(['ρ<sub>a</sub>(Z) is the mean radius of the outermost a shell of element Z (table from LDA atomic calculations, fixed values). '
+    'If the element has no such shell, that channel is 0.',
+    'The angular input is the real spherical harmonics Y of the unit vector (l = 0~3, 16 components).',
+    'The element embedding e is an 89 × 128 learned matrix that multiplies the one-hot vector.'])
+p('At very short distances, where training data are scarce, the repulsion comes from a pair potential built from UFF table values. '
+  'A sigmoid switches it off beyond 1.25 times the sum of the covalent radii.')
 eq(r'e^{\mathrm{rep}}_i=\dfrac{1}{2}\sum_{j\in N(i)}D_{ij}\,\dfrac{6}{\zeta_{ij}-6}\exp\left[\zeta_{ij}\left(1-\dfrac{r_{ij}}{x_{ij}}\right)\right]'
    r'f_{\mathrm{cut}}(r_{ij})\;\mathrm{sigmoid}\left(\dfrac{r_{ij}-1.25\,(R_i+R_j)}{0.3\ \mathrm{\AA}}\right)')
 
-h2('2.2 메시지 전달 층')
-p('층 t는 이웃의 특징과 방향을 텐서곱으로 모은 메시지 m, 원자 기저 A에서 만든 x, 그리고 둘의 텐서곱 p로 특징을 갱신한다. 이웃 합은 '
-  '평균 이웃 수로 나눈다. 원자 기저 A는 원소 임베딩만으로 만든 0번 층의 메시지이고 한 번만 계산한다.')
+h2('2.2 Message-passing layer')
+p('Layer t updates the features with the message m, which gathers the neighbour features and directions through a tensor product, '
+  'with x, which is built from the atomic basis A, and with p, the tensor product of the two. Neighbour sums are divided by the mean '
+  'number of neighbours. The atomic basis A is the layer-0 message built from the element embeddings alone and is computed only once.')
 eq([r'A_i=\dfrac{1}{\bar{n}}\sum_{j\in N(i)}R^{(0)}(r_{ij})\odot\left[W^{(0)}_1 e_j\otimes Y(\hat{\mathbf{r}}_{ij})\right],\qquad '
     r'm_i=\dfrac{1}{\bar{n}}\sum_{j\in N(i)}R^{(t)}(r_{ij})\odot\left[W_1 h_j\otimes Y(\hat{\mathbf{r}}_{ij})\right]'])
 eq([r'x_i=W_x A_i,\qquad q_i=\mathrm{mean}\left(x_i^{2}\right)+10^{-6},\qquad '
     r'\hat{x}_i=\dfrac{x_i}{\sqrt{q_i}}\;2\,\mathrm{sigmoid}\left(\dfrac{1}{2}a_{t,Z_i}\ln q_i+b_{t,Z_i}\right)'])
 eq([r'p_i=W_2\left[(W_m m_i)\otimes\hat{x}_i\right],\qquad \delta_i=\gamma\odot\left(p_i+S_{Z_i}h_i\right)',
     r'h^{(t+1)}=\delta\quad(t=0,1),\qquad h^{(t+1)}=2\delta-h^{(t-1)}\quad(t\geq 2)'])
-bl(['R<super>(t)</super>는 층마다 따로 학습하는 거리 MLP(28 → 64 → 64 → 64 → 텐서곱 경로 수 × 128, SiLU)다.',
-    B('x의 정규화:') + ' x를 원자마다 제곱평균제곱근으로 나눈 뒤, 원소와 층마다 학습되는 유계 게이트(초기값 1)를 곱한다. 이웃이 '
-    '많거나 적은 환경에서 x의 크기가 달라지는 것을 막는다.',
-    B('체비셰프 잔차:') + ' 세 번째 층부터 h<super>(t+1)</super> = 2δ − h<super>(t−1)</super> 형태의 점화식을 쓴다. γ는 채널별 '
-    '학습 계수(초기값 0.5)다.',
-    '특징 갱신 자체에는 비선형 함수가 없다. 비선형성은 x의 게이트, 거리 MLP, 에너지 판독에서 나온다.',
-    '메시지의 모으기·텐서곱·더하기는 cuEquivariance의 묶음 커널 하나로 계산한다.'])
+bl(['R<super>(t)</super> is a distance MLP learned separately for each layer (28 → 64 → 64 → 64 → number of tensor-product paths × 128, SiLU).',
+    B('Normalisation of x:') + ' x is divided by its root mean square for each atom and then multiplied by a bounded gate learned per '
+    'element and per layer (initial value 1). This keeps the magnitude of x from varying between environments with many and with '
+    'few neighbours.',
+    B('Chebyshev residual:') + ' From the third layer on, a recurrence of the form h<super>(t+1)</super> = 2δ − h<super>(t−1)</super> '
+    'is used. γ is a learned per-channel coefficient (initial value 0.5).',
+    'The feature update itself contains no non-linear function. The non-linearity comes from the gate on x, the distance MLP and the '
+    'energy readout.',
+    'The gather, tensor product and add of the message run in a single fused cuEquivariance kernel.'])
 
-h2('2.3 에너지 판독')
-p('각 층에서 세 가지 스칼라 에너지를 읽어 더한다. 층의 출력에서 읽는 node 항, 정규화된 x에서 읽는 x 항, 층의 입력에서 읽는 f 항이다. '
-  'LN은 층 정규화이고, x 항과 f 항의 첫 선형층은 원소별 가중치를 쓴다.')
+h2('2.3 Energy readout')
+p('Three scalar energies are read from each layer and summed: the node term read from the layer output, the x term read from the '
+  'normalised x, and the f term read from the layer input. '
+  'LN is layer normalisation, and the first linear layer of the x term and of the f term uses per-element weights.')
 eq(r'e^{\mathrm{node}}_{t,i}=w\cdot\mathrm{silu}\left(W_r h^{(t+1)}_i+b\right),\qquad '
    r'e^{x}_{t,i}=\mathrm{MLP}^{x}_{Z_i}\left(\dfrac{\mathrm{LN}(\hat{x}_i)}{\sqrt{\bar{n}}}\right),\qquad '
    r'e^{f}_{t,i}=\mathrm{MLP}^{f}_{Z_i}\left(\dfrac{\mathrm{LN}(h^{(t)}_i)}{\sqrt{\bar{n}}}\right)')
 
-h2('2.4 원소별 표의 랭크 분해')
-p('원소마다 다른 가중치 행렬 W[Z]를 그대로 두면 89개 원소 × 128 × 128짜리 표가 여러 개 생겨 파라미터의 대부분을 차지한다. 이를 '
-  '공유 기저 K = 32개의 선형 결합으로 바꿨다.')
+h2('2.4 Rank factorisation of the per-element tables')
+p('Keeping a separate weight matrix W[Z] for each element gives several tables of size 89 elements × 128 × 128, '
+  'which hold most of the parameters. These were replaced by linear combinations of K = 32 shared bases.')
 eq(r'W[Z]=\dfrac{1}{\sqrt{K}}\sum_{k=1}^{K}c[Z,k]\,B[k],\qquad K=32')
-bl(['분해한 표: 층마다 있는 건너뛰기 행렬 S[Z], x 항과 f 항 판독의 첫 선형층.',
-    '표 하나가 1,458,176개에서 527,136개로 줄어든다. 전체 파라미터는 4,590만 개에서 1,780만 개가 됐다.',
-    '에너지에 닿지 않는 표(마지막 층의 l > 0 건너뛰기 등)는 랭크 1로 줄였다.',
-    '절단 거리 5 Å의 같은 조건 비교에서 분해 모델의 검증 오차가 원래 모델보다 2~7 % 낮았다(3.1절).'])
+bl(['Factorised tables: the skip matrix S[Z] of each layer and the first linear layer of the x and f readouts.',
+    'One table shrinks from 1,458,176 to 527,136 parameters, and the total from 45.9 million to 17.8 million.',
+    'Tables that do not reach the energy (such as the l > 0 skip of the last layer) were reduced to rank 1.',
+    'In a like-for-like comparison at a 5 Å cutoff, the validation error of the factorised model was 2~7 % lower than that of the '
+    'original model (Section 3.1).'])
 
-h2('2.5 로스')
-p('에너지(원자당), 힘(성분별), 응력(Voigt 성분별) 잔차에 Huber 함수를 쓴다. 가중치는 1 : 1 : 1이다.')
+h2('2.5 Loss')
+p('A Huber function is applied to the residuals of energy (per atom), forces (per component) and stress (per Voigt component). '
+  'The weights are 1 : 1 : 1.')
 eq([r'\mathcal{L}=\mathcal{L}_E+\mathcal{L}_F+\mathcal{L}_S,\qquad '
     r'H_{\delta}(x)=\dfrac{x^{2}}{2}\ \ (|x|\leq\delta),\qquad H_{\delta}(x)=\delta\left(|x|-\dfrac{\delta}{2}\right)\ \ (|x|>\delta)',
     r'\mathcal{L}_E=\dfrac{1}{G}\sum_g H_{0.05}\left(\dfrac{E^{\mathrm{pred}}_g-E^{\mathrm{ref}}_g}{N_g}\right),\qquad '
     r'\mathcal{L}_F=\dfrac{1}{3N}\sum_i\sum_{c}H_{0.25}\left(\Delta F_{i,c}\right),\qquad '
     r'\mathcal{L}_S=\dfrac{1}{G}\sum_g\sum_{v=1}^{6}H_{0.05}\left(\Delta\sigma_{g,v}\right)'])
-bl(['Huber 경계는 에너지 0.05 eV/원자, 힘 0.25 eV/Å, 응력 0.05 eV/Å<super>3</super>이다. 이 값과 가중치는 BAM-MP-DeNS의 설정을 '
-    '그대로 가져왔다.',
-    'Huber에 넣기 전에 잔차를 tanh로 한 번 더 눌러(에너지 5 eV/원자, 힘 10 eV/Å, 응력 0.5 eV/Å<super>3</super>) 극단적인 구조가 '
-    '학습을 흔들지 못하게 했다.',
-    '검증 로스는 같은 식을 지수 이동 평균(EMA) 가중치로 계산한다. 평가에는 마지막 에폭의 EMA 가중치를 쓴다.'])
-note('주의: 응력 항은 Voigt 성분 6개의 합이라서 성분 평균으로 정의했을 때보다 6배 크게 들어간다. 학습 로그의 로스 열에는 응력 항이 '
-     '빠져 있다.')
+bl(['The Huber thresholds are 0.05 eV/atom for energy, 0.25 eV/Å for forces and 0.05 eV/Å<super>3</super> for stress. These values '
+    'and the weights are taken unchanged from the BAM-MP-DeNS settings.',
+    'Before they enter the Huber function, the residuals are squashed once more with tanh (energy 5 eV/atom, forces 10 eV/Å, stress '
+    '0.5 eV/Å<super>3</super>) so that extreme structures cannot destabilise the training.',
+    'The validation loss is the same expression computed with the exponential moving average (EMA) weights. Evaluation uses the EMA '
+    'weights of the last epoch.'])
+note('Note: the stress term is a sum over the 6 Voigt components, so it enters 6 times larger than it would if defined as the '
+     'component mean. The loss column of the training log does not include the stress term.')
 
-h2('2.6 옵티마이저와 학습률')
-p('옵티마이저는 SOAP이다. 기울기의 크로네커 인자 고유기저에서 Adam을 적용하는 방법으로, 10 스텝마다 기저를 갱신한다. 원소별 계수 '
-  '표와 0·1차원 파라미터는 Adam으로 갱신한다. 기울기 노름은 1.0으로 자르고, EMA 감쇠는 0.999다.')
-p('학습률은 워밍업 뒤 일정하게 유지하다가 끝 구간에서 직선으로 줄인다. 학습률을 줄이기 시작하는 시점 s<sub>0</sub>와 끝나는 '
-  '시점 T를 학습 도중에 정할 수 있어서, 계산 시간에 맞춰 길이를 조정하기 쉽다.')
+h2('2.6 Optimiser and learning rate')
+p('The optimiser is SOAP. It applies Adam in the eigenbasis of the Kronecker factors of the gradient and updates the basis every '
+  '10 steps. The per-element coefficient tables and the 0- and 1-dimensional parameters are updated with Adam. The gradient norm is '
+  'clipped at 1.0 and the EMA decay is 0.999.')
+p('The learning rate is held constant after the warm-up and then reduced linearly in the final phase. The step s<sub>0</sub> at which '
+  'the learning-rate decay starts and the step T at which it ends can be set during training, which makes it easy to fit the length '
+  'to the available compute time.')
 eq(r'f(t)=f_{\mathrm{base}}(t)\ \ (t<s_0),\qquad '
    r'f(t)=f_{\mathrm{base}}(s_0)+\left(\mu-f_{\mathrm{base}}(s_0)\right)\dfrac{t-s_0}{T-s_0}\ \ (s_0\leq t\leq T),\qquad \mu=0.01')
-tb([['학습', '최대 학습률', '일정', '정밀도'],
-    ['MPtrj-only', '0.01', '워밍업 2 에폭, 코사인(80 에폭 기준)으로 20 에폭, 이어서 20 에폭 동안 직선 감소', '전부 float64'],
-    ['OMat24 사전학습', '0.01', '워밍업 1만 스텝, 일정, 마지막 31 %에서 직선 감소', '모델 float32, SOAP 상태 float64'],
-    ['OAM 파인튜닝', '0.005', '워밍업 5천 스텝, 일정, 마지막 29 %에서 직선 감소', '모델 float32, SOAP 상태 float64']],
-   widths=[0.17, 0.13, 0.46, 0.24], caption='학습별 학습률 일정과 정밀도.', align_right_from=-1)
-bl(['f<sub>base</sub>는 워밍업과 코사인(또는 일정) 구간의 계수다. MPtrj-only는 코사인으로 시작했다가 20 에폭에서 직선 감소로 바꿨다.',
-    'float32 모델에 SOAP 통계만 float64로 두면 전부 float64일 때보다 약 1.8배 빠르고 검증 오차는 같다.'])
+tb([['Training', 'Peak learning rate', 'Schedule', 'Precision'],
+    ['MPtrj-only', '0.01', 'Warm-up 2 epochs, cosine (80-epoch basis) for 20 epochs, then linear decay over 20 epochs', 'All float64'],
+    ['OMat24 pretraining', '0.01', 'Warm-up 10,000 steps, constant, linear decay over the last 31 %', 'Model float32, SOAP state float64'],
+    ['OAM fine-tuning', '0.005', 'Warm-up 5,000 steps, constant, linear decay over the last 29 %', 'Model float32, SOAP state float64']],
+   widths=[0.17, 0.13, 0.46, 0.24], caption='Learning-rate schedule and precision of each training run.', align_right_from=-1)
+bl(['f<sub>base</sub> is the factor of the warm-up and cosine (or constant) phase. MPtrj-only started with cosine and was switched to '
+    'linear decay at epoch 20.',
+    'A float32 model with only the SOAP statistics in float64 is about 1.8 times faster than all float64, with the same validation error.'])
 
-h2('2.7 데이터 읽기와 섞기')
-p('데이터는 디스크의 LMDB에서 바로 읽는다(스트리밍). 구조마다 원자 수와 간선 수를 미리 세어 둔 크기표로 GPU 묶음을 채운다. OMat24 '
-  '학습 세트(1억 구조)의 7 Å 크기표는 다섯 부분으로 나눠 다섯 노드에서 만들었다(노드당 약 30분).')
-p('파인튜닝 데이터는 MPtrj 학습 세트 8벌과 sAlex 학습 세트 1벌을 합친 것이다. OMat24 논문이 eSEN과 EquiformerV2의 OAM 모델에 쓴 '
-  '구성과 같다. 한 에폭은 약 2,243만 구조이고 MPtrj가 54 %, sAlex가 46 %다.')
-bl([B('고친 문제:') + ' 처음 구현은 반복한 8벌이 같은 읽기 블록에 들어가서, 한 구조의 8벌이 약 21 스텝 안에 몰려 나왔다. 배치의 '
-    'MPtrj 부분이 사실상 적은 수의 구조로 채워진 셈이다. 사본마다 다른 파일 번호를 주어 에폭 전체에 흩어지게 고쳤다(8벌이 나오는 '
-    '구간의 중앙값이 에폭의 80 %).',
-    '이 수정 전후로 WBM 전체 MAE가 0.0267에서 0.0225 eV/원자로, F1이 0.844에서 0.886으로 바뀌었다(3.3절).'])
+h2('2.7 Data reading and shuffling')
+p('Data are read directly from LMDB on disk (streaming). GPU batches are filled using a size table that holds the precounted numbers of '
+  'atoms and edges of every structure. The 7 Å size table of the OMat24 training set (100 million structures) was built '
+  'in five parts on five nodes (about 30 minutes per node).')
+p('The fine-tuning data are 8 copies of the MPtrj training set combined with 1 copy of the sAlex training set. This is the same '
+  'composition that the OMat24 paper used for the OAM models of eSEN and EquiformerV2. One epoch is about 22.43 million structures, '
+  '54 % MPtrj and 46 % sAlex.')
+bl([B('Problem fixed:') + ' In the first implementation the 8 repeated copies went into the same read block, so the 8 copies of one '
+    'structure came out clustered within about 21 steps. In effect the MPtrj part of a batch was filled with a small number of '
+    'structures. The fix gives each copy a different file number so that the copies are spread over the whole epoch '
+    '(median span over which the 8 copies appear: 80 % of the epoch).',
+    'The fix moved full-WBM MAE from 0.0267 to 0.0225 eV/atom, F1 from 0.844 to 0.886 (Section 3.3).'])
 
 K.need(230)
-h2('2.8 추론 정밀도')
-p('float32로 학습한 모델도 파라미터를 float64로 올려서 계산할 수 있다. 어떤 계산에 필요한지 쟀다.')
-tb([['계산', 'float32', 'float64', '판단'],
-    ['κ SRME (포논 103개 물질)', '0.861', '0.220', 'float64 필수'],
-    ['· 이완이 300 스텝 한계에 걸린 물질', '33개', '0개', ''],
-    ['· 허수 진동 모드', '6개', '0개', ''],
-    ['WBM 3k 표본 MAE (eV/원자)', '0.0199', '0.0195', '차이 2 %'],
-    ['WBM 3k 표본 F1', '0.893', '0.893', '차이 없음'],
-    ['WBM 3k 표본 RMSD (Å)', '0.0647', '0.0631', '차이 2.5 %']],
-   widths=[0.42, 0.17, 0.17, 0.24], caption='같은 체크포인트(파인튜닝 가상 에폭 18)를 float32와 float64로 계산한 결과.',
+h2('2.8 Inference precision')
+p('A model trained in float32 can also be run with its parameters promoted to float64. We measured which calculations need this.')
+tb([['Calculation', 'float32', 'float64', 'Verdict'],
+    ['κ SRME (103 phonon materials)', '0.861', '0.220', 'float64 required'],
+    ['· materials whose relaxation hit the 300-step limit', '33', '0', ''],
+    ['· imaginary vibrational modes', '6', '0', ''],
+    ['WBM 3k sample MAE (eV/atom)', '0.0199', '0.0195', '2 % difference'],
+    ['WBM 3k sample F1', '0.893', '0.893', 'no difference'],
+    ['WBM 3k sample RMSD (Å)', '0.0647', '0.0631', '2.5 % difference']],
+   widths=[0.42, 0.17, 0.17, 0.24], caption='The same checkpoint (fine-tuning virtual epoch 18) computed in float32 and in float64.',
    align_right_from=1)
-bl(['float32에서는 힘의 잡음이 약 10<super>−4</super> eV/Å로, κ 계산의 수렴 기준(10<super>−4</super> eV/Å)과 유한 변위의 힘 '
-    '차이와 같은 크기다. 그래서 이완이 수렴하지 않고 κ가 실제보다 작게 나온다(중앙값 기준 1.7배 차이).',
-    '이 문서의 OAM 최종 수치는 WBM과 κ 모두 float64로 계산했다. MPtrj-only 모델은 float64로 학습하고 평가했다.'])
+bl(['In float32 the force noise is about 10<super>−4</super> eV/Å, the same size as the convergence criterion of the κ calculation '
+    '(10<super>−4</super> eV/Å) and as the force differences of the finite displacements. The relaxation therefore does not converge '
+    'and κ comes out smaller than it really is (a factor of 1.7 in the median).',
+    'The final OAM numbers in this document were computed in float64 for both WBM and κ. The MPtrj-only model was trained and '
+    'evaluated in float64.'])
 
-h2('2.9 평가 방법')
-bl([B('WBM 안정성:') + ' WBM 초기 구조 256,963개를 모델로 이완하고(FIRE, 격자와 원자 위치, 힘 0.05 eV/Å까지 최대 500 스텝), '
-    'MP2020 보정을 적용해 볼록 껍질 위 에너지를 구한다. 지표는 고유 원형 215,488개에서 계산한다. 모델 출력에는 어떤 보정도 하지 '
-    '않았다.',
-    B('RMSD:') + ' 이완한 구조와 DFT 이완 구조의 거리(pymatgen StructureMatcher). 대응시키지 못한 구조는 1.0으로 센다.',
-    B('κ SRME:') + ' PhononDB 103개 물질의 격자 열전도도. 변위 0.03 Å, 이완 수렴 10<super>−4</super> eV/Å, 대칭 허용 오차 '
-    '10<super>−5</super>. 큰 초격자는 GPU 메모리에 맞게 한 번에 계산하는 묶음 크기만 줄였다.',
-    B('3k 추적 표본:') + ' 학습 중 경과를 보려고 WBM에서 고정 규칙으로 뽑은 2,976개(고유 원형 2,536개)를 썼다. 전체 결과보다 '
-    'MAE가 약 0.002 eV/원자 낮게 나오는 경향이 있어서, 최종 수치는 모두 전체 WBM으로 계산했다.',
-    B('공정성:') + ' 학습에는 각 데이터의 학습 분할만 썼다. 데이터 비율과 학습 길이는 WBM 점수를 보고 고르지 않았고, 보고하는 '
-    '모델은 미리 정한 마지막 체크포인트다.'])
+h2('2.9 Evaluation method')
+bl([B('WBM stability:') + ' The 256,963 initial WBM structures are relaxed with the model (FIRE, lattice and atomic positions, up to '
+    '500 steps until forces reach 0.05 eV/Å), and the MP2020 correction is applied to obtain the energy above the convex hull. The '
+    'metrics are computed on the 215,488 unique prototypes. No correction of any kind was applied to the model output.',
+    B('RMSD:') + ' The distance between the relaxed structure and the DFT-relaxed structure (pymatgen StructureMatcher). Structures '
+    'that could not be matched count as 1.0.',
+    B('κ SRME:') + ' Lattice thermal conductivity of the 103 PhononDB materials. Displacement 0.03 Å, relaxation convergence '
+    '10<super>−4</super> eV/Å, symmetry tolerance '
+    '10<super>−5</super>. For large supercells only the batch size computed at once was reduced to fit the GPU memory.',
+    B('3k tracking sample:') + ' To follow the progress during training we used 2,976 structures (2,536 unique prototypes) drawn from '
+    'WBM by a fixed rule. Its MAE tends to come out about 0.002 eV/atom lower than the full result, so all final numbers were '
+    'computed on the full WBM set.',
+    B('Fairness:') + ' Training used only the training split of each dataset. The data ratio and training length were not '
+    'chosen by looking at WBM scores, and the reported model is the last checkpoint, fixed in advance.'])
 
 # =====================================================================================================================
 K.page()
-h1('3. 결과')
-h2('3.1 MPtrj만으로 학습한 실험')
+h1('3. Results')
+h2('3.1 Experiments trained on MPtrj only')
 fig(os.path.join(FIG, 'mptrj_runs.png'),
-    'MPtrj 검증 세트(20,000 구조)의 에폭별 오차. 5 Å 실험들과 7 Å 실험들. 갈색 점선은 20 에폭부터 학습률을 직선으로 줄인 최종 모델이다.')
-tb([['실험', '파라미터', '에폭', 'E MAE', 'F MAE', 'F RMSE', '응력 RMSE', 'WBM 3k (MAE / F1)'],
-    ['5 Å, 원소 표 그대로', '45.9M', '40', '15.1', '43.4', '107.0', '1.280', '0.0419 / 0.749'],
-    ['5 Å, 랭크 32', '17.8M', '20', '17.7', '45.8', '107.1', '1.283', '-'],
-    ['5 Å, 랭크 32, 학습률 0.001', '17.8M', '15', '20.2', '51.6', '118.7', '1.370', '-'],
-    ['5 Å, 채널 64, 랭크 32', '4.7M', '13', '23.6', '53.3', '119.2', '1.393', '-'],
-    ['5 Å, 랭크 32, DeNS', '17.8M', '17', '23.9', '55.1', '152.5', '1.373', '-'],
-    ['7 Å, Adam + 플래토', '17.8M', '10', '25.9', '59.9', '124.7', '1.385', '0.0635 / 0.604'],
-    ['7 Å, SOAP, 로스 4 : 1 : 1', '17.8M', '22', '15.0', '45.4', '101.5', '1.255', '0.0426 / 0.735'],
-    [B('7 Å, SOAP, 20 에폭 + 감소 20 에폭'), B('17.8M'), B('40'), B('13.7'), B('42.6'), B('100.9'), B('1.238'),
+    'Per-epoch errors on the MPtrj validation set (20,000 structures). The 5 Å experiments and the 7 Å experiments. The brown dotted '
+    'line is the final model, whose learning rate was reduced linearly from epoch 20.')
+tb([['Experiment', 'Params', 'Epoch', 'E MAE', 'F MAE', 'F RMSE', 'Stress RMSE', 'WBM 3k (MAE / F1)'],
+    ['5 Å, full element tables', '45.9M', '40', '15.1', '43.4', '107.0', '1.280', '0.0419 / 0.749'],
+    ['5 Å, rank 32', '17.8M', '20', '17.7', '45.8', '107.1', '1.283', '-'],
+    ['5 Å, rank 32, LR 0.001', '17.8M', '15', '20.2', '51.6', '118.7', '1.370', '-'],
+    ['5 Å, 64 channels, rank 32', '4.7M', '13', '23.6', '53.3', '119.2', '1.393', '-'],
+    ['5 Å, rank 32, DeNS', '17.8M', '17', '23.9', '55.1', '152.5', '1.373', '-'],
+    ['7 Å, Adam + plateau', '17.8M', '10', '25.9', '59.9', '124.7', '1.385', '0.0635 / 0.604'],
+    ['7 Å, SOAP, loss 4 : 1 : 1', '17.8M', '22', '15.0', '45.4', '101.5', '1.255', '0.0426 / 0.735'],
+    [B('7 Å, SOAP, 20 epochs + 20 decay epochs'), B('17.8M'), B('40'), B('13.7'), B('42.6'), B('100.9'), B('1.238'),
      B('0.0389 / 0.775')]],
    widths=[0.27, 0.09, 0.07, 0.09, 0.09, 0.10, 0.11, 0.18],
-   caption='MPtrj-only 실험. 오차는 각 실험이 도달한 가장 낮은 검증값이다(E: meV/원자, F: meV/Å, 응력: GPa). 굵은 행이 최종 '
-           'MPtrj-only 모델이다. 학습한 에폭 수가 서로 달라서 같은 조건의 비교는 아니다.', align_right_from=1, font=8.2)
-bl(['원소 표를 랭크 32로 분해해도 같은 에폭에서 검증 오차가 2~7 % 낮았다. 파라미터는 39 %로 줄었다.',
-    '채널을 64로 줄이면 4~8 %, DeNS를 넣으면 13~16 %, 학습률을 0.001로 낮추면 2~6 % 나빴다.',
-    '절단 거리를 7 Å로 늘리고 BAM-MP-DeNS의 로스 설정을 쓰자 같은 에폭에서 모든 지표가 5 Å 실험보다 좋았다.',
-    'Adam(학습률 0.001, 플래토 감소)은 같은 에폭에서 SOAP보다 크게 뒤처져 10 에폭에서 중단했다.',
-    '에너지 가중치를 4배로 올리면 검증 에너지 오차는 14 % 줄지만 WBM 결과는 달라지지 않았다.',
-    '학습률을 줄이는 구간에서 검증 오차는 거의 그대로였지만 WBM의 음의 편향이 −0.021에서 −0.008 eV/원자로 줄었고 F1이 0.724에서 '
-    '0.775로 올랐다.'])
-p('최종 MPtrj-only 모델은 학습 로스가 계속 줄어드는 동안 검증 로스가 멈췄다(에폭 39에서 학습 0.00088, 검증 0.00375). 모델 용량이 아니라 '
-  'MPtrj의 데이터 양이 한계라는 뜻으로 읽었고, 이것이 OMat24 사전학습으로 넘어간 이유다.')
+   caption='MPtrj-only experiments. Errors are the lowest validation values each experiment reached (E: meV/atom, F: meV/Å, '
+           'stress: GPa). The bold row is the final MPtrj-only model. Epoch counts differ, so this is not a '
+           'like-for-like comparison.', align_right_from=1, font=8.2)
+bl(['Even with the element tables factorised to rank 32, the validation error at the same epoch was 2~7 % lower. The number of '
+    'parameters dropped to 39 %.',
+    'With 64 channels the error was 4~8 % worse, with DeNS 13~16 %, with learning rate 0.001 2~6 %.',
+    'With the cutoff extended to 7 Å and the loss settings of BAM-MP-DeNS, all metrics were better than in the 5 Å experiments at the '
+    'same epoch.',
+    'Adam (LR 0.001, plateau decay) fell far behind SOAP at the same epoch and was stopped at 10 epochs.',
+    'A 4-fold energy weight cuts the validation energy error by 14 % without changing the WBM result.',
+    'In the learning-rate decay phase the validation error stayed almost the same, but the negative bias on WBM shrank from −0.021 '
+    'to −0.008 eV/atom and F1 rose from 0.724 to '
+    '0.775.'])
+p('For the final MPtrj-only model the validation loss stalled while the training loss kept falling (at epoch 39: training 0.00088, '
+  'validation 0.00375). We read this as meaning that the limit is the amount of MPtrj data rather than the model capacity, and this '
+  'is why we moved on to OMat24 pretraining.')
 
 K.need(330)
-h2('3.2 OMat24 사전학습')
+h2('3.2 OMat24 pretraining')
 fig(os.path.join(FIG, 'pretrain.png'),
-    'OMat24 사전학습의 검증 오차(OMat24 검증 20,000 구조). 가상 에폭 하나는 5,000 스텝이다. 파란 음영은 학습률을 줄인 구간이다.',
+    'Validation error of the OMat24 pretraining (20,000 OMat24 validation structures). One virtual epoch is 5,000 steps. The blue '
+    'shading is the learning-rate decay phase.',
     width=0.92)
-bl(['OMat24 학습 세트 1억 20만 구조를 약 2회 통과했다(가상 에폭 58개, 19시간). 노드 5개로 시작해 6개로 늘렸다. 1 에폭은 '
-    '6노드(GPU 24개)에서 약 9시간이다.',
-    '학습률이 일정한 구간에서는 힘 오차가 천천히 줄고 에너지 오차는 15~17 meV/원자에서 오르내렸다. 학습률을 줄이자 에너지 오차가 '
-    '12.1 meV/원자까지 내려갔다.',
-    '사전학습만 한 모델은 에너지 기준이 OMat24의 것이어서 WBM 에너지 지표는 의미가 없다. 구조 정확도는 이미 높았다(3k 표본 RMSD '
-    '0.067~0.069 Å, MPtrj-only는 0.078 Å).'])
+bl(['The 100.2 million structures of the OMat24 training set were seen about twice (58 virtual epochs, 19 hours). The run started '
+    'on 5 nodes and grew to 6. One epoch takes about 9 hours on '
+    '6 nodes (24 GPUs).',
+    'At constant learning rate the force error fell slowly and the energy error fluctuated within 15~17 meV/atom. '
+    'Once the learning rate was reduced, the energy error dropped to '
+    '12.1 meV/atom.',
+    'The pretrained-only model has the OMat24 energy reference, so its WBM energy metrics are meaningless. Structural '
+    'accuracy was already high (3k sample RMSD '
+    '0.067~0.069 Å; MPtrj-only gives 0.078 Å).'])
 
 K.need(360)
-h2('3.3 MPtrj + sAlex 파인튜닝')
+h2('3.3 MPtrj + sAlex fine-tuning')
 fig(os.path.join(FIG, 'finetune.png'),
-    '파인튜닝의 검증 오차(위, MPtrj 검증 세트)와 WBM 3k 표본 지표(아래). 베이지 구간은 MPtrj 8벌이 몰려 읽히던 처음 10개 가상 '
-    '에폭이고, 파란 구간은 학습률을 줄인 구간이다. 회색 점선은 MPtrj-only 최종 모델이다.')
-tb([['가상 에폭', '데이터 에폭', '평가', 'F1', 'MAE', 'R<super>2</super>', 'RMSD', 'κ SRME', 'CPS'],
-    ['4 (수정 전)', '0.7', '전체, float32', '0.844', '0.0267', '0.857', '0.0659', '-', '-'],
-    ['6 (수정 전)', '1.0', '전체, float32', '0.842', '0.0269', '0.853', '-', '-', '-'],
-    ['18', '3.0', '전체 float32, κ float64', '0.886', '0.0225', '0.865', '0.0652', '0.220', '0.856'],
-    ['22', '3.6', '전체, float64', '0.887', '0.0220', '0.869', '0.0644', '0.220', '0.857']] +
-   ([] if FINAL['interim'] else [[B(str(FINAL['epoch']) + ' (최종)'), B(FINAL.get('data_epochs', '6.2')), B('전체, float64')] +
+    'Validation error of the fine-tuning (top, MPtrj validation set) and WBM 3k sample metrics (bottom). The beige band is the first '
+    '10 virtual epochs, in which the 8 MPtrj copies were read clustered, and the blue band is the learning-rate decay phase. The grey '
+    'dotted line is the final MPtrj-only model.')
+tb([['Virtual epoch', 'Data epochs', 'Evaluation', 'F1', 'MAE', 'R<super>2</super>', 'RMSD', 'κ SRME', 'CPS'],
+    ['4 (before fix)', '0.7', 'full, float32', '0.844', '0.0267', '0.857', '0.0659', '-', '-'],
+    ['6 (before fix)', '1.0', 'full, float32', '0.842', '0.0269', '0.853', '-', '-', '-'],
+    ['18', '3.0', 'full float32, κ float64', '0.886', '0.0225', '0.865', '0.0652', '0.220', '0.856'],
+    ['22', '3.6', 'full, float64', '0.887', '0.0220', '0.869', '0.0644', '0.220', '0.857']] +
+   ([] if FINAL['interim'] else [[B(str(FINAL['epoch']) + ' (final)'), B(FINAL.get('data_epochs', '6.2')), B('full, float64')] +
                                  [B(x) for x in oam]]),
    widths=[0.13, 0.11, 0.24, 0.08, 0.10, 0.08, 0.10, 0.09, 0.07],
-   caption='파인튜닝 도중과 최종 모델의 WBM 전체 평가(고유 원형). 처음 두 행은 데이터가 몰려 읽히던 구간이다.', align_right_from=3)
-bl(['데이터 읽기 방식을 고친 가상 에폭 10에서 검증 오차와 WBM 지표가 계단처럼 좋아졌다. 음의 편향이 −0.012에서 −0.005 '
-    'eV/원자로 줄면서 정밀도가 0.78에서 0.86으로 올랐다.',
-    '그 뒤 학습률이 일정한 구간에서는 WBM 지표가 거의 움직이지 않았다(3k 표본 MAE 0.0197~0.0199). 파인튜닝은 데이터 3 에폭 정도에서 '
-    '포화된다.',
-    'κ SRME는 0.220으로 MPtrj-only 모델(0.375)보다 좋다.'] +
-   ([f"이 표의 마지막 행({FINAL['label']})이 지금까지 가장 최신 평가다. 최종 체크포인트(가상 에폭 38)의 결과는 학습이 끝난 뒤 추가한다."]
+   caption='Full-WBM evaluation (unique prototypes) during fine-tuning and of the final model. The first two rows are from the '
+           'phase in which the data were read clustered.', align_right_from=3)
+bl(['At virtual epoch 10, where the data reading was fixed, the validation error and the WBM metrics improved in a step. The negative '
+    'bias shrank from −0.012 to −0.005 '
+    'eV/atom and the precision rose from 0.78 to 0.86.',
+    'After that, in the constant-learning-rate phase, the WBM metrics barely moved (3k sample MAE 0.0197~0.0199). Fine-tuning '
+    'saturates at about 3 data epochs.',
+    'κ SRME is 0.220, better than that of the MPtrj-only model (0.375).'] +
+   ([f"The last row of this table ({FINAL['label']}) is the most recent evaluation so far. The results of the final checkpoint (virtual epoch 38) will be added after the training ends."]
     if FINAL['interim'] else
-    [f"학습률을 줄인 뒤의 최종 모델은 MAE {FINAL['mae']:.4f}, F1 {FINAL['f1']:.3f}, CPS {FINAL['cps']:.3f}이다."]))
+    [f"The final model after the learning-rate decay has MAE {FINAL['mae']:.4f}, F1 {FINAL['f1']:.3f} and CPS {FINAL['cps']:.3f}."]))
 
 K.need(300)
-h2('3.4 형성 에너지 비교')
+h2('3.4 Formation energy comparison')
 fig(os.path.join(FIG, 'parity.png'),
-    'WBM 고유 원형의 형성 에너지: DFT(MP2020 보정) 대 모델. 왼쪽 MPtrj-only, 오른쪽 OAM. 색은 점 밀도(로그)다. 그림 안의 '
-    'R<super>2</super>는 형성 에너지 기준이라 리더보드의 R<super>2</super>(볼록 껍질 위 에너지 기준)보다 크다.')
+    'WBM unique-prototype formation energy: DFT (MP2020 corrected) vs model. Left MPtrj-only, right OAM; colour: '
+    'point density (log). The figure\'s '
+    'R<super>2</super> (formation energy) exceeds the leaderboard R<super>2</super> '
+    '(energy above the convex hull).')
 
 K.need(380)
-h2('3.5 리더보드 모델과의 비교')
+h2('3.5 Comparison with leaderboard models')
 LB = [['DPA-4.1-Max-OAM-PFT', '0.935', '0.017', '0.872', '0.058', '0.081', '0.913'],
       ['EquiformerV3+DeNS-OAM', '0.931', '0.018', '0.868', '0.059', '0.118', '0.902'],
       ['GRACE-3L-OAM-L', '0.925', '0.018', '0.875', '0.058', '0.121', '0.900'],
@@ -285,121 +327,161 @@ ours = [[B('RACE v2 OAM')] + [B(x) for x in oam],
 rows = LB + ours[:3]
 rows.sort(key=lambda r: -float(r[6].replace('<font name="NanumB">', '').replace('</font>', '')))
 rows.append(ours[3])
-tb([['모델', 'F1', 'MAE', 'R<super>2</super>', 'RMSD', 'κ SRME', 'CPS']] + rows,
+tb([['Model', 'F1', 'MAE', 'R<super>2</super>', 'RMSD', 'κ SRME', 'CPS']] + rows,
    widths=[0.34, 0.10, 0.11, 0.10, 0.11, 0.12, 0.12],
-   caption='Matbench Discovery 리더보드(2026-11-15에 읽은 값, 고유 원형 기준)의 일부와 연구실 모델. CPS 순서이고 연구실 모델은 '
-           '굵게 표시했다. BAM-OAM은 MAE만 알려져 있어 맨 아래에 두었다.', align_right_from=1, font=8.2)
-bl(['OAM 모델의 에너지·구조 지표는 GRACE-2L-OAM-L, Nequip-OAM-L과 같은 수준이다. 이 모델들은 파라미터가 2,600만 개 안팎이다.',
-    '상위 모델과의 차이는 F1 0.04, MAE 0.004~0.005 eV/원자, κ SRME 0.1 정도다. 상위 모델은 OMat24를 4~6 에폭 이상 학습했다.',
-    'MPtrj-only 모델은 MACE-SOYO-MPtrj와 거의 같은 위치다.'])
+   caption='Part of the Matbench Discovery leaderboard (values read on 2026-11-15, unique prototypes) and the lab models. Sorted by '
+           'CPS, with the lab models in bold. BAM-OAM is placed at the bottom because only its MAE is known.',
+   align_right_from=1, font=8.2)
+bl(['The energy and structure metrics of the OAM model are on the level of GRACE-2L-OAM-L and Nequip-OAM-L. Those models have around '
+    '26 million parameters.',
+    'The gap to the top models is about 0.04 in F1, 0.004~0.005 eV/atom in MAE and 0.1 in κ SRME. The top models were trained on '
+    'OMat24 for 4~6 epochs or more.',
+    'The MPtrj-only model sits at almost the same position as MACE-SOYO-MPtrj.'])
 
-h2('3.6 PyTorch 변환')
-bl(['추론 전용 PyTorch 구현(race_v2_torch, 옛 이름 racev2_torch)으로 JAX 체크포인트를 변환할 수 있다. JAX 없이 변환되고 모델 파일은 142 MB다.',
-    '5 Å 모델에서는 층별 출력까지 JAX(float64)와 10<super>−14</super> 수준으로 일치함을 확인했다.',
-    'OAM 모델(7 Å, float32 학습)은 변환 후 평형 구조 12개에서 JAX(float32)와 에너지 차이가 원자당 최대 3 × 10<super>−4</super> eV였다. '
-    'float32 계산의 잡음 크기다.',
-    '최종 OAM 모델을 평형에서 벗어난 구조(PhononDB 16개, 원자를 0.05 Å 흔듦, 최대 힘 1.34 eV/Å)에서 JAX float64 추론과 비교했다. '
-    '에너지 차이는 최대 4 × 10<super>−7</super> eV, 힘 차이는 최대 2 × 10<super>−6</super> eV/Å다. 5 Å 모델의 10<super>−14</super>보다 '
-    '큰 이유(한쪽에 float32 상수가 남아 있을 가능성)는 확인하지 않았다.'])
+h2('3.6 PyTorch conversion')
+bl(['JAX checkpoints can be converted with an inference-only PyTorch implementation (race_v2_torch, old name racev2_torch). The '
+    'conversion works without JAX and the model file is 142 MB.',
+    'The 5 Å model agrees with JAX (float64) at the 10<super>−14</super> level, checked down to per-layer outputs.',
+    'After conversion, the OAM model (7 Å, trained in float32) differed from JAX (float32) in energy by at most '
+    '3 × 10<super>−4</super> eV per atom on 12 equilibrium structures, '
+    'the noise level of float32 arithmetic.',
+    'The final OAM model was compared with JAX float64 inference on structures away from equilibrium (16 from PhononDB, atoms '
+    'displaced by 0.05 Å, maximum force 1.34 eV/Å). '
+    'The energy difference is at most 4 × 10<super>−7</super> eV and the force difference at most 2 × 10<super>−6</super> eV/Å. '
+    'Why this is larger than the 10<super>−14</super> of the 5 Å model '
+    '(possibly a float32 constant left on one side) has not been checked.'])
 
 K.need(420)
-h2('3.7 불확실성과 분포 밖(OOD) 탐지')
-bl(['최종 OAM 모델에 SOAP 고유기저 Laplace 근사를 적용했다. 곡률(GGN)은 MPtrj·sAlex 학습 구조 300개로 추정했고, 가중치 표본 16개로 '
-    '에너지와 힘의 표준편차(σ)를 구했다. 사전분포 정밀도 λ는 1000이다.',
-    '분포 안(ID) 세트는 MPtrj 검증과 sAlex 검증, 분포 밖(OOD) 세트는 OMol25(분자), OPoly26(고분자), OC25(표면 촉매)이고 세트마다 '
-    '1,000개 구조다. WBM은 3k 표본을 썼다.'])
+h2('3.7 Uncertainty and out-of-distribution (OOD) detection')
+bl(['A SOAP-eigenbasis Laplace approximation was applied to the final OAM model. The curvature (GGN) was estimated from 300 MPtrj and '
+    'sAlex training structures, and the standard deviations (σ) of energy and forces were obtained from 16 weight samples. '
+    'The prior precision λ is 1000.',
+    'In-distribution (ID) sets: MPtrj and sAlex validation. Out-of-distribution (OOD) sets: OMol25 '
+    '(molecules), OPoly26 (polymers) and OC25 (surface catalysis). Each set has '
+    '1,000 structures; WBM uses the 3k sample.'])
 fig(os.path.join(FIG, 'ood_detection.png'),
-    'a: OOD 점수(원자별 힘 σ의 최대값)의 분포. b: ID 대 OOD의 ROC 곡선. c: 예측 에너지에 대한 σ. 실선은 ID, 파선은 OOD, 점선은 WBM이다.')
-tb([['점수', 'OMol25', 'OPoly26', 'OC25', 'WBM'],
-    ['힘 σ의 최대값 (σ_F,max)', '0.960', '0.956', '0.960', '0.396'],
-    ['힘 σ의 평균 (σ_F)', '0.934', '0.896', '0.830', '0.381'],
-    ['원자당 에너지 σ (σ_E)', '0.077', '0.030', '0.136', '0.601'],
-    ['전체 에너지 σ (σ_E × 원자 수)', '0.756', '0.977', '0.973', '0.268']],
+    'a: distribution of the OOD score (maximum of the per-atom force σ). b: ROC curves of ID versus OOD. c: σ against the predicted '
+    'energy. Solid lines are ID, dashed lines OOD and the dotted line WBM.')
+tb([['Score', 'OMol25', 'OPoly26', 'OC25', 'WBM'],
+    ['Maximum of the force σ (σ_F,max)', '0.960', '0.956', '0.960', '0.396'],
+    ['Mean of the force σ (σ_F)', '0.934', '0.896', '0.830', '0.381'],
+    ['Energy σ per atom (σ_E)', '0.077', '0.030', '0.136', '0.601'],
+    ['Total energy σ (σ_E × number of atoms)', '0.756', '0.977', '0.973', '0.268']],
    widths=[0.40, 0.15, 0.15, 0.15, 0.15],
-   caption='AUROC: ID(MPtrj 검증 + sAlex 검증) 구조와 각 세트의 구조를 한 쌍 뽑았을 때 그 세트 쪽 점수가 더 클 확률. 0.5는 구분 못 함, '
-           '1.0은 완전 구분.', align_right_from=1)
-bl(['힘의 불확실성은 분자·고분자·표면 데이터를 AUROC 0.96으로 가려낸다. 학습에 없던 종류의 구조를 걸러내는 용도로 쓸 수 있다.',
-    '원자당 에너지 σ는 거꾸로 나온다(AUROC 0.03~0.14). OOD 구조가 더 커서(원자 47~140개 대 10~22개) 원자당 평균을 내면 σ가 작아지기 '
-    '때문이다. 원자 수를 곱한 전체 에너지 σ로는 0.76~0.98이다.',
-    'WBM은 ID 세트와 구분되지 않는다(0.40). WBM은 학습 데이터와 같은 종류의 무기 결정이므로 예상한 결과다.'])
+   caption='AUROC: the probability that, for a pair of one ID structure (MPtrj validation + sAlex validation) and one structure of '
+           'a given set, the score of the latter is larger. 0.5 means no separation, '
+           '1.0 perfect separation.', align_right_from=1)
+bl(['The force uncertainty picks out the molecule, polymer and surface data with an AUROC of 0.96. It can be used to filter out kinds '
+    'of structures that were not in the training data.',
+    'The energy σ per atom comes out reversed (AUROC 0.03~0.14). The OOD structures are larger (47~140 atoms versus 10~22), so '
+    'averaging per atom makes σ smaller. '
+    'With the total energy σ, multiplied by the number of atoms, the AUROC is 0.76~0.98.',
+    'WBM is not separated from the ID sets (0.40). This is the expected result, since WBM consists of inorganic crystals of the same '
+    'kind as the training data.'])
 K.need(520)
 fig(os.path.join(FIG, 'ood_error.png'),
-    'a, b: 예측 σ 대 실제 오차(힘, 에너지). 검은 파선은 오차 = σ, b의 색 선은 정규분포의 분위수 띠다. c: 에너지 보정 곡선(실선은 σ 그대로, '
-    '파선은 σ에 상수 하나를 곱한 것). d: WBM 구조를 σ_E 순으로 열 묶음으로 나눈 평균·중앙 오차.', width=0.86)
-bl(['σ의 절대 크기는 실제 오차보다 훨씬 작다. 힘은 10~100배, 에너지는 약 16배다. 이 σ는 가중치 불확실성만 담고 λ를 맞추지 않았기 '
-    '때문이다. 그대로는 오차 막대로 쓸 수 없다.',
-    'MPtrj 검증에서 구한 상수 16.3을 곱하면 ID 세트의 보정 곡선은 대각선에 가까워진다(1σ 안의 비율 0.63~0.66, 이상값 0.68). WBM은 '
-    '0.55로 여전히 과신한다.',
-    '힘은 σ의 순서가 오차의 순서와 잘 맞는다(ID 세트의 순위 상관 0.71~0.75). 에너지는 약하다. WBM에서 σ_E가 가장 작은 10 %의 평균 '
-    '오차는 12 meV/원자, 가장 큰 10 %는 23 meV/원자이고, 오차가 큰 구조를 가려내는 AUROC는 0.56~0.59다.',
-    '즉 이 방법은 "학습 분포 밖인가"는 잘 가려내지만 "WBM에서 어느 구조의 에너지가 틀렸는가"는 거의 가려내지 못한다.'])
+    'a, b: predicted σ versus actual error (forces, energy). The black dashed line is error = σ, and the coloured lines in b are '
+    'quantile bands of the normal distribution. c: energy calibration curves (solid: σ as it is; '
+    'dashed: σ multiplied by a single constant). d: mean and median error of the WBM structures split into ten bins in order of σ_E.',
+    width=0.86)
+bl(['The absolute size of σ is much smaller than the actual error: 10~100 times for forces and about 16 times for energy. This is '
+    'because this σ contains only the weight uncertainty and λ was not tuned. '
+    'As it is, it cannot be used as an error bar.',
+    'Multiplying by the constant 16.3 obtained on MPtrj validation brings the calibration curves of the ID sets close to the diagonal '
+    '(fraction within 1σ 0.63~0.66, ideal value 0.68). WBM is still overconfident at '
+    '0.55.',
+    'For forces the ordering by σ follows that by error well (rank correlation 0.71~0.75 on the ID sets). For energy it is '
+    'weak. On WBM the mean error of the 10 % with the smallest σ_E is '
+    '12 meV/atom and that of the 10 % with the largest is 23 meV/atom, and the AUROC for picking out large-error structures is '
+    '0.56~0.59.',
+    'In other words, this method is good at telling "is this outside the training distribution" but can hardly tell "which WBM '
+    'structures have a wrong energy".'])
 
 K.need(300)
-h2('3.8 메모리와 속도')
-tb([['정밀도', '구조', '원자 수', '간선 수', '한 번 계산 (초)', 'GPU 메모리 최대 (GB)', '결과'],
-    ['float32', 'PbTe (이웃 32개)', '8,000', '256,000', '0.52', '26.0', '성공'],
-    ['float32', 'PbTe (이웃 32개)', '17,576', '562,432', '-', '-', '메모리 부족'],
-    ['float32', 'BeO (이웃 202개)', '2,048', '412,830', '0.93', '29.6', '성공'],
-    ['float32', 'BeO (이웃 202개)', '4,000', '806,414', '-', '-', '메모리 부족'],
-    ['float64', 'PbTe (이웃 32개)', '4,096', '131,072', '0.37', '27.7', '성공'],
-    ['float64', 'PbTe (이웃 32개)', '8,000', '256,000', '-', '-', '메모리 부족'],
-    ['float64', 'BeO (이웃 202개)', '864', '174,170', '0.37', '-', '성공'],
-    ['float64', 'BeO (이웃 202개)', '2,048', '412,830', '-', '-', '메모리 부족']],
+h2('3.8 Memory and speed')
+tb([['Precision', 'Structure', 'Atoms', 'Edges', 'One evaluation (s)', 'Peak GPU memory (GB)', 'Result'],
+    ['float32', 'PbTe (32 neighbours)', '8,000', '256,000', '0.52', '26.0', 'success'],
+    ['float32', 'PbTe (32 neighbours)', '17,576', '562,432', '-', '-', 'out of memory'],
+    ['float32', 'BeO (202 neighbours)', '2,048', '412,830', '0.93', '29.6', 'success'],
+    ['float32', 'BeO (202 neighbours)', '4,000', '806,414', '-', '-', 'out of memory'],
+    ['float64', 'PbTe (32 neighbours)', '4,096', '131,072', '0.37', '27.7', 'success'],
+    ['float64', 'PbTe (32 neighbours)', '8,000', '256,000', '-', '-', 'out of memory'],
+    ['float64', 'BeO (202 neighbours)', '864', '174,170', '0.37', '-', 'success'],
+    ['float64', 'BeO (202 neighbours)', '2,048', '412,830', '-', '-', 'out of memory']],
    widths=[0.10, 0.20, 0.11, 0.12, 0.15, 0.19, 0.13],
-   caption='GPU 하나(GH200)에서 에너지와 힘을 한 번 계산하는 시간과 메모리(최종 OAM 모델, 7 Å). 초격자를 0.02 Å 흔든 구조다. '
-           '메모리 값은 프로세스의 최대 사용량이다.', align_right_from=2, font=8.6)
-bl(['한 번에 계산할 수 있는 크기는 간선 수로 정해진다. float32는 간선 41만~56만 개, float64는 17만~26만 개 사이가 한계다.',
-    '7 Å에서 이웃이 평균 100개인 구조(MPtrj 평균)로 환산하면 GPU 하나에 float32 약 4,000~5,600 원자, float64 약 1,700~2,500 원자다.',
-    '속도는 간선 하나에 float32 약 2.0~2.3 마이크로초, float64 약 2.1~2.8 마이크로초다. 이웃 100개 기준으로 원자 하나에 0.2~0.3 밀리초다.',
-    '더 큰 계(MD)는 영역을 나누는 LAMMPS 연동이나 간선을 나눠 계산하는 방식이 필요하다.'])
+   caption='Time and memory for one evaluation of energy and forces on a single GPU (GH200) (final OAM model, 7 Å). The structures are '
+           'supercells with atoms displaced by 0.02 Å. '
+           'The memory value is the peak usage of the process.', align_right_from=2, font=8.6)
+bl(['The size that can be computed at once is set by the number of edges. The limit lies between 410,000~560,000 edges for float32 '
+    'and between 170,000~260,000 edges for float64.',
+    'Converted to a structure with 100 neighbours on average at 7 Å (the MPtrj average), a single GPU holds about 4,000~5,600 atoms '
+    'in float32 and about 1,700~2,500 atoms in float64.',
+    'The speed is about 2.0~2.3 microseconds per edge in float32 and about 2.1~2.8 microseconds in float64. With 100 neighbours this '
+    'is 0.2~0.3 milliseconds per atom.',
+    'Larger systems (MD) need a LAMMPS interface with domain decomposition or a scheme that splits the edges into parts for the '
+    'computation.'])
 
 # =====================================================================================================================
-h1('4. 한계와 다음 단계')
-h2('4.1 알려진 문제')
-tb([['문제', '영향', '고칠 방법'],
-    ['사전학습이 2 에폭으로 짧음', '상위 모델(4~6 에폭)보다 κ와 MAE가 나쁨', '저장한 체크포인트에서 4 에폭까지 이어서 학습'],
-    ['모델이 1,780만 파라미터', '데이터를 늘려도 용량에서 막힐 수 있음', '사전학습 양 실험 뒤 채널·층·랭크 확대 검토'],
-    ['원자당 GPU 메모리가 큼 (7 Å, 128채널)', 'float64에서 300~512 원자 초격자 여러 개를 한 번에 못 올림', '묶음을 간선 수 기준으로 나누기, 한계 측정'],
-    ['float32 추론으로 κ가 틀림', 'κ SRME 0.861 (float64는 0.220)', '포논·정밀 이완은 float64로 추론 (옵션 추가함)'],
-    ['x 게이트 파라미터가 SOAP으로 갱신됨', '데이터에 없는 원소의 값이 흔들릴 수 있음', '원소 축이 있는 표는 모두 Adam으로'],
-    ['응력 로스가 성분 합', '의도보다 6배 크게 들어감', '성분 평균으로 바꾸고 가중치 재조정'],
-    ['재시작 뒤 스텝이 35 % 느려지는 경우', '세 번 중 한 번 발생, 다시 시작하면 정상', '재시작 직후 2,000 스텝 속도 확인'],
-    ['3k 추적 표본이 낙관적', '전체보다 MAE 약 0.002 낮음', '최종 수치는 전체 WBM으로만 보고']],
-   widths=[0.30, 0.36, 0.34], caption='알려진 문제와 고칠 방법.', align_right_from=-1, font=8.2)
+K.need(380)
+h1('4. Limitations and next steps')
+h2('4.1 Known issues')
+tb([['Issue', 'Effect', 'Fix'],
+    ['Pretraining is short (2 epochs)', 'κ and MAE worse than the top models (4~6 epochs)',
+     'Continue training from the saved checkpoint up to 4 epochs'],
+    ['Model has 17.8 million parameters', 'Capacity may become the limit even with more data',
+     'Consider more channels, layers or rank after the pretraining-amount experiment'],
+    ['High GPU memory per atom (7 Å, 128 channels)', 'In float64, several 300~512-atom supercells cannot be loaded at once',
+     'Split batches by number of edges, measure the limit'],
+    ['float32 inference gives a wrong κ', 'κ SRME 0.861 (0.220 in float64)',
+     'Run phonons and tight relaxation in float64 (option added)'],
+    ['x gate parameters are updated by SOAP', 'Values of elements absent from the data may drift',
+     'Use Adam for all tables with an element axis'],
+    ['Stress loss is a sum over components', 'Enters 6 times larger than intended',
+     'Change to the component mean and retune the weight'],
+    ['Steps 35 % slower after some restarts', 'Happens one time in three; normal after restarting again',
+     'Check the speed for 2,000 steps right after a restart'],
+    ['3k tracking sample is optimistic', 'MAE about 0.002 lower than on the full set',
+     'Report final numbers on the full WBM set only']],
+   widths=[0.30, 0.36, 0.34], caption='Known issues and how to fix them.', align_right_from=-1, font=8.2)
 
-h2('4.2 다음 계산 창 계획')
-bl([B('사전학습 양의 효과 측정:') + ' OMat24 1 에폭 체크포인트와 2 에폭 체크포인트에서 같은 파인튜닝을 해서 비교한다. 이 결과로 '
-    '사전학습을 늘릴지 모델을 키울지 정한다.',
-    B('사전학습 연장:') + ' 효과가 보이면 4 에폭까지 잇는다. 6노드에서 1 에폭에 약 9시간이다.',
-    B('파인튜닝 단축:') + ' 데이터 3 에폭과 학습률 감소면 충분하다(6노드 약 7시간).',
-    B('배포 준비:') + ' 패키지 이름과 디렉토리 구조 정리(BAM_V2, race_v2), 메모리·속도 측정, PyTorch 변환 검증.'])
+h2('4.2 Plan for the next compute window')
+bl([B('Measure the effect of pretraining amount:') + ' Run the same fine-tuning from the 1-epoch and the 2-epoch OMat24 '
+    'checkpoints and compare. This decides whether to '
+    'extend pretraining or enlarge the model.',
+    B('Extend pretraining:') + ' If an effect shows, continue to 4 epochs. One epoch is about 9 hours on 6 nodes.',
+    B('Shorten fine-tuning:') + ' 3 data epochs plus learning-rate decay suffice (about 7 hours on 6 nodes).',
+    B('Prepare for release:') + ' Tidy up the package name and directory layout (BAM_V2, race_v2), measure memory and speed, '
+    'validate the PyTorch conversion.'])
 
 K.need(170)
-h2('4.3 계산 비용')
-tb([['학습', '자원', '시간', '비고'],
-    ['MPtrj-only (40 에폭)', 'GPU 16개 (4노드)', '약 23시간', '에폭당 약 35분, 전부 float64'],
-    ['OMat24 사전학습 (2 에폭)', 'GPU 20~24개', '약 19시간', '초당 약 3,300 구조 (6노드)'],
-    ['OAM 파인튜닝 (38 가상 에폭)', 'GPU 24개 (6노드)', f"약 {FINAL['hours']}시간", '재시작 5회 포함'],
-    ['WBM 전체 평가', 'GPU 8개 + 1노드', '약 50분', '이완 15~17분, 점수와 RMSD 33분'],
-    ['κ 103개 물질', 'GPU 4개', '약 23분', 'float64, 큰 초격자 3개는 따로 계산']],
-   widths=[0.30, 0.22, 0.16, 0.32], caption='계산 비용(KISTI HANGANG, GH200 노드당 GPU 4개).', align_right_from=-1)
+h2('4.3 Compute cost')
+tb([['Training', 'Resources', 'Time', 'Notes'],
+    ['MPtrj-only (40 epochs)', '16 GPUs (4 nodes)', 'about 23 hours', 'about 35 minutes per epoch, all float64'],
+    ['OMat24 pretraining (2 epochs)', '20~24 GPUs', 'about 19 hours', 'about 3,300 structures per second (6 nodes)'],
+    ['OAM fine-tuning (38 virtual epochs)', '24 GPUs (6 nodes)', f"about {FINAL['hours']} hours", 'including 5 restarts'],
+    ['Full WBM evaluation', '8 GPUs + 1 node', 'about 50 minutes', 'relaxation 15~17 minutes, scoring and RMSD 33 minutes'],
+    ['κ of 103 materials', '4 GPUs', 'about 23 minutes', 'float64, 3 large supercells computed separately']],
+   widths=[0.30, 0.22, 0.16, 0.32], caption='Compute cost (KISTI HANGANG, 4 GPUs per GH200 node).', align_right_from=-1)
 
 # =====================================================================================================================
-h1('부록. 파일 위치')
-tb([['내용', '위치'],
-    ['학습·평가 코드', '저장소 BAM_V2. 학습은 브랜치 racev2(패키지 bam_omat24)로 했고, 주 브랜치 main에서는 '
-     '패키지 이름이 race_v2다(옛 이름과 새 이름의 대응은 docs/LAYOUT.md)'],
-    ['평가·분석 스크립트', 'scripts/eval/mbd (WBM, κ, 순위), scripts/eval/uq (Laplace OOD), scripts/eval/bench (메모리·속도)'],
-    ['체크포인트 백업', '/appsdata/t510a13/race_v2_backup_2026-11-15/checkpoints (MPtrj-only 최종, 사전학습 1·2 에폭, 파인튜닝 평가 지점과 최종)'],
-    ['크기표, 설정, 보조 스크립트', '/appsdata/t510a13/race_v2_backup_2026-11-15/{oam_sizes, configs, helpers}'],
-    ['학습 로그와 평가 결과', '/scratch/t510a13/race_v2/work/runs (15일 뒤 삭제되므로 옮겨야 함)'],
-    ['수식 정리, 이 문서의 스크립트와 그림', 'docs/results/race_v2_oam_mbd/{report, figures}'],
-    ['추론 정밀도 안내', 'docs/inference_precision.md'],
-    ['다음 작업 목록', '/appsdata/t510a13/race_v2_backup_2026-11-15/NEXT_TASKS.md']],
+K.need(280)
+h1('Appendix. File locations')
+tb([['Content', 'Location'],
+    ['Training and evaluation code', 'Repository BAM_V2. Training was done with branch racev2 (package bam_omat24); on the main branch main '
+     'the package name is race_v2 (the mapping between old and new names is in docs/LAYOUT.md)'],
+    ['Evaluation and analysis scripts', 'scripts/eval/mbd (WBM, κ, ranking), scripts/eval/uq (Laplace OOD), scripts/eval/bench (memory and speed)'],
+    ['Checkpoint backup', '/appsdata/t510a13/race_v2_backup_2026-11-15/checkpoints (MPtrj-only final, pretraining epochs 1 and 2, fine-tuning evaluation points and final)'],
+    ['Size tables, configs, helper scripts', '/appsdata/t510a13/race_v2_backup_2026-11-15/{oam_sizes, configs, helpers}'],
+    ['Training logs and evaluation results', '/scratch/t510a13/race_v2/work/runs (deleted after 15 days, so they must be moved)'],
+    ['Equation notes, scripts and figures of this document', 'docs/results/race_v2_oam_mbd/{report, figures}'],
+    ['Inference precision guide', 'docs/inference_precision.md'],
+    ['List of next tasks', '/appsdata/t510a13/race_v2_backup_2026-11-15/NEXT_TASKS.md']],
    widths=[0.30, 0.70], caption=None, align_right_from=-1, font=8.2)
-note('수식은 학습에 쓴 코드에서 직접 옮겼고, 수식으로 계산한 파라미터 수가 로그의 17,757,551개와 일치한다. 라이브러리 내부의 '
-     '정규화 상수(텐서곱 경로 정규화, 구면 조화 함수 규약)는 따로 확인하지 않았다. 리더보드 값은 2026-11-15에 읽었다.')
+note('The equations were transcribed directly from the training code, and the parameter count computed from them '
+     'matches the 17,757,551 in the log. Normalisation constants inside the libraries '
+     '(tensor-product path normalisation, spherical-harmonics convention) were not checked separately. The leaderboard values were '
+     'read on 2026-11-15.')
 
-K.build(OUT, title='RACE v2: 방법론과 Matbench Discovery 결과', author='BAM / RACE v2',
-        footer='RACE v2 방법론과 Matbench Discovery 결과 · 2026-11-16')
+K.build(OUT, title='RACE v2: Methods and Matbench Discovery Results', author='BAM / RACE v2',
+        footer='RACE v2: Methods and Matbench Discovery Results · 2026-11-16')
 print(OUT)

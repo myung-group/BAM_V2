@@ -927,7 +927,7 @@ class RACEConvolution(nnx.Module):
         # residual: "none" (original) -> next-layer features are the gated output;
         # "identity" / "identity_cum" -> h_{t+1} = h_t + delta_t (pre-norm ResNet; the
         # residual stream is the cumulative cluster expansion).  Layer 0 has different
-        # research/input/output irreps and keeps the original behaviour.  The stratum readout
+        # input/output irreps and keeps the original behaviour.  The stratum readout
         # reads the increment delta_t ("identity") or the cumulative h_{t+1} ("identity_cum").
         stream_delta = delta if drop_scale is None else delta * drop_scale[:, None]
         if self.residual == "chebyshev":

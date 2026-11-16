@@ -1,5 +1,10 @@
 # RACE_LR: charge-dependent long-range extension of RACEv2 (design, 2026-11-06)
 
+> **Note (2026-11-16).** This document was written during development. Paths under `research/` and the documents
+> `docs/HANDOFF*.md` and `docs/local_test_report.md` it mentions were removed from `main`; they are on the `racev2`
+> branch (`research/diag` = `runs/diag`, `research/input` = `input/` there). `<DATA_ROOT>`, `<HOME>` and
+> `<scratchpad>` stand for directories of the machine the work was done on.
+
 User request (2026-11-06): extend the model to charge-dependent and long-range interactions **without changing the
 existing model**, so that it can be tried on other problems. RACE (`race_v2/models/race.py`) is unchanged; the
 extension is a subclass selected with `"model": "RACE_LR"`.

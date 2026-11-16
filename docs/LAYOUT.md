@@ -3,8 +3,8 @@
 Main branch: **`main`**.  On 2026-11-16 the branch `racev2-thole-merge` was merged into it; that branch holds the
 former lines `racev2` (Matbench Discovery work) and `thole-merge` (OMol25 / RACE v2 LR-POLAR) in this layout.  New
 work starts from `main`.  The older folders of `main` (`bam_3bpa`, `bam_torch`, `bam_torch_cue`, `dataset_3BPA`,
-`input`) are not in this layout: `dataset_3BPA` and `input` moved to `research/`, the other three were removed on
-`racev2` before this layout.
+`input`) are in the `deprecated` branch: of these, this layout keeps only `dataset_3BPA`; `input` (old configs) is on
+the `racev2` branch, and the other three were removed on `racev2` before this layout.
 
 Distribution name: **BAM_V2** (`pyproject.toml`).  Python package: **`race_v2`** (was `bam_omat24`).
 PyTorch inference port: **`race_v2_torch`** (was `racev2_torch`).
@@ -16,7 +16,7 @@ PyTorch inference port: **`race_v2_torch`** (was `racev2_torch`).
 | `bam_omat24/`, `racev2_torch/` | compatibility aliases for the old names (generated; see below) |
 | `scripts/train`, `scripts/eval`, `scripts/data` | launchers and helpers in use; `scripts/data/prep_results` holds E0 / meta / size-table summaries per dataset |
 | `configs/` | representative configs only (see `configs/README.md`) |
-| `research/` | diagnostics (`research/diag`, was `runs/diag`), old configs (`research/input`, was `input/`), `research/dataset_3BPA` |
+| `dataset_3BPA/` | the 3BPA example data (configs of `configs/base` and `configs/smoke`) |
 | `docs/` | documentation; results per model under `docs/results/` |
 | `tests/`, `lammps/` | unchanged |
 
@@ -113,9 +113,16 @@ Config JSON keys are unchanged.
 | `runs/diag/uq/{ood_laplace.py, ood_laplace.sh, plot_ood.py}` | `scripts/eval/uq/` |
 | `runs/diag/bench/{mem_bench.py, ref_rattled.py, bench.sh}` | `scripts/eval/bench/` |
 | `runs/torch_port/tools/compare_pred.py` | `race_v2_torch/tools/compare_pred.py` |
-| `runs/helpers/` one-off launchers of the OAM run (start, restart, backups) | `research/diag/oam_run_2026-11/` (record only) |
 | `docs/racev2_mbd/{report, figures}` | `docs/results/race_v2_oam_mbd/{report, figures}` |
 
 These scripts are run from a work folder that holds `race_v2 -> <repo>/race_v2` and `scripts -> <repo>/scripts`
-(the launchers `cd` to `/scratch/t510a13/race_v2/work`).  Check of the move:
-`research/diag/oam_run_2026-11/verify_port.sh`.
+(the launchers `cd` to `/scratch/t510a13/race_v2/work`).
+
+## Removed from `main` on 2026-11-16
+
+The folder `research/` (diagnostics `research/diag`, old configs `research/input`), the working notes under `docs/`
+(hand-off notes, audits, literature notes, plans, paper drafts) and `CLAUDE.md` were removed from `main`.  They are
+in the history of `main` (last commit with them: 5e88af6) and on the branch `racev2` under their old paths
+(`runs/diag`, `input/`, `docs/`).  Kept: the reports under `docs/results/`, `docs/RACEv2_methods_summary.pdf` with
+its sources, and the usage documents (this file, `inference_precision.md`, `DATASETS.md`, `RACE_LR_design.md`,
+`stream_loader_design.md`).  `research/dataset_3BPA` moved to `dataset_3BPA/`.

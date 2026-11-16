@@ -1,5 +1,5 @@
 {
- "label": "가상 에폭 38 (최종 모델)",
+ "label": "virtual epoch 38 (final model)",
  "interim": false,
  "epoch": 38,
  "f1": 0.893,

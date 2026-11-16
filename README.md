@@ -24,11 +24,24 @@ export code, and the results obtained with it.
 | `configs/` | representative configs, see [configs/README.md](configs/README.md) |
 | `docs/` | documentation; results per model under `docs/results/` |
 | `lammps/` | `pair_style race` |
-| `research/` | diagnostics, one-off launchers and old configs |
+| `dataset_3BPA/` | the 3BPA example data used by `configs/base` and `configs/smoke` |
 | `tests/` | unit tests |
-| `bam_omat24/`, `racev2_torch/` | generated aliases, so that the old package names and commands keep working |
+| `bam_omat24/`, `racev2_torch/` | aliases for the old package names (see below) |
 
-Old and new names, commands and the limits of the aliases: [docs/LAYOUT.md](docs/LAYOUT.md).
+### Why are `bam_omat24/` and `racev2_torch/` still here?
+
+Until 2026-11-16 the package was called `bam_omat24` and the PyTorch port `racev2_torch`. Both were renamed
+(`race_v2`, `race_v2_torch`), but existing work still uses the old names:
+- job scripts and notebooks that run `python -m bam_omat24.train_3bpa`, `import bam_omat24...` or
+  `import racev2_torch`;
+- checkpoints written before the rename, whose optimiser state is pickled under the module path
+  `bam_omat24.soap_grouped`.
+
+The two folders contain no code of their own. Every file in them is a generated alias of about 30 lines that
+forwards an old module name to the new module, so old commands, imports and checkpoints keep working. Do not edit
+them; new code should import `race_v2` and `race_v2_torch`. They can be deleted once nothing uses the old names
+(`race_v2.training.utils.load_checkpoint` reads old checkpoints without them). The table of old and new names, the
+commands and the limits of the aliases are in [docs/LAYOUT.md](docs/LAYOUT.md).
 
 ## Results
 
@@ -141,14 +154,14 @@ update is equal or better except for the 1200 K energy, so the linear update sho
 
 Default size: 5 layers, lmax 3, 128 channels. The cutoff is 5 Å for the small-data benchmarks and 7 Å for the
 Matbench Discovery models. Equations, tables and figures: [docs/RACEv2_methods_summary.pdf](docs/RACEv2_methods_summary.pdf)
-(small-data recipe, in Korean) and the report in [docs/results/race_v2_oam_mbd](docs/results/race_v2_oam_mbd/README.md)
-(Matbench Discovery models, in Korean).
+(small-data recipe) and the report in [docs/results/race_v2_oam_mbd](docs/results/race_v2_oam_mbd/README.md)
+(Matbench Discovery models).
 
 ## Other components
 
 - **Long-range models** (`"model": "RACE_LR"`, `"RACE_POLAR"`): charge equilibration with Gaussian-charge Coulomb
-  (direct sum or Ewald) on top of RACE v2. Design: [docs/RACE_LR_design.md](docs/RACE_LR_design.md). Tests:
-  [docs/RACE_LR_results_summary_ko_2026-11-11.pdf](docs/RACE_LR_results_summary_ko_2026-11-11.pdf) (in Korean).
+  (direct sum or Ewald) on top of RACE v2. Design: [docs/RACE_LR_design.md](docs/RACE_LR_design.md). Results of the
+  OMol25 model: [docs/results/race_v2_lr_polar_omol25_4m](docs/results/race_v2_lr_polar_omol25_4m/README.md).
 - **Streaming loader** (`"data_format": "stream"`): trains from ASE databases without graphs on disk, with size tables
   made in advance; several datasets can be mixed with repeats. Design: [docs/stream_loader_design.md](docs/stream_loader_design.md).
   Prepared size tables and reference energies: [scripts/data/prep_results](scripts/data/prep_results/README.md).
@@ -161,8 +174,9 @@ Matbench Discovery models. Equations, tables and figures: [docs/RACEv2_methods_s
   `bash lammps/build_lammps.sh <LAMMPS source> <build dir> [mpi|serial]`.
 - **PyTorch port** (`race_v2_torch`): converts a JAX checkpoint and runs inference in float64 without JAX.
 
-The earlier, longer README with every benchmark note, the OAM subset and model-size screening, the RACE_LR local tests
-and the LAMMPS validation tables is kept in [docs/README_full_2026-11-16.md](docs/README_full_2026-11-16.md).
+Working notes, diagnostics and the earlier, longer README (all benchmark notes, the OAM subset and model-size
+screening, the RACE_LR local tests, the LAMMPS validation tables) were removed from `main` on 2026-11-16. They are
+kept on the [`racev2`](https://github.com/myung-group/BAM_V2/tree/racev2) branch and in the history of `main`.
 
 ## Installation
 

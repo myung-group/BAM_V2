@@ -1,6 +1,6 @@
 """Streaming loader of the pickle-free pipeline, main-process side (docs/stream_loader_design.md section 4.6).
 Single host for now; multi-host stacking (make_array_from_process_local_data) and the training.train integration
-(data_format "stream") are the next steps (docs/HANDOFF.md).
+(data_format "stream") are the next steps (docs/HANDOFF.md on branch racev2).
 
     loader = StreamLoader(sources, table, buckets, atomic_numbers, atom_energies, cutoff, n_local=1, workers=8)
     for bucket, batches in loader.iter_epoch(data_epoch):      # batches: list of n_local padded jraph.GraphsTuple

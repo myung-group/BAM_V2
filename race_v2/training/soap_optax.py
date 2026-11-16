@@ -505,7 +505,7 @@ optimizer state, e.g. load only params / ema_params); per matrix the state holds
 ``m, v`` plus the ``m x m`` / ``n x n`` factors and bases (per species slice for
 species-indexed weights), i.e. 3x the Adam state for square 128x128 weights.
 Measured cost on the 3BPA v9a model (float64, one GH200, ``precondition_frequency=10``,
-optimizer update alone, ``research/diag/soap_fix/probe64.txt``): optax Adam 5.4 ms per
+optimizer update alone): optax Adam 5.4 ms per
 step; SOAP 31-41 ms per regular step, ~0.81 s / ~0.89 s per refresh step (every
 10th), 0.59 s / 0.80 s for the first (eigh) step, state 511 / 1040 MiB, for
 ``max_precond_dim`` 1024 / 10000.  The default therefore costs ~0.53 GB and

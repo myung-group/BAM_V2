@@ -11,7 +11,7 @@ parameters to float64 and feed float64 graphs. The parameters are the same numbe
 |---|---|
 | phonons, force constants, thermal conductivity (kappa SRME), any relaxation to fmax ~1e-4 eV/A | **float64 required** |
 | WBM-type relaxations (fmax 0.05 eV/A), energies, stability classification | float32 is enough; float64 is ~2 % better in MAE / RMSD |
-| training | float32 model + float64 SOAP state (`soap_state_dtype`), see `HANDOFF_soap_speed_2026-11-11.md` |
+| training | float32 model + float64 SOAP state (`soap_state_dtype`), see `docs/HANDOFF_soap_speed_2026-11-11.md` on branch racev2 |
 
 ## Measurements (2026-11-15/16, RACEv2 OAM fine-tuning checkpoint, virtual epoch 18, same parameters)
 

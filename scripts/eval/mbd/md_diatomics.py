@@ -112,10 +112,30 @@ def make_calculator(ckpt):
             self.ev = RB.RaceEvaluator(ckpt_path, max_graphs=2)
             self.prepare = self.ev.prepare_fn()
             self.n_calls = 0
+            # MD_TIGHT_PAD=1: pad to the size of the structure plus a margin instead of the evaluator's coarse
+            # ladder (up to 50 % empty edges); the padded edges are computed like real ones, so this is GPU time.
+            # The shape grows (one recompilation) only when a later frame does not fit.
+            self.tight = os.environ.get('MD_TIGHT_PAD', '0') == '1'
+            self.margin = float(os.environ.get('MD_PAD_MARGIN', '0.06'))
+            self.shape = None
+
+        def evaluate(self, payload):
+            if not self.tight:
+                return self.ev.evaluate([payload])[0]
+            from race_v2.data.loaders import fixed_collate_fn
+            from race_v2.data.stream_data import _cast, _to_graph
+            ev = self.ev
+            n, e = int(payload['n_node'][0]), int(payload['n_edge'][0])
+            if self.shape is None or n + 1 > self.shape[0] or e > self.shape[1]:
+                self.shape = (-(-(n + 1) // 16) * 16, max(512, -(-int(e * (1 + self.margin)) // 512) * 512))
+                ev.shapes.add(self.shape)
+            g = _to_graph(_cast({k: v for k, v in payload.items() if k != 'numbers'}, ev.dtype))
+            batch = fixed_collate_fn([g], ev.max_graphs, self.shape[0], self.shape[1])
+            return ev.collect((ev._step(batch), [payload['numbers']]))[0]
 
         def calculate(self, atoms=None, properties=('energy',), system_changes=all_changes):
             super().calculate(atoms, properties, system_changes)
-            e, f, s = self.ev.evaluate([self.prepare(self.atoms)])[0]
+            e, f, s = self.evaluate(self.prepare(self.atoms))
             self.n_calls += 1
             self.results = {'energy': e, 'free_energy': e, 'forces': f, 'stress': s}
 
@@ -125,7 +145,8 @@ def make_calculator(ckpt):
         raise SystemExit('the evaluator is not float64: set BAM_PREDICT_X64=1 (or ALLOW_FLOAT32=1 to go on)')
     from matbench_discovery.hpc import detect_runtime, package_versions
     runtime = {'cost_source': 'runner', **detect_runtime(calc, requested_device='cuda'),
-               'dtype': 'float64' if calc.ev.dtype == np.float64 else 'float32', 'acceleration': [],
+               'dtype': 'float64' if calc.ev.dtype == np.float64 else 'float32',
+               'acceleration': ['tight_padding'] if calc.tight else [],
                'load_time_sec': round(time.perf_counter() - t0, 2), 'n_processes': 1, 'hostname': socket.gethostname()}
     for k in ('SLURM_JOB_ID', 'SLURM_ARRAY_TASK_ID'):
         if os.getenv(k):
@@ -133,7 +154,8 @@ def make_calculator(ckpt):
     runtime['versions'] = package_versions(('ase', 'numpy', 'pymatgen', 'jax', 'scipy', 'flax', 'e3nn-jax',
                                             'cuequivariance-jax', 'cuequivariance-ops-jax-cu12', 'vesin'))
     print(f"calculator: {ckpt}  cutoff {calc.ev.cutoff}  dtype {runtime['dtype']}  {runtime['hardware']} "
-          f"({runtime['device']})  neighbours {os.environ.get('BAM_NEIGHBORS', 'ase')}  load {runtime['load_time_sec']} s",
+          f"({runtime['device']})  neighbours {os.environ.get('BAM_NEIGHBORS', 'ase')}  tight padding {calc.tight}  "
+          f"load {runtime['load_time_sec']} s",
           flush=True)
     return calc, runtime
 

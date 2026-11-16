@@ -131,9 +131,20 @@ def main():
               f"({100 * (shape[1] / e - 1):.0f} % edge padding)")
         print(f"  ms per call (median): neighbours {t_nl:.1f} | payload {t_prep - t_nl:.1f} | collate {t_col:.1f} | "
               f"call {t_call:.1f} | device {t_dev:.1f} | pos-only {t_pos:.1f} | total {t_tot:.1f}", flush=True)
-        # skin list against the exact list (same structure)
+        # tight padding (structure size + 6 %) against the ladder shape: time and results
         at = frames[0]
         e_ref, f_ref, s_ref = ev.evaluate([prep(at)])[0]
+        tshape = (-(-(n + 1) // 16) * 16, max(512, -(-int(e * 1.06) // 512) * 512))
+        g0 = _to_graph(_cast({k: v for k, v in pay[0].items() if k != 'numbers'}, ev.dtype))
+        bt = fixed_collate_fn([g0], ev.max_graphs, tshape[0], tshape[1])
+        e_t, f_t, s_t = ev.collect((ev._step(bt), [pay[0]['numbers']]))[0]
+        devt = jax.tree.map(jnp.asarray, bt)
+        t_tight = tm(lambda i: jax.block_until_ready(ev._step(devt)), a.repeats)
+        e_r, f_r, s_r = ev.collect((ev._step(b0), [pay[0]['numbers']]))[0]
+        print(f"  tight shape {tshape}: device {t_tight:.1f} ms against {t_dev:.1f} ms ({100 * (t_tight / t_dev - 1):+.0f} %), "
+              f"|dE| {abs(e_t - e_r):.3e} eV, max |dF| {np.abs(f_t - f_r).max():.3e} eV/A, "
+              f"max |dS| {np.abs(s_t - s_r).max():.3e} eV/A^3", flush=True)
+        # skin list against the exact list (same structure)
         ps = RB.race_payload(at, cutoff=ev.cutoff + a.skin, z_to_index=z2i)
         ps['cutoff'] = np.array([ev.cutoff], np.float64)
         e_s, f_s, s_s = ev.evaluate([ps])[0]

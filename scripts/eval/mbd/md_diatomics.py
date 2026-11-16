@@ -114,10 +114,11 @@ def make_calculator(ckpt):
             self.n_calls = 0
             # MD_TIGHT_PAD=1: pad to the size of the structure plus a margin instead of the evaluator's coarse
             # ladder (up to 50 % empty edges); the padded edges are computed like real ones, so this is GPU time.
-            # The shape grows (one recompilation) only when a later frame does not fit.
+            # One shape per atom count: it grows (one recompilation) only when a later frame of that size does not
+            # fit, and a small system that follows a large one in the same process does not inherit its padding.
             self.tight = os.environ.get('MD_TIGHT_PAD', '0') == '1'
             self.margin = float(os.environ.get('MD_PAD_MARGIN', '0.06'))
-            self.shape = None
+            self.shape_of = {}
 
         def evaluate(self, payload):
             if not self.tight:
@@ -126,11 +127,13 @@ def make_calculator(ckpt):
             from race_v2.data.stream_data import _cast, _to_graph
             ev = self.ev
             n, e = int(payload['n_node'][0]), int(payload['n_edge'][0])
-            if self.shape is None or n + 1 > self.shape[0] or e > self.shape[1]:
-                self.shape = (-(-(n + 1) // 16) * 16, max(512, -(-int(e * (1 + self.margin)) // 512) * 512))
-                ev.shapes.add(self.shape)
+            shape = self.shape_of.get(n)
+            if shape is None or e > shape[1]:
+                shape = (-(-(n + 1) // 16) * 16, max(512, -(-int(e * (1 + self.margin)) // 512) * 512))
+                self.shape_of[n] = shape
+                ev.shapes.add(shape)
             g = _to_graph(_cast({k: v for k, v in payload.items() if k != 'numbers'}, ev.dtype))
-            batch = fixed_collate_fn([g], ev.max_graphs, self.shape[0], self.shape[1])
+            batch = fixed_collate_fn([g], ev.max_graphs, shape[0], shape[1])
             return ev.collect((ev._step(batch), [payload['numbers']]))[0]
 
         def calculate(self, atoms=None, properties=('energy',), system_changes=all_changes):

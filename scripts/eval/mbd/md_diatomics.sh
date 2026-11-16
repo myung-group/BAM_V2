@@ -4,7 +4,8 @@
 # (scripts/eval/mbd/md_diatomics.py; float64 inference).  Rerun-safe: finished rollouts are reused.
 # usage (from the work folder, default /scratch/t589a02/BAM_V2_more/work):
 #   $ sbatch -J mdbench -p normal --comment="field=sciai;appl=jax" --nodes=1 --ntasks-per-node=1 --exclusive --gres=gpu:4 -t 12:00:00 --export=ALL,CKPT=<ckpt.pkl>,TAG=<name> scripts/eval/mbd/md_diatomics.sh
-#   TEST=1: MD dry run, two 2,000-step rollouts (largest system with vesin, a 108-atom one with the ASE neighbour list)
+#   TEST=1: MD dry run, 2,000-step rollouts (largest system followed by a small one in one process with vesin, a
+#           108-atom one with the ASE neighbour list)
 #   and the diatomics dry run: checks the pipeline and gives the time per MD step
 #   PROFILE=1: scripts/eval/mbd/md_profile.py only (time per stage of a force call, skin-list check)
 #   MBD_ENV: Python >= 3.14 environment; MBD_REPO: clone of janosh/matbench-discovery; MBD_CACHE_DIR: reference files
@@ -33,7 +34,7 @@ if [ "${PROFILE:-0}" = 1 ]; then      # time per stage of one force call and the
   grep -a -v -E '^\s*$|WARNING|cuda_timer|Nsight' $OUT/profile.log | tail -n 40 | cut -c1-300
 elif [ "${TEST:-0}" = 1 ]; then
   on 0 $PY md --ckpt $CKPT --out-dir $OUT/md --dry-run > $OUT/md_dry.log 2>&1 &
-  on 1 $PY md --ckpt $CKPT --out-dir $OUT/md --systems bulkLiMgAlZnSn_600K_J_Schmidt_VASP --n-steps 2000 > $OUT/md_g1.log 2>&1 &
+  on 1 $PY md --ckpt $CKPT --out-dir $OUT/md --systems bulkLiMgAlZnSn_600K_J_Schmidt_VASP bulkMoS2_300K_NO-VdW_J.Kioseoglou_VASP --n-steps 2000 > $OUT/md_g1.log 2>&1 &
   on 2 env BAM_NEIGHBORS=ase $PY md --ckpt $CKPT --out-dir $OUT/md --systems bulkAg_600K_Kapil --n-steps 2000 > $OUT/md_g2.log 2>&1 &
   on 3 $PY diatomics --ckpt $CKPT --out-dir $OUT/diatomics --dry-run > $OUT/diatomics.log 2>&1 &
   for j in $(jobs -p); do wait $j || rc=1; done

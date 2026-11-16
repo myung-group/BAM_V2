@@ -18,7 +18,8 @@ export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONUNBUFFERED=1
 REPO=$(dirname $(readlink -f race_v2))
 SRC=${SIZES_SRC:-/scratch/t589a02/BAM_V2_more/prep_data/oam/oam_sizes}; OUT=${SIZES_OUT:-/scratch/t589a02/BAM_V2_more/oam_sizes}
 echo "node $(hostname)  cpus $(nproc)  code $(git -C $REPO rev-parse --short HEAD)  $(date '+%F %T')"
-python -c "import jax, flax, e3nn_jax, cuequivariance_jax, lmdb, ase; print('jax', jax.__version__, 'devices', jax.devices())"
+# jax.devices() first: the JAX CUDA plugin loads libnvrtc, which libcue_ops needs
+python -c "import jax; d = jax.devices(); import flax, e3nn_jax, cuequivariance_jax, lmdb, ase; print('jax', jax.__version__, 'devices', d)"
 echo "== A. raw files against the size tables  $(date +%T)"
 M=""; for m in ${MAPS:?OLD=NEW path maps}; do M="$M --map $m"; done
 python -I scripts/data/remap_size_tables.py --src $SRC --out $OUT $M ${TABLES:+--tables ${TABLES// /,}} --check --count --workers $(( $(nproc) > 64 ? 64 : $(nproc) )); RA=$?

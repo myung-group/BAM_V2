@@ -58,17 +58,17 @@ From the work folder (the one with the links `race_v2` and `scripts`):
 ```bash
 # short check first: 2,000-step rollouts and the diatomics dry run (about 6 minutes)
 sbatch -J mdtest -p normal --comment="field=sciai;appl=jax" --nodes=1 --ntasks-per-node=1 --exclusive --gres=gpu:4 \
-    -t 00:30:00 --export=ALL,TEST=1,MD_TIGHT_PAD=1,CKPT=<ckpt.pkl>,TAG=<test name> scripts/eval/mbd/md_diatomics.sh
+    -t 00:30:00 --export=ALL,TEST=1,CKPT=<ckpt.pkl>,TAG=<test name> scripts/eval/mbd/md_diatomics.sh
 
 # full run: 17 rollouts, diatomics, summaries (about 2.5 hours on 4 GH200 GPUs)
 sbatch -J mdbench -p normal --comment="field=sciai;appl=jax" --nodes=1 --ntasks-per-node=1 --exclusive --gres=gpu:4 \
-    -t 08:00:00 --export=ALL,MD_TIGHT_PAD=1,CKPT=<ckpt.pkl>,TAG=<name> scripts/eval/mbd/md_diatomics.sh
+    -t 08:00:00 --export=ALL,CKPT=<ckpt.pkl>,TAG=<name> scripts/eval/mbd/md_diatomics.sh
 ```
 
 | Variable | Meaning |
 |---|---|
 | `CKPT`, `TAG` | checkpoint and the name of the output folder `runs/mbd/<TAG>` |
-| `MD_TIGHT_PAD=1` | pad each force call to the structure size + 6 % instead of the evaluator's padding ladder (Section 5). Off by default |
+| `MD_TIGHT_PAD` | `1` (default): pad each force call to the structure size + 6 %; `0`: the evaluator's padding ladder (Section 5) |
 | `MD_PAD_MARGIN` | margin of the tight padding on the number of edges (default 0.06) |
 | `TEST=1` | short check; prints the padded shapes and the time per call |
 | `PROFILE=1` | `md_profile.py` only: time per stage of one force call |
@@ -96,7 +96,7 @@ cd docs/results/race_v2_oam_mbd && python -I report/table_sota_all.py figures/so
 ## 4. Results of the final RACE v2 OAM model
 
 Checkpoint `oamft_final.pkl` (OMat24 2 epochs, then MPtrj ×8 + sAlex ×1 for 6.2 epochs), float64, NVIDIA GH200,
-job 1290168 with `MD_TIGHT_PAD=1`. Ranks are among the 49 models shown on the leaderboard page (read on 2026-11-12)
+job 1290168 with tight padding. Ranks are among the 49 models shown on the leaderboard page (read on 2026-11-12)
 that report the value, plus RACE v2.
 
 | | Value | Rank |
@@ -153,7 +153,7 @@ Profile of one rollout step, 500 atoms, float64, one GH200 (`PROFILE=1`, jobs 12
 | integrator and frame output | below 2 ms |
 
 - Writing the frames to Lustre or to `/dev/shm` makes no difference.
-- **Tight padding** (`MD_TIGHT_PAD=1`). The evaluator pads every batch to a coarse ladder of sizes made for
+- **Tight padding** (`MD_TIGHT_PAD=1`, the default). The evaluator pads every batch to a coarse ladder of sizes made for
   relaxations of many structures (for the 500-atom system 49,152 edges for 33,704 real ones). In MD the size hardly
   changes, so the calculator pads to the structure size + 6 % (nodes rounded to 16, edges to 512) and keeps one shape
   per atom count; a shape grows, with one recompilation, only when a later frame does not fit. The device call

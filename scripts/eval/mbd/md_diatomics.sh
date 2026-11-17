@@ -7,6 +7,7 @@
 #   TEST=1: MD dry run, 2,000-step rollouts (largest system followed by a small one in one process with vesin, a
 #           108-atom one with the ASE neighbour list)
 #   and the diatomics dry run: checks the pipeline and gives the time per MD step
+#   MD_TIGHT_PAD=0: pad the force calls to the evaluator's coarse ladder instead of the structure size + 6 % (default 1)
 #   PROFILE=1: scripts/eval/mbd/md_profile.py only (time per stage of a force call, skin-list check)
 #   MBD_ENV: Python >= 3.14 environment; MBD_REPO: clone of janosh/matbench-discovery; MBD_CACHE_DIR: reference files
 #SBATCH -o runs/slurm/%x_%j.out

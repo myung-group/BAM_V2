@@ -112,11 +112,11 @@ def make_calculator(ckpt):
             self.ev = RB.RaceEvaluator(ckpt_path, max_graphs=2)
             self.prepare = self.ev.prepare_fn()
             self.n_calls = 0
-            # MD_TIGHT_PAD=1: pad to the size of the structure plus a margin instead of the evaluator's coarse
-            # ladder (up to 50 % empty edges); the padded edges are computed like real ones, so this is GPU time.
+            # MD_TIGHT_PAD=1 (default): pad to the size of the structure plus a margin; 0: the evaluator's coarse
+            # ladder (up to 50 % empty edges). The padded edges are computed like real ones, so this is GPU time.
             # One shape per atom count: it grows (one recompilation) only when a later frame of that size does not
             # fit, and a small system that follows a large one in the same process does not inherit its padding.
-            self.tight = os.environ.get('MD_TIGHT_PAD', '0') == '1'
+            self.tight = os.environ.get('MD_TIGHT_PAD', '1') == '1'
             self.margin = float(os.environ.get('MD_PAD_MARGIN', '0.06'))
             self.shape_of = {}
 

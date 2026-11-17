@@ -20,6 +20,18 @@ Full WBM (215,488 unique prototypes), no correction, float64 inference. The fina
 
 - The leaderboard values were read on 2026-11-15 (`scripts/eval/mbd/mbd_leaderboard_2026-11-12.tsv`). The comparison table with other models is
   `figures/sota_table_racev2_oam.png`.
+- All leaderboard columns of the OAM model, with the rank among the 49 models shown on the leaderboard page that report
+  the value, plus RACE v2 (`figures/sota_table_racev2_oam_all_metrics.png`, components of the last two in
+  `figures/sota_table_racev2_oam_all_metrics_md_diatomics.png`, both in `figures/sota_table_racev2_oam_all_metrics.pdf`):
+
+  | | F1 | DAF | Prec | Acc | MAE | R2 | RMSD | κ SRME | CPS | CMDS | CDS |
+  |---|---|---|---|---|---|---|---|---|---|---|---|
+  | RACE v2 OAM | 0.893 | 5.947 | 0.909 | 0.968 | 0.0214 | 0.872 | 0.0643 | 0.229 | 0.858 | 0.721 | 0.376 |
+  | Rank | 21 / 50 | 16 / 50 | 16 / 50 | 20 / 50 | 18 / 50 | 3 / 50 | 18 / 49 | 21 / 49 | 20 / 49 | 13 / 47 | 36 / 48 |
+
+  CMDS (molecular dynamics, 17 DynaMat systems) and CDS (diatomic curves) are not part of CPS. They were measured on
+  2026-11-17 on NVIDIA GH200 in float64 and scored with the formulas of the benchmark site (matbench-discovery commit
+  6d587c1). Method, run commands and the analysis of the low CDS: [docs/mbd_md_diatomics.md](../../mbd_md_diatomics.md).
 - Uncertainty (SOAP-eigenbasis Laplace): the maximum of the force σ separates OMol25, OPoly26 and OC25 from the MPtrj and sAlex validation sets
   with an AUROC of 0.96. The AUROC for picking out structures with a large error in WBM is weak, 0.56~0.59. The absolute size of σ is smaller than the error (about 16 times for energy).
 - Size that can be computed at once on a single GPU (GH200): 410,000~560,000 edges in float32, 170,000~260,000 in float64.
@@ -42,6 +54,7 @@ Full WBM (215,488 unique prototypes), no correction, float64 inference. The fina
 | `report/methods_formulas.md` | Equations transcribed from the code (file names and line numbers refer to branch `racev2`, commit 3545c1d) |
 | `report/final_results.json`, `wbm_points.json` | Final numbers that go into the PDF, and the 3k sample tracking values |
 | `report/plot_*.py`, `table_sota.py` | Scripts that make the figures and the comparison table |
+| `report/table_sota_all.py`, `final_results_all.json`, `leaderboard_6d587c1.json` | Tables with every leaderboard column (DAF, Prec, Acc, CMDS, CDS) and their inputs: our numbers, and the values of the other models from the YAML files of the benchmark |
 | `figures/` | Figures of the document: training curves, pretraining, fine-tuning, y=x scatter plot, OOD, comparison table |
 
 Rebuilding the PDF (login node, uses only reportlab and matplotlib):
@@ -62,6 +75,8 @@ Run from a working folder (on HANGANG, `/scratch/t510a13/race_v2/work`) that hol
 | 3k sample evaluation at every epoch during training | `scripts/eval/mbd/eval_loop.sh` |
 | Validation error table | `python -I scripts/eval/mbd/val_table.py <run name>` |
 | Leaderboard rank | `python -I scripts/eval/mbd/rank_mbd.py F1=.. MAE=.. R2=.. RMSD=.. kSRME=..` |
+| Molecular dynamics (CMDS) and diatomics (CDS) | `scripts/eval/mbd/md_diatomics.sh` (one job, one node; `docs/mbd_md_diatomics.md`) |
+| Values of the other models, tables with every column | `scripts/eval/mbd/leaderboard_from_yaml.py`, `report/table_sota_all.py` |
 | Laplace uncertainty and OOD | `scripts/eval/uq/ood_laplace.sh`, figures with `scripts/eval/uq/plot_ood.py` |
 | Memory and speed measurement, reference values for the PyTorch comparison | `scripts/eval/bench/bench.sh` |
 | Comparison of the PyTorch conversion with JAX | `race_v2_torch/tools/compare_pred.py` |
@@ -83,6 +98,10 @@ Run from a working folder (on HANGANG, `/scratch/t510a13/race_v2/work`) that hol
 ## 6. Known limitations
 
 - The pretraining is short at 2 epochs. The top models have 4~6 epochs or more and 30 million parameters or more.
+- Diatomic curves: the energies of Ne, Ar and Kr diverge below about 1 Å, which sets the accuracy pillar of CDS to 0 (CDS 0.376;
+  0.768 with the same formula without these three elements). The UFF pair repulsion of the model is switched off below about 1.25 times
+  the sum of the covalent radii, so it does not act at collision distances, and it cannot be repaired at inference
+  (`docs/mbd_md_diatomics.md`, Section 4).
 - The stress loss is a sum over the 6 Voigt components, so it enters 6 times larger than intended.
 - The difference between the PyTorch conversion and JAX float64 is 4e-7 eV in energy and 2e-6 eV/Å in forces (1e-14 for the 5 Å model). The cause has not been checked.
 - The Laplace σ cannot be used as an error bar because the prior precision was not tuned. The energy σ per atom depends on the structure size, so

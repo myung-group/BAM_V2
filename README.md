@@ -59,7 +59,7 @@ commands and the limits of the aliases are in [docs/LAYOUT.md](docs/LAYOUT.md).
 
 | Model | Benchmark | Result | Details |
 |---|---|---|---|
-| **RACE v2 OAM** (17.8M parameters; OMat24 2 epochs, then MPtrj ×8 + sAlex ×1) | Matbench Discovery, full WBM, unique prototypes | F1 0.893, MAE 0.0214 eV/atom, R² 0.872, RMSD 0.0643 Å, κ SRME 0.229, CPS 0.858 (about rank 20 of 49 on the leaderboard read on 2026-11-15) | [docs/results/race_v2_oam_mbd](docs/results/race_v2_oam_mbd/README.md) |
+| **RACE v2 OAM** (17.8M parameters; OMat24 2 epochs, then MPtrj ×8 + sAlex ×1) | Matbench Discovery, full WBM, unique prototypes | F1 0.893, MAE 0.0214 eV/atom, R² 0.872, RMSD 0.0643 Å, κ SRME 0.229, CPS 0.858 (about rank 20 of 49 on the leaderboard read on 2026-11-15); DAF 5.947, precision 0.909, accuracy 0.968; outside CPS: molecular dynamics CMDS 0.721, diatomic curves CDS 0.376 | [docs/results/race_v2_oam_mbd](docs/results/race_v2_oam_mbd/README.md), [docs/mbd_md_diatomics.md](docs/mbd_md_diatomics.md) |
 | **RACE v2 MPtrj-only** (17.8M) | same | F1 0.777, MAE 0.040, R² 0.800, RMSD 0.0785, κ SRME 0.375, CPS 0.761 (about rank 6 of the 19 MPtrj-only models) | same folder |
 | **RACE v2 LR-POLAR** (OMol25 4M) | OMol25 validation sets | see the folder | [docs/results/race_v2_lr_polar_omol25_4m](docs/results/race_v2_lr_polar_omol25_4m/README.md) |
 

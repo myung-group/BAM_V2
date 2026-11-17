@@ -27,7 +27,12 @@ stage() {   # <config>: train to the last epoch of the config; 0 when the log ha
     bash scripts/train/omat_stream/pretrain.sh $CFG
     LE=$(grep -a -E '^[0-9]+/[0-9]+/[0-9]+ ' $LOG 2>/dev/null | tail -n 1 | awk '{print $3}')
     [ "$LE" = "$NE" ] && return 0
-    echo "stage $CFG stopped at epoch ${LE:-none} of $NE (attempt $TRY of 2)  $(date '+%F %T')"; sleep 60
+    echo "stage $CFG stopped at epoch ${LE:-none} of $NE (attempt $TRY of 2)  $(date '+%F %T')"
+    [ $TRY = 2 ] && break
+    # the next step starts only after the steps of this job are gone and a pause: a step launched while a stopped
+    # one was still being cleaned up failed on 5 of 12 nodes with "Error configuring interconnect" (job 1288438)
+    for W in $(seq 1 30); do squeue -h -s -j $SLURM_JOB_ID -o %i | grep -q -E '\.[0-9]+$' || break; sleep 60; done
+    echo "steps gone after $((W * 60)) s at most, pause ${RELAUNCH_PAUSE:-180} s  $(date '+%F %T')"; sleep ${RELAUNCH_PAUSE:-180}
   done
   return 1
 }

@@ -69,7 +69,34 @@ class StreamLoader:
         self.workers = workers
 
     def close(self):
-        self.pool.shutdown(cancel_futures=True)
+        if getattr(self, '_stuck', False):       # a worker that never answered would make the shutdown wait for ever
+            for proc in list(getattr(self.pool, '_processes', {}).values()):
+                proc.kill()
+            self.pool.shutdown(wait=False, cancel_futures=True)
+        else:
+            self.pool.shutdown(cancel_futures=True)
+
+    def _block_result(self, task, fut):
+        """Graphs of one worker task.  A worker that has not answered after BAM_LOADER_TIMEOUT seconds (default 300;
+        0 waits for ever) gets its task submitted again, to another worker, at most BAM_LOADER_RETRIES times
+        (default 3); after that the run stops with an error.  Without the limit a read that never returns (a stall
+        of the shared file system) stops this process without a message, and in a lock-step multi-node run every
+        other process waits for it (job 1288438: 12 nodes idle for 1.6 h).  _worker_block has no random state, so
+        the second answer is the same data."""
+        timeout = float(os.environ.get('BAM_LOADER_TIMEOUT', '300')) or None
+        retries = int(os.environ.get('BAM_LOADER_RETRIES', '3'))
+        for attempt in range(retries + 1):
+            try:
+                return fut.result(timeout=timeout)[1]
+            except cf.TimeoutError:
+                what = f"block {task[0]} (file {task[1]}, {len(task[2])} structures) on {os.uname().nodename}"
+                if attempt == retries:
+                    raise RuntimeError(f"stream loader: {what} not returned after {retries + 1} waits of "
+                                       f"{timeout:.0f} s") from None
+                print(f"stream loader: {what} not returned after {timeout:.0f} s, submitted again "
+                      f"({attempt + 1} of {retries})", flush=True)
+                self._stuck = True
+                fut = self.pool.submit(_worker_block, task)
 
     def plan(self, data_epoch, host=0, n_hosts=1, counts_allgather=None):
         return P.plan_data_epoch(self.table, self.buckets, data_epoch, host, n_hosts, self.n_local, seed=self.seed,
@@ -99,11 +126,11 @@ class StreamLoader:
         while nxt < len(tasks) or inflight:
             while nxt < len(tasks) and len(inflight) < 2 * self.workers:
                 rows = tasks[nxt]
-                inflight.append((rows, self.pool.submit(
-                    _worker_block, (nxt, int(t['file'][rows[0]]), t['key'][rows]))))
+                task = (nxt, int(t['file'][rows[0]]), t['key'][rows])
+                inflight.append((rows, task, self.pool.submit(_worker_block, task)))
                 nxt += 1
-            rows, fut = inflight.popleft()
-            _, gs = fut.result()
+            rows, task, fut = inflight.popleft()
+            gs = self._block_result(task, fut)
             for r, g in zip(rows, gs):
                 if int(g['n_edge'][0]) != int(t['n_edges'][r]):
                     raise RuntimeError(f"row {r}: {int(g['n_edge'][0])} edges, size table says {int(t['n_edges'][r])}"

@@ -35,7 +35,25 @@ if [ "${SLURM_NNODES:-1}" -gt 1 ] || [ $TPN -gt 1 ]; then
       [ $(( $(date +%s) - T0 )) -gt $START_LIMIT ] && break
       sleep 30
     done
-    if [ $STARTED = 1 ] || ! kill -0 $SPID 2>/dev/null; then wait $SPID; RC=$?; break; fi
+    if [ $STARTED = 1 ]; then
+      # stall watch: the run prints a progress line every BAM_PROGRESS_STEPS steps; when the job output has not
+      # changed for STALL_LIMIT seconds the run hangs (job 1288438: one process waited for ever, 12 nodes idle
+      # for 1.6 h), so the step is stopped and this script ends with exit status 75.  STALL_TEST=<seconds>: stop
+      # the step that long after its first training step, once per job (test of this path).
+      STALL_LIMIT=${STALL_LIMIT:-1500}; MARK=runs/slurm/.stall_test_${SLURM_JOB_ID}; T1=$(date +%s)
+      while kill -0 $SPID 2>/dev/null; do
+        sleep 30
+        AGE=$(( $(date +%s) - $(stat -c %Y $OUT) ))
+        if [ -n "$STALL_TEST" ] && [ ! -e $MARK ] && [ $(( $(date +%s) - T1 )) -gt $STALL_TEST ]; then touch $MARK; AGE=$((STALL_LIMIT + 1)); fi
+        if [ $AGE -gt $STALL_LIMIT ]; then
+          echo "no output for $AGE s (limit $STALL_LIMIT s): the run hangs, stopping its step  $(date '+%F %T')"
+          STEP=$(squeue -h -s -j $SLURM_JOB_ID -o %i | grep -E '\.[0-9]+$' | sort -t. -k2 -n | tail -n 1)
+          scancel ${STEP:-${SLURM_JOB_ID}.0}; wait $SPID; RC=75; break 2
+        fi
+      done
+      wait $SPID; RC=$?; break
+    fi
+    if ! kill -0 $SPID 2>/dev/null; then wait $SPID; RC=$?; break; fi
     echo "attempt $TRY of $TRIES: no training step after $START_LIMIT s, stopping this step  $(date '+%F %T')"
     scancel ${SLURM_JOB_ID}.$((TRY - 1)); wait $SPID; RC=$?; sleep 30
   done

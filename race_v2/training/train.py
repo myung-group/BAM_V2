@@ -14,10 +14,13 @@ Config keys (in addition to the model hyper-parameters, see README):
                        "basis": x_i = Linear_t(A_i), A_i = layer-0 atomic basis, channelwise m (x) x per layer (review §11 C)
     update           : "gate" (default) | "linear"  (ungated body-ordered features, needs readout_mode "gated"; review §11 A)
                        | "bilinear" (linear update + channelwise bilinear term of the two channel halves, gain init 0.1)
+                       | "bigate" / "bigate:<C>" (linear update + EquFlashV2 bilinear gate, C channels per operand, default 64)
     tp_channels      : null (default) | C_b: channel bottleneck, h_j contracted to C_b channels per irrep before the
                        edge tensor product of every layer (linear_2 expands back); stream.train.parts[i] may carry
                        "max_structures": N and "subset_seed": s for a fixed seeded subset of that part
     linear_rank      : null (default) | r: channel-mixing linears of every layer (linear_1/_m/_2) as rank-r products U V
+    sobolev_decay    : null (default) | {"base": b, "s": s}: decoupled decay b (n/N)^(2s) of radial-MLP first-layer row n
+    envelope_q       : null (default, C2 polynomial envelope) | q: edge envelopes (1 - (r/r_c)^p)^q, C^(q-1) at r_c
     short_repulsion  : null (default) | {"c": 1.0, "p": 6}: fixed ZBL stratum inside c (R_i + R_j) covalent radii,
                        polynomial cutoff of order p; trained with the model (short-range prior for diatomics / MD)
     message_norm     : "layer" (default, layer norm + 1/sqrt(avg_n_neighbors)) | "avg" (no norm, 1/avg_n_neighbors; §11 B)
@@ -748,6 +751,48 @@ def wsd_schedule(warmup_steps: int, decay_start: int, total_steps: int, min_scal
         boundaries=[warmup_steps, decay_start])
 
 
+
+def _sobolev_decay(cfg, params, fout):
+    """sobolev_decay {"base": b, "s": s} (2026-11-20): decoupled weight decay (after the SOAP normalisation, before the
+    learning rate, like AdamW) of the first radial-MLP layer of every layer, row n (radial basis function n = 1..N,
+    Bessel frequency n pi / r_c) decayed by b (n / N)^(2 s): a Sobolev-type smoothness prior in r (cf. the regularity
+    priors of linear ACE, Darby/Ortner et al. 2026).  Returns [] when the key is absent."""
+    sob = _get(cfg, 'sobolev_decay', None)
+    if not sob:
+        return []
+    base, sp = float(sob.get('base', 1e-3)), float(sob.get('s', 2.0))
+    n_rad = int(_get(cfg, 'radial_basis_size', 8))
+
+    def keys(path):
+        return [str(getattr(k, 'key', getattr(k, 'idx', getattr(k, 'name', k)))) for k in path]
+
+    def coef(path, x):
+        k = keys(path)
+        hit = ('radial_mlp' in k and k[k.index('radial_mlp') + 1:k.index('radial_mlp') + 4] == ['layers', '0', 'weights']
+               and getattr(x, 'ndim', 0) == 2 and x.shape[0] >= n_rad)
+        if not hit:
+            return None
+        w = np.zeros((x.shape[0], 1), np.float32)                 # extra (non-Bessel) radial channels: not decayed
+        w[:n_rad, 0] = base * (np.arange(1, n_rad + 1) / n_rad) ** (2.0 * sp)
+        return jnp.asarray(w)
+
+    flat, _ = jax.tree_util.tree_flatten_with_path(params)
+    coefs = [coef(path, x) for path, x in flat]                 # per leaf, in flatten order; None = no decay
+    n_hit = sum(c is not None for c in coefs)
+    if n_hit == 0:
+        raise ValueError('sobolev_decay: no radial_mlp first-layer weights found')
+    print(f"Sobolev radial decay (decoupled): base={base} s={sp} on {n_hit} radial-MLP first layers "
+          f"(row n: base (n/{n_rad})^{2 * sp:g})", file=fout)
+
+    def update(updates, state, params=None):
+        u_l, tdef = jax.tree.flatten(updates)
+        p_l = jax.tree.leaves(params)
+        if len(u_l) != len(coefs) or len(p_l) != len(coefs):
+            raise ValueError(f'sobolev_decay: {len(u_l)} update / {len(p_l)} parameter leaves, {len(coefs)} expected')
+        out = [u if c is None else u + c.astype(u.dtype) * p for u, c, p in zip(u_l, coefs, p_l)]
+        return jax.tree.unflatten(tdef, out), state
+    return [optax.GradientTransformation(lambda p: optax.EmptyState(), update)]
+
 def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Dict, fout, n_devices: int = 1):
     seed = int(_get(cfg, 'seed', 42))
     model_rngs = nnx.Rngs(seed)
@@ -850,6 +895,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
                      tp_channels=_get(cfg, 'tp_channels', None),
                      short_repulsion=_get(cfg, 'short_repulsion', None),
                      linear_rank=_get(cfg, 'linear_rank', None),
+                     envelope_q=_get(cfg, 'envelope_q', None),
                      shell_sk_gate=bool(_get(cfg, 'shell_sk_gate', False)),
                      strata_resum=_get(cfg, 'strata_resum', None),
                      species_shell_radii=(element_shell_radii(cfg['atomic_numbers'])
@@ -946,10 +992,12 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
         else:
             raise ValueError(f"soap_impl must be 'reference' or 'grouped', got {soap_impl!r}")
         soap_tx = [soap_fn(**soap_kw)] + ([optax.add_decayed_weights(wd)] if wd > 0 else [])
+        if swd and _get(cfg, 'sobolev_decay', None):
+            raise ValueError('sobolev_decay is not implemented together with stratum_weight_decay')
         if swd:   # as adamw: SOAP -> wd -> (stratum-decay block below: decays + lr)
             chain.append(optax.chain(*soap_tx))
         else:
-            chain += soap_tx + [optax.scale_by_learning_rate(lr)]
+            chain += soap_tx + _sobolev_decay(cfg, params, fout) + [optax.scale_by_learning_rate(lr)]
         summ = soap_leaf_summary(params, max_precond_dim=soap_kw['max_precond_dim'])
         print(f"SOAP: {soap_kw} weight_decay={wd} stratum_weight_decay={swd} "
               f"preconditioned parameters {summ['counts']} "

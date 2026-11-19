@@ -58,6 +58,19 @@ def polynomial_cutoff(x: jax.Array, r_max: jax.Array, p: float) -> jax.Array:
     return out * jnp.where(x < 1.0, 1.0, 0.0)
 
 
+def cutoff_envelope(x: jax.Array, r_max: jax.Array, p: float, q: Optional[float] = None) -> jax.Array:
+    """Cutoff envelope of the edge terms.  q None: polynomial_cutoff (DimeNet form, value and first two derivatives
+    vanish at r_max: C2, its third derivative jumps there, -p(p+1)(p+2) / r_max^3).  q: (1 - (x / r_max)^p)^q, whose
+    first q - 1 derivatives vanish at r_max (C^(q-1); q = 5 is C4) and which is flat to order p at x = 0 (2026-11-20:
+    the third force constants of kappa need the energy C3 or smoother)."""
+    if q is None:
+        return polynomial_cutoff(x, r_max, p)
+    d = x / r_max
+    inside = d < 1.0
+    base = jnp.where(inside, 1.0 - jnp.power(jnp.where(inside, d, 0.0), p), 0.0)
+    return jnp.power(base, q) * jnp.where(inside, 1.0, 0.0)
+
+
 def separated_layer_norm(input: e3nn.IrrepsArray, eps: float = 1e-6) -> e3nn.IrrepsArray:
     """Apply separated layer normalization to IrrepsArray.
 
@@ -185,6 +198,7 @@ def compute_node_edge_features(
     radial_polynomial_p: float,
     lmax: int,
     periodic: bool,
+    envelope_q: Optional[float] = None,
 ) -> Tuple[e3nn.IrrepsArray, jax.Array, e3nn.IrrepsArray]:
     """Compute edge features: displacement, distance, radial basis, and spherical harmonics.
 
@@ -246,7 +260,7 @@ def compute_node_edge_features(
 
     radial_basis = (
         bessel_basis(r_norm, radial_basis_size, cutoff_per_edge)
-        * polynomial_cutoff(r_norm, cutoff_per_edge, radial_polynomial_p)[:, None]
+        * cutoff_envelope(r_norm, cutoff_per_edge, radial_polynomial_p, envelope_q)[:, None]
     )
 
     # Compute spherical harmonics of edge displacements

@@ -34,6 +34,7 @@ from race_v2.models.blocks import (
     energy_forces_stress,
     bessel_basis,
     polynomial_cutoff,
+    cutoff_envelope,
     node_graph_idx,
 )
 from race_v2.models.linear import Linear as e3nn_nnx_Linear
@@ -235,6 +236,52 @@ def _hill_normalize(x: e3nn.IrrepsArray, ab: jax.Array, species: jax.Array,
     ms = jnp.mean(arr * arr, axis=-1, keepdims=True) + eps
     g = 2.0 * jax.nn.sigmoid(ab[0][species][:, None] * 0.5 * jnp.log(ms) + ab[1][species][:, None])
     return e3nn.IrrepsArray(x.irreps, arr * jax.lax.rsqrt(ms) * g)
+
+
+def _bigate_paths(ls):
+    """CG paths (l1, l2, l3) of the EquFlashV2-style bilinear gate for natural-parity irreps of degrees ls:
+    l1 >= 1 (a), 0 <= l2 <= l1 (b, l2 = 0 is the constant slot: the classical gate), l3 in ls, l1 + l2 + l3 even."""
+    ls = sorted(set(int(l) for l in ls))
+    return [(l1, l2, l3) for l1 in ls if l1 >= 1 for l2 in [0] + [l for l in ls if 1 <= l <= l1]
+            for l3 in ls if abs(l1 - l2) <= l3 <= l1 + l2 and (l1 + l2 + l3) % 2 == 0]
+
+
+def _bigate(u: e3nn.IrrepsArray, ls, C: int, paths) -> e3nn.IrrepsArray:
+    """EquFlashV2 / SamsungDS GGNN BiLinearGate (2026-11-20 reimplementation from its description).
+    u: [P*C path gates | C scalars | 2C x l for every l >= 1 in ls] (0e, then natural parity).  Per channel c and path
+    p = (l1, l2 -> l3):  z_p = SiLU(g_p) * sqrt(2 l3 + 1) CG(a^(l1)_c, b~^(l2)_c)^(l3) / sqrt(#paths into l3), with
+    b~^(0) = 1, so (l, 0 -> l) is the classical gate SiLU(g) a^(l).  Output [SiLU(s) | z_p]: one block per l3
+    (channelwise, mul-major), to be mixed by a linear layer."""
+    P = len(paths)
+    x0 = u.filter(keep="0e").array
+    g = jax.nn.silu(x0[:, :P * C].reshape(x0.shape[0], P, C))
+    s = jax.nn.silu(x0[:, P * C:P * C + C])
+    ab = {}
+    for l in ls:
+        if l == 0:
+            continue
+        arr = u.filter(keep=[e3nn.Irrep(l, (-1) ** l)]).array.reshape(x0.shape[0], 2 * C, 2 * l + 1)
+        ab[l] = (arr[:, :C], arr[:, C:])
+    n_into = {l3: sum(1 for p in paths if p[2] == l3) for l3 in ls}
+    outs = {l3: [] for l3 in ls}
+    outs[0].append(s[:, :, None]) if 0 in outs else None
+    for k, (l1, l2, l3) in enumerate(paths):
+        a = ab[l1][0]
+        if l2 == 0:
+            z = a                                                     # CG(l, 0, l) = identity (component norm)
+            assert l3 == l1
+        else:
+            cg = jnp.asarray(e3nn.clebsch_gordan(l1, l2, l3), dtype=a.dtype) * math.sqrt(2 * l3 + 1)
+            z = jnp.einsum('nci,ncj,ijk->nck', a, ab[l2][1], cg)
+        outs[l3].append(g[:, k, :, None] * z / math.sqrt(n_into[l3]))
+    chunks, irreps = [], []
+    for l3 in sorted(outs):
+        if not outs[l3]:
+            continue
+        blk = jnp.concatenate(outs[l3], axis=1)                       # (n, M, 2 l3 + 1)
+        chunks.append(blk.reshape(blk.shape[0], -1))
+        irreps.append((blk.shape[1], (l3, (-1) ** l3)))
+    return e3nn.IrrepsArray(e3nn.Irreps(irreps), jnp.concatenate(chunks, axis=-1))
 
 
 def _spectral_normalize(lin, x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
@@ -552,8 +599,15 @@ class RACEConvolution(nnx.Module):
         # z + g * Linear( a (x) b ), with a and b the two channel halves of the RMS-normalised z and
         # (x) every CG path into output_irreps (an equivariant quadratic non-linearity of the
         # vector features, cf. the bilinear gate of EquFlashV2); g is a learnable gain, init 0.1.
-        if update not in ("gate", "linear", "bilinear"):
-            raise ValueError(f"update must be 'gate', 'linear' or 'bilinear', got {update!r}")
+        # update "bigate" / "bigate:<C>" (2026-11-20): the linear update z plus the EquFlashV2 bilinear gate on the
+        # RMS-normalised z, z + g * Linear_out(BiLinearGate(Linear_in(z_hat))) with C (default 64) channels per
+        # operand (see _bigate); g is a learnable gain, init 0.1.
+        self.bigate_channels = None
+        if isinstance(update, str) and update.startswith("bigate"):
+            self.bigate_channels = int(update.split(":", 1)[1]) if ":" in update else 64
+            update = "bigate"
+        if update not in ("gate", "linear", "bilinear", "bigate"):
+            raise ValueError(f"update must be 'gate', 'linear', 'bilinear' or 'bigate[:C]', got {update!r}")
         if update == "linear" and readout_mode != "gated":
             raise ValueError("update='linear' needs readout_mode='gated' (otherwise the stratum energy is linear in the features)")
         # message_norm "layer" (original: per-node separated layer norm of h_j before the message
@@ -662,7 +716,21 @@ class RACEConvolution(nnx.Module):
         )
         gated_output_irreps = (output_irreps + gate_irreps).regroup()
         # linear update: no gate scalars, the layer output is output_irreps itself
-        update_irreps = output_irreps if update in ("linear", "bilinear") else gated_output_irreps
+        update_irreps = output_irreps if update in ("linear", "bilinear", "bigate") else gated_output_irreps
+        if update == "bigate":
+            C = self.bigate_channels
+            if any(ir.p != (-1) ** ir.l for _, ir in output_irreps):
+                raise ValueError(f"update='bigate' needs natural-parity output irreps, got {output_irreps}")
+            self.bg_ls = sorted({ir.l for _, ir in output_irreps})
+            self.bg_paths = _bigate_paths(self.bg_ls)
+            bg_in = e3nn.Irreps([(len(self.bg_paths) * C + C, (0, 1))]
+                                + [(2 * C, (l, (-1) ** l)) for l in self.bg_ls if l > 0])
+            self.linear_bg_in = e3nn_nnx_Linear(irreps_in=output_irreps, irreps_out=bg_in, force_irreps_out=True,
+                                                rngs=rngs)
+            bg_out = _bigate(e3nn.IrrepsArray(bg_in, jnp.zeros((1, bg_in.dim))), self.bg_ls, C, self.bg_paths).irreps
+            self.linear_bg_out = e3nn_nnx_Linear(irreps_in=bg_out, irreps_out=output_irreps, force_irreps_out=True,
+                                                 rngs=rngs)
+            self.bg_gain = nnx.Param(jnp.full((1,), 0.1, dtype=jnp.float32))
         if update == "bilinear":
             muls = {mul for mul, _ in output_irreps}
             if len(muls) != 1 or next(iter(muls)) % 2:
@@ -959,6 +1027,12 @@ class RACEConvolution(nnx.Module):
             bl = _dense(self.linear_bl(q))
             assert bl.irreps == delta.irreps, (bl.irreps, delta.irreps)
             delta = e3nn.IrrepsArray(delta.irreps, delta.array + self.bl_gain[...].astype(delta.array.dtype) * bl.array)
+        elif self.update == "bigate":
+            u = _dense(self.linear_bg_in(_rms_normalize(delta)))
+            y = _bigate(u, self.bg_ls, self.bigate_channels, self.bg_paths)
+            bg = _dense(self.linear_bg_out(y))
+            assert bg.irreps == delta.irreps, (bg.irreps, delta.irreps)
+            delta = e3nn.IrrepsArray(delta.irreps, delta.array + self.bg_gain[...].astype(delta.array.dtype) * bg.array)
         # update "linear": delta = z stays linear in (m, h); the stratum readout below is the
         # only non-linearity (readout_mode "gated")
         if self.gamma is not None:
@@ -1112,10 +1186,14 @@ class RACE(nnx.Module):
         tp_channels: Optional[int] = None,
         short_repulsion: Optional[Dict] = None,
         linear_rank: Optional[int] = None,
+        envelope_q: Optional[float] = None,
         *,
         rngs: nnx.Rngs,
     ):
         """
+        envelope_q    : None (original C2 polynomial envelope of order radial_polynomial_p) or q: every edge envelope
+                        (radial basis, layer cutoffs, pair terms) is (1 - (r / r_c)^p)^q, C^(q-1) at the cutoff
+                        (q = 5: C4).  The short_repulsion switch keeps its own polynomial.
         linear_rank   : None (original) or r: the channel-mixing linears of every layer (linear_1, linear_m,
                         linear_2) store each (mul_in, mul_out) block with min > r as a rank-r product U V.
         short_repulsion : None (original) or {"c": 1.0, "p": 6}: fixed ZBL repulsion stratum inside the bond
@@ -1411,6 +1489,7 @@ class RACE(nnx.Module):
         self.pair_repulsion_switch_width = float(pair_repulsion_switch_width)
         self.species_z = None if species_z is None else tuple(int(z) for z in species_z)
         self.species_radii_t = None if species_radii is None else tuple(float(r) for r in species_radii)
+        self.envelope_q = None if envelope_q is None else float(envelope_q)
         self.short_repulsion = None
         if short_repulsion:
             if species_radii is None or species_z is None:
@@ -1819,6 +1898,7 @@ class RACE(nnx.Module):
             radial_polynomial_p=self.radial_polynomial_p,
             lmax=self.lmax,
             periodic=self.periodic,
+            envelope_q=self.envelope_q,
         )
         if self.angular_scale is not None:
             sh = e3nn.IrrepsArray(sh.irreps, sh.array * jnp.asarray(self.angular_scale, dtype=sh.array.dtype)[None, :])
@@ -1849,7 +1929,7 @@ class RACE(nnx.Module):
                 alpha = 2.0 * rho_bar / (rho[species[data.senders]] + rho[species[data.receivers]])
                 x = r_norm * alpha
             radial_basis = (_bessel_safe(x, self.radial_basis_size, r_c)
-                            * polynomial_cutoff(r_norm, r_c, self.radial_polynomial_p)[:, None])
+                            * cutoff_envelope(r_norm, r_c, self.radial_polynomial_p, self.envelope_q)[:, None])
             if self.radial_slater:
                 z = self.species_zeta[...]
                 zeta = jax.nn.softplus(z[species[data.senders]] + z[species[data.receivers]])
@@ -1868,14 +1948,14 @@ class RACE(nnx.Module):
             present = (rho_i[:, :, None] > 0.0) & (rho_j[:, None, :] > 0.0)
             env = jnp.where(present, jnp.exp(-r_norm[:, None, None] / jnp.where(present, denom, 1.0)), 0.0)
             env = env.reshape(env.shape[0], self.n_shells ** 2)         # explicit size: valid for 0 edges too
-            env = env * polynomial_cutoff(r_norm, r_c, self.radial_polynomial_p)[:, None]
+            env = env * cutoff_envelope(r_norm, r_c, self.radial_polynomial_p, self.envelope_q)[:, None]
             shell_env = env
             radial_basis = jnp.concatenate([radial_basis, env], axis=-1)
         if self.radial_gaussians is not None:
             centers, width = self.radial_gaussians
             c = jnp.asarray(centers, dtype=radial_basis.dtype)
             gauss = jnp.exp(-0.5 * ((r_norm[:, None] - c[None, :]) / width) ** 2)
-            gauss = gauss * polynomial_cutoff(r_norm, r_c, self.radial_polynomial_p)[:, None]
+            gauss = gauss * cutoff_envelope(r_norm, r_c, self.radial_polynomial_p, self.envelope_q)[:, None]
             radial_basis = jnp.concatenate([radial_basis, gauss], axis=-1)
         # Padded edges: jraph.pad_with_graphs puts every padding edge on the first padding node with r = 0, and
         # their radial basis (bessel(0) * f_cut(0)) and Y_0 are not zero, so they carry messages.  With thousands
@@ -1927,7 +2007,7 @@ class RACE(nnx.Module):
             # fixed-form repulsion as the lowest stratum (each pair twice in the edge list -> 1/2)
             sp_i = species[data.receivers]
             sp_j = species[data.senders]
-            f_cut = polynomial_cutoff(r_norm, r_c, self.radial_polynomial_p)
+            f_cut = cutoff_envelope(r_norm, r_c, self.radial_polynomial_p, self.envelope_q)
             if self.pair_repulsion == "zbl":
                 # ZBL universal screened Coulomb repulsion, parameter-free; r = 0 on padded edges -> use a
                 # safe r inside and mask the value (keeps the gradient NaN-free, cf. _bessel_safe)
@@ -1997,8 +2077,8 @@ class RACE(nnx.Module):
             # (equivariant, ungated, linear in the density); computed once, used by every layer
             edge_scale0 = None
             if self.layer_cutoff is not None and self.layer_cutoff[0] < self.cutoff - 1e-6:
-                edge_scale0 = polynomial_cutoff(
-                    r_norm, jnp.full_like(r_norm, self.layer_cutoff[0]), self.radial_polynomial_p)
+                edge_scale0 = cutoff_envelope(
+                    r_norm, jnp.full_like(r_norm, self.layer_cutoff[0]), self.radial_polynomial_p, self.envelope_q)
             atomic_basis = _dense(self.layers[0].aggregate(
                 features, sh, radial_basis, data.senders, data.receivers, edge_scale0,
                 species_pair=(species[data.receivers], species[data.senders])))
@@ -2060,8 +2140,8 @@ class RACE(nnx.Module):
         f_energy = (f_readout(sp_k, _rows(features, K)) if f_readout is not None else None)
         edge_scale = None
         if self.layer_cutoff is not None and self.layer_cutoff[i] < self.cutoff - 1e-6:
-            edge_scale = polynomial_cutoff(
-                r_norm, jnp.full_like(r_norm, self.layer_cutoff[i]), self.radial_polynomial_p)
+            edge_scale = cutoff_envelope(
+                r_norm, jnp.full_like(r_norm, self.layer_cutoff[i]), self.radial_polynomial_p, self.envelope_q)
         drop_scale = None if keep is None else keep[:, i]
         sh_i = sh
         if self.shell_sk_gate:
@@ -2151,7 +2231,7 @@ class RACE(nnx.Module):
             c = jax.nn.softplus(self.bo_c[...])
             c = 0.5 * (c + jnp.swapaxes(c, 0, 1))[sp_i, sp_j]                                   # (n_edges, K)
             alpha = jnp.asarray(self.bo_alpha, dtype=r_norm.dtype)
-            env = polynomial_cutoff(r_norm, r_c, self.radial_polynomial_p)
+            env = cutoff_envelope(r_norm, r_c, self.radial_polynomial_p, self.envelope_q)
             beta = jnp.sum(c * jnp.exp(-r_norm[:, None] * alpha[None, :]), axis=-1) * env
             beta = jnp.where(r_norm > 0.0, beta, 0.0)                                            # padded edges
             b2 = 1e-6 + jax.ops.segment_sum(beta * beta, data.receivers, num_segments=species.shape[0])

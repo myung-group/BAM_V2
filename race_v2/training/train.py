@@ -14,6 +14,9 @@ Config keys (in addition to the model hyper-parameters, see README):
                        "basis": x_i = Linear_t(A_i), A_i = layer-0 atomic basis, channelwise m (x) x per layer (review §11 C)
     update           : "gate" (default) | "linear"  (ungated body-ordered features, needs readout_mode "gated"; review §11 A)
                        | "bilinear" (linear update + channelwise bilinear term of the two channel halves, gain init 0.1)
+    tp_channels      : null (default) | C_b: channel bottleneck, h_j contracted to C_b channels per irrep before the
+                       edge tensor product of every layer (linear_2 expands back); stream.train.parts[i] may carry
+                       "max_structures": N and "subset_seed": s for a fixed seeded subset of that part
     message_norm     : "layer" (default, layer norm + 1/sqrt(avg_n_neighbors)) | "avg" (no norm, 1/avg_n_neighbors; §11 B)
     x64              : bool, train/evaluate in float64 (params and data cast; MACE/BOTNet 3BPA protocol)  (default false)
     energy_loss_per  : "atom" (default) | "structure" (energy loss on the total-energy residual, MACE Eq. 15)
@@ -524,6 +527,18 @@ def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool
         if rep < 1:
             raise ValueError(f"stream.train.parts[{i}]: repeat must be >= 1, got {rep}")
         t, d = _stream_table(spec, f'train{i}', cutoff, workers, log_dir, rank0)
+        nmax = spec.get('max_structures')
+        if nmax and len(t['n_atoms']) > int(nmax):
+            # fixed seeded subset of the part (small-data runs); same rows on every process and every restart
+            rows = np.sort(np.random.default_rng(int(spec.get('subset_seed', 0))).choice(
+                len(t['n_atoms']), int(nmax), replace=False))
+            t = dict(t)
+            for k in ('n_atoms', 'n_edges', 'file', 'key'):
+                t[k] = t[k][rows]
+            if t.get('cell') is not None:
+                t['cell'] = t['cell'][rows]
+            print(f"stream train part {i}: seeded subset of {len(rows)} rows (subset_seed {int(spec.get('subset_seed', 0))})",
+                  file=fout)
         m = t['meta']
         part_meta.append((m, rep))
         soff = len(src_meta)
@@ -829,6 +844,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
                      sym_target=_get(cfg, 'sym_target', 'features'),
                      species_rank=_get(cfg, 'species_rank', None),
                      species_rank_prune=bool(_get(cfg, 'species_rank_prune', False)),
+                     tp_channels=_get(cfg, 'tp_channels', None),
                      shell_sk_gate=bool(_get(cfg, 'shell_sk_gate', False)),
                      strata_resum=_get(cfg, 'strata_resum', None),
                      species_shell_radii=(element_shell_radii(cfg['atomic_numbers'])

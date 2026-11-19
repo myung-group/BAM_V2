@@ -530,6 +530,7 @@ class RACEConvolution(nnx.Module):
         radial_species_mix: Optional[str] = None,
         species_rank: Optional[int] = None,
         species_rank_lpos: Optional[int] = None,
+        tp_channels: Optional[int] = None,
         *,
         rngs: nnx.Rngs,
     ):
@@ -613,20 +614,28 @@ class RACEConvolution(nnx.Module):
         self.input_irreps = e3nn.Irreps(input_irreps)
         self.sh_irreps = e3nn.Irreps(sh_irreps)
 
+        # tp_channels (channel bottleneck): linear_1 contracts every irrep of h_j to tp_channels channels before
+        # the edge tensor product, so the radial weights, the edge product and linear_2 work on tp_channels
+        # instead of the hidden multiplicity; linear_2 expands back.  None: no bottleneck (original).
+        self.tp_channels = None if tp_channels is None else int(tp_channels)
+        msg_in_irreps = (self.input_irreps if self.tp_channels is None
+                         else e3nn.Irreps([(self.tp_channels, ir) for _, ir in self.input_irreps]).regroup())
+        self.msg_in_irreps = msg_in_irreps
         if tp_backend == "cue":
-            e = _cue_descriptor(self.input_irreps, self.sh_irreps, self.msg_irreps)
+            e = _cue_descriptor(msg_in_irreps, self.sh_irreps, self.msg_irreps)
             tp_irreps = e3nn.Irreps(str(e.outputs[0].irreps))
             n_weights = e.polynomial.inputs[0].size
             assert n_weights == tp_irreps.num_irreps
         else:
             tp_irreps = e3nn.tensor_product(
-                input_irreps, sh_irreps, filter_ir_out=self.msg_irreps
+                msg_in_irreps, sh_irreps, filter_ir_out=self.msg_irreps
             )
 
         self.tp_irreps = e3nn.Irreps(tp_irreps)      # irreps of the aggregated message m_i (= A_i for layer 0)
         self.linear_1 = e3nn_nnx_Linear(
             irreps_in=input_irreps,
-            irreps_out=input_irreps,
+            irreps_out=msg_in_irreps,
+            force_irreps_out=self.tp_channels is not None,
             rngs=rngs,
         )
 
@@ -1092,10 +1101,14 @@ class RACE(nnx.Module):
         dens_seed: int = 0,
         species_rank: Optional[int] = None,
         species_rank_prune: bool = False,
+        tp_channels: Optional[int] = None,
         *,
         rngs: nnx.Rngs,
     ):
         """
+        tp_channels   : None (original) or C_b: channel bottleneck of every layer, h_j is contracted to C_b
+                        channels per irrep before the edge tensor product (radial weights, edge product and
+                        linear_2 on C_b channels; linear_2 expands back to the hidden multiplicity).
         update        : "gate" (original: next-layer features = gated layer output) or "linear"
                         (review §11 A, BOTNet-style body-ordered update: next-layer features are the
                         ungated z = W_2 m + S_z h; needs readout_mode="gated", the only non-linearity)
@@ -1549,6 +1562,7 @@ class RACE(nnx.Module):
                 radial_species_mix=radial_species_mix,
                 species_rank=self.species_rank,
                 species_rank_lpos=(1 if (self.species_rank_prune and i == n_layers - 1) else None),
+                tp_channels=tp_channels,
                 rngs=rngs,
             )
             if sym_method is not None and getattr(layer, "sym_contraction", False):

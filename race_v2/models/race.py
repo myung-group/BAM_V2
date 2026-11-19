@@ -621,14 +621,18 @@ class RACEConvolution(nnx.Module):
         msg_in_irreps = (self.input_irreps if self.tp_channels is None
                          else e3nn.Irreps([(self.tp_channels, ir) for _, ir in self.input_irreps]).regroup())
         self.msg_in_irreps = msg_in_irreps
+        # output filter of the edge product: the channelwise product keeps the input multiplicity, so with the
+        # bottleneck the message irreps carry tp_channels channels (cue needs one uniform multiplicity)
+        self.msg_tp_irreps = (self.msg_irreps if self.tp_channels is None
+                              else e3nn.Irreps([(self.tp_channels, ir) for _, ir in self.msg_irreps]))
         if tp_backend == "cue":
-            e = _cue_descriptor(msg_in_irreps, self.sh_irreps, self.msg_irreps)
+            e = _cue_descriptor(msg_in_irreps, self.sh_irreps, self.msg_tp_irreps)
             tp_irreps = e3nn.Irreps(str(e.outputs[0].irreps))
             n_weights = e.polynomial.inputs[0].size
             assert n_weights == tp_irreps.num_irreps
         else:
             tp_irreps = e3nn.tensor_product(
-                msg_in_irreps, sh_irreps, filter_ir_out=self.msg_irreps
+                msg_in_irreps, sh_irreps, filter_ir_out=self.msg_tp_irreps
             )
 
         self.tp_irreps = e3nn.Irreps(tp_irreps)      # irreps of the aggregated message m_i (= A_i for layer 0)
@@ -858,12 +862,12 @@ class RACEConvolution(nnx.Module):
         if self.tp_backend == "cue":
             node_in = self.linear_1(features_norm)
             messages_agg = cue_edge_tensor_product(
-                node_in.irreps, sh.irreps, self.msg_irreps,
+                node_in.irreps, sh.irreps, self.msg_tp_irreps,
                 node_in.array, sh.array, radial_message, senders, receivers,
             ) / norm
         else:
             messages = self.linear_1(features_norm)[senders]
-            messages = e3nn.tensor_product(messages, sh, filter_ir_out=self.msg_irreps)
+            messages = e3nn.tensor_product(messages, sh, filter_ir_out=self.msg_tp_irreps)
             messages = messages * radial_message
             messages_agg = e3nn.scatter_sum(
                 messages, dst=receivers, output_size=features.shape[0]

@@ -1102,10 +1102,15 @@ class RACE(nnx.Module):
         species_rank: Optional[int] = None,
         species_rank_prune: bool = False,
         tp_channels: Optional[int] = None,
+        short_repulsion: Optional[Dict] = None,
         *,
         rngs: nnx.Rngs,
     ):
         """
+        short_repulsion : None (original) or {"c": 1.0, "p": 6}: fixed ZBL repulsion stratum inside the bond
+                        distance, ZBL(r) * f_poly(r; c (R_i + R_j)) with the covalent radii R (cutoff
+                        polynomial of order p, C2 at its end); trained with the model (MACE-style short-range
+                        prior; the UFF term of pair_repulsion is switched off below its switch distance).
         tp_channels   : None (original) or C_b: channel bottleneck of every layer, h_j is contracted to C_b
                         channels per irrep before the edge tensor product (radial weights, edge product and
                         linear_2 on C_b channels; linear_2 expands back to the hidden multiplicity).
@@ -1395,6 +1400,11 @@ class RACE(nnx.Module):
         self.pair_repulsion_switch_width = float(pair_repulsion_switch_width)
         self.species_z = None if species_z is None else tuple(int(z) for z in species_z)
         self.species_radii_t = None if species_radii is None else tuple(float(r) for r in species_radii)
+        self.short_repulsion = None
+        if short_repulsion:
+            if species_radii is None or species_z is None:
+                raise ValueError("short_repulsion needs species_radii and species_z")
+            self.short_repulsion = (float(short_repulsion.get("c", 1.0)), float(short_repulsion.get("p", 6.0)))
         if pair_repulsion:
             # periodic too: r_norm below is built from the same minimum-image edge vectors as the messages
             if species_radii is None or len(species_radii) != n_species:
@@ -1945,6 +1955,21 @@ class RACE(nnx.Module):
                 e_edge = amp * jnp.exp(-r_norm / (rho[sp_i] + rho[sp_j])) * f_cut
             e_rep = 0.5 * jax.ops.segment_sum(e_edge, data.receivers, num_segments=features.shape[0])
             outputs.append(e_rep)
+        if self.short_repulsion is not None and with_pre_strata:
+            # ZBL inside the bond distance, smoothly off at c (R_i + R_j) (each pair twice in the edge list -> 1/2)
+            c_sr, p_sr = self.short_repulsion
+            sp_i, sp_j = species[data.receivers], species[data.senders]
+            z = jnp.asarray(self.species_z, dtype=r_norm.dtype)
+            rad = jnp.asarray(self.species_radii_t, dtype=r_norm.dtype)
+            zi, zj = z[sp_i], z[sp_j]
+            r_max = c_sr * (rad[sp_i] + rad[sp_j])
+            rs = jnp.where(r_norm > 0.0, r_norm, 1.0)
+            x = rs / (0.46850 / (zi ** 0.23 + zj ** 0.23))
+            phi = (0.18175 * jnp.exp(-3.19980 * x) + 0.50986 * jnp.exp(-0.94229 * x)
+                   + 0.28022 * jnp.exp(-0.40290 * x) + 0.02817 * jnp.exp(-0.20162 * x))
+            e_sr = 14.399645 * zi * zj / rs * phi * polynomial_cutoff(rs, r_max, p_sr)
+            e_sr = jnp.where((r_norm > 0.0) & (r_norm < r_max), e_sr, 0.0)
+            outputs.append(0.5 * jax.ops.segment_sum(e_sr, data.receivers, num_segments=features.shape[0]))
         if self.pair_term and with_pre_strata:
             # explicit 2-body stratum (each pair appears twice in the edge list -> 1/2)
             species = data.nodes["species"]

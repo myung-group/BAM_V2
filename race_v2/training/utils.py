@@ -239,6 +239,24 @@ def _charge_dipole_sums(results, batch, node_mask, graph_mask):
     return out
 
 
+# stress_split (2026-11-20): None (original: Huber on the 6 Voigt components, shear counted once, not rotation
+# invariant) or (w_p, w_s): w_p Huber(dp) + w_s Huber(|ds|_F) per structure, with sigma = p I + s, p = tr sigma / 3 (l = 0)
+# and s the traceless part (l = 2), |s|_F^2 = sum s_ii^2 + 2 sum_{i<j} s_ij^2.  Both terms are rotation invariant;
+# (3, 1) is the Frobenius norm |d sigma|_F^2 = 3 dp^2 + |ds|_F^2 in the quadratic regime.  Set by train.py from the
+# config key stress_split {"w_p": .., "w_s": ..} before the steps are traced.
+STRESS_SPLIT = None
+
+
+def _stress_split_loss(diff, delta, w):
+    """sum over structures of w_p Huber(dp) + w_s Huber(|ds|_F); diff (n_graphs, 6) Voigt xx yy zz yz xz xy."""
+    w_p, w_s = w
+    p = jnp.mean(diff[:, :3], axis=-1)
+    dev = diff[:, :3] - p[:, None]
+    n2 = jnp.sum(dev ** 2, axis=-1) + 2.0 * jnp.sum(diff[:, 3:] ** 2, axis=-1)
+    s_norm = jnp.sqrt(n2 + 1e-20)
+    return jnp.sum(w_p * huber_loss(p, delta=delta) + w_s * huber_loss(s_norm, delta=delta))
+
+
 def _loss_terms(
     results: Dict,
     batch: jraph.GraphsTuple,
@@ -405,8 +423,11 @@ def _loss_terms(
     else:  # 'huber'
         out['energy_loss'] = jnp.sum(huber_loss(energy_diff, delta=dE) * gw)
         out['force_loss'] = jnp.sum(huber_loss(force_diff, delta=dF) * nw[:, None])
-        out['stress_loss'] = (jnp.sum(huber_loss(stress_diff, delta=dS))
-                              if periodic else 0.0)
+        if periodic and STRESS_SPLIT is not None:
+            out['stress_loss'] = _stress_split_loss(stress_diff, dS, STRESS_SPLIT)
+        else:
+            out['stress_loss'] = (jnp.sum(huber_loss(stress_diff, delta=dS))
+                                  if periodic else 0.0)
 
     # ---- raw metrics (never clipped) ----
     out.update({

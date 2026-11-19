@@ -19,6 +19,7 @@ Config keys (in addition to the model hyper-parameters, see README):
                        edge tensor product of every layer (linear_2 expands back); stream.train.parts[i] may carry
                        "max_structures": N and "subset_seed": s for a fixed seeded subset of that part
     linear_rank      : null (default) | r: channel-mixing linears of every layer (linear_1/_m/_2) as rank-r products U V
+    stress_split     : null (default, Huber per Voigt component) | {"w_p": 3, "w_s": 1}: w_p Huber(dp) + w_s Huber(|ds|_F)
     sobolev_decay    : null (default) | {"base": b, "s": s}: decoupled decay b (n/N)^(2s) of radial-MLP first-layer row n
     envelope_q       : null (default, C2 polynomial envelope) | q: edge envelopes (1 - (r/r_c)^p)^q, C^(q-1) at r_c
     short_repulsion  : null (default) | {"c": 1.0, "p": 6}: fixed ZBL stratum inside c (R_i + R_j) covalent radii,
@@ -1370,6 +1371,14 @@ def train(cfg: Dict):
     ema_params = params
     # stress in the loss and the metrics (periodic data with a 'stress' global, eV/A^3, ASE sign and Voigt order)
     use_stress = bool(_get(cfg, 'stress_loss', False))
+    ssplit = _get(cfg, 'stress_split', None)
+    if ssplit:
+        if loss_type != 'huber':
+            raise ValueError("stress_split is implemented for loss_type 'huber' only")
+        import race_v2.training.utils as _tu
+        _tu.STRESS_SPLIT = (float(ssplit.get('w_p', 3.0)), float(ssplit.get('w_s', 1.0)))
+        print(f"Stress loss split into pressure and deviatoric parts: w_p={_tu.STRESS_SPLIT[0]} "
+              f"w_s={_tu.STRESS_SPLIT[1]} (rotation invariant)", file=fout)
     if use_stress and not bool(_get(cfg, 'periodic', False)):
         raise ValueError("stress_loss needs periodic=true")
 

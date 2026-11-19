@@ -219,8 +219,15 @@ class Linear(nnx.Module):
         linear_type: str = "vanilla",
         index_rank: Optional[int] = None,
         index_rank_lpos: Optional[int] = None,
+        weight_rank: Optional[int] = None,
         rngs: nnx.Rngs,
     ):
+        # weight_rank r (linear_type "vanilla" only): every weight block (mul_in, mul_out) with min(mul_in, mul_out) > r
+        # is a low-rank product W = r**-0.5 * U V, U (mul_in, r), V (r, mul_out), both drawn like the free weight
+        # (U with its weight_std, V unit normal), so W has the variance of the free weight.  None: free blocks.
+        if weight_rank is not None and linear_type != "vanilla":
+            raise ValueError("weight_rank needs linear_type='vanilla'")
+        self.weight_rank: Optional[int] = None if weight_rank is None else int(weight_rank)
         # index_rank K (linear_type "indexed" only): the indexed weight blocks W[z] (num_indexed_weights, in, out)
         # are not free but a rank-K factorisation along the index axis,
         #     W[z] = K**-0.5 * sum_k coeff[z, k] * basis[k],
@@ -308,6 +315,11 @@ class Linear(nnx.Module):
                                               (self.num_indexed_weights, rank), self._input_dtype)
                     setattr(self, self._coeff_name(attr_name), nnx.Param(coeff))
 
+            if self._low_rank(ins):
+                r = self.weight_rank
+                weight_shape = (ins.path_shape[0], r)                  # U; V below
+                v = jax.random.normal(jax.random.fold_in(weight_key, 2), (r, ins.path_shape[1]), self._input_dtype)
+                setattr(self, self._lowv_name(attr_name), nnx.Param(v))
 
             weight_value = weight_std * jax.random.normal(
                 weight_key,
@@ -355,6 +367,15 @@ class Linear(nnx.Module):
             return None
         return self.index_rank_lpos if self._linear.irreps_out[ins.i_out].ir.l > 0 else self.index_rank
 
+    def _low_rank(self, ins) -> bool:
+        """Whether one weight block is stored as the low-rank product U V (weight_rank)."""
+        return (getattr(self, 'weight_rank', None) is not None and ins.i_in != -1 and len(ins.path_shape) == 2
+                and min(ins.path_shape) > self.weight_rank)
+
+    @staticmethod
+    def _lowv_name(attr_name: str) -> str:
+        return "lowv_" + attr_name[len("weight_"):]
+
     @staticmethod
     def _coeff_name(attr_name: str) -> str:
         return "coeff_" + attr_name[len("weight_"):]
@@ -364,6 +385,10 @@ class Linear(nnx.Module):
         attr_name = self._weight_name_mapping[name]
         param = getattr(self, attr_name)
         w = param.value
+        lv = self._lowv_name(attr_name)
+        if not name.startswith("b[") and hasattr(self, lv):
+            v = getattr(self, lv).value                                   # (r, mul_out)
+            w = (w @ v) * (v.shape[0] ** -0.5)                            # (mul_in, mul_out)
         if self.index_rank is not None and not name.startswith("b["):
             c = getattr(self, self._coeff_name(attr_name)).value        # (num_indexed_weights, K)
             w = jnp.tensordot(c, w, axes=1) * (w.shape[0] ** -0.5)      # -> (num_indexed_weights, in, out)

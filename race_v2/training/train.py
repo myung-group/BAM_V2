@@ -17,6 +17,7 @@ Config keys (in addition to the model hyper-parameters, see README):
     tp_channels      : null (default) | C_b: channel bottleneck, h_j contracted to C_b channels per irrep before the
                        edge tensor product of every layer (linear_2 expands back); stream.train.parts[i] may carry
                        "max_structures": N and "subset_seed": s for a fixed seeded subset of that part
+    linear_rank      : null (default) | r: channel-mixing linears of every layer (linear_1/_m/_2) as rank-r products U V
     short_repulsion  : null (default) | {"c": 1.0, "p": 6}: fixed ZBL stratum inside c (R_i + R_j) covalent radii,
                        polynomial cutoff of order p; trained with the model (short-range prior for diatomics / MD)
     message_norm     : "layer" (default, layer norm + 1/sqrt(avg_n_neighbors)) | "avg" (no norm, 1/avg_n_neighbors; §11 B)
@@ -848,6 +849,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
                      species_rank_prune=bool(_get(cfg, 'species_rank_prune', False)),
                      tp_channels=_get(cfg, 'tp_channels', None),
                      short_repulsion=_get(cfg, 'short_repulsion', None),
+                     linear_rank=_get(cfg, 'linear_rank', None),
                      shell_sk_gate=bool(_get(cfg, 'shell_sk_gate', False)),
                      strata_resum=_get(cfg, 'strata_resum', None),
                      species_shell_radii=(element_shell_radii(cfg['atomic_numbers'])

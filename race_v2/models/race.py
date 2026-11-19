@@ -531,6 +531,7 @@ class RACEConvolution(nnx.Module):
         species_rank: Optional[int] = None,
         species_rank_lpos: Optional[int] = None,
         tp_channels: Optional[int] = None,
+        linear_rank: Optional[int] = None,
         *,
         rngs: nnx.Rngs,
     ):
@@ -640,6 +641,7 @@ class RACEConvolution(nnx.Module):
             irreps_in=input_irreps,
             irreps_out=msg_in_irreps,
             force_irreps_out=self.tp_channels is not None,
+            weight_rank=linear_rank,
             rngs=rngs,
         )
 
@@ -680,6 +682,7 @@ class RACEConvolution(nnx.Module):
                 irreps_in=tp_irreps,
                 irreps_out=output_irreps,
                 force_irreps_out=True,
+                weight_rank=linear_rank,
                 rngs=rngs,
             )
             tp2_irreps_1 = e3nn.tensor_product(
@@ -775,6 +778,7 @@ class RACEConvolution(nnx.Module):
             irreps_in=linear_2_in,
             irreps_out=update_irreps,
             force_irreps_out=True,
+            weight_rank=linear_rank,
             rngs=rngs,
         )
 
@@ -1107,10 +1111,13 @@ class RACE(nnx.Module):
         species_rank_prune: bool = False,
         tp_channels: Optional[int] = None,
         short_repulsion: Optional[Dict] = None,
+        linear_rank: Optional[int] = None,
         *,
         rngs: nnx.Rngs,
     ):
         """
+        linear_rank   : None (original) or r: the channel-mixing linears of every layer (linear_1, linear_m,
+                        linear_2) store each (mul_in, mul_out) block with min > r as a rank-r product U V.
         short_repulsion : None (original) or {"c": 1.0, "p": 6}: fixed ZBL repulsion stratum inside the bond
                         distance, ZBL(r) * f_poly(r; c (R_i + R_j)) with the covalent radii R (cutoff
                         polynomial of order p, C2 at its end); trained with the model (MACE-style short-range
@@ -1577,6 +1584,7 @@ class RACE(nnx.Module):
                 species_rank=self.species_rank,
                 species_rank_lpos=(1 if (self.species_rank_prune and i == n_layers - 1) else None),
                 tp_channels=tp_channels,
+                linear_rank=linear_rank,
                 rngs=rngs,
             )
             if sym_method is not None and getattr(layer, "sym_contraction", False):

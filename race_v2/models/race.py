@@ -546,8 +546,12 @@ class RACEConvolution(nnx.Module):
         # receives the *ungated* linear combination z = W_2 m + S_z h, so h^(t+1) is a finite
         # polynomial of the atomic basis; the non-linearity lives only in the stratum readout,
         # which therefore has to be the gated MLP).
-        if update not in ("gate", "linear"):
-            raise ValueError(f"update must be 'gate' or 'linear', got {update!r}")
+        # update "bilinear": the linear update z plus a channelwise bilinear term,
+        # z + g * Linear( a (x) b ), with a and b the two channel halves of the RMS-normalised z and
+        # (x) every CG path into output_irreps (an equivariant quadratic non-linearity of the
+        # vector features, cf. the bilinear gate of EquFlashV2); g is a learnable gain, init 0.1.
+        if update not in ("gate", "linear", "bilinear"):
+            raise ValueError(f"update must be 'gate', 'linear' or 'bilinear', got {update!r}")
         if update == "linear" and readout_mode != "gated":
             raise ValueError("update='linear' needs readout_mode='gated' (otherwise the stratum energy is linear in the features)")
         # message_norm "layer" (original: per-node separated layer norm of h_j before the message
@@ -643,7 +647,18 @@ class RACEConvolution(nnx.Module):
         )
         gated_output_irreps = (output_irreps + gate_irreps).regroup()
         # linear update: no gate scalars, the layer output is output_irreps itself
-        update_irreps = output_irreps if update == "linear" else gated_output_irreps
+        update_irreps = output_irreps if update in ("linear", "bilinear") else gated_output_irreps
+        if update == "bilinear":
+            muls = {mul for mul, _ in output_irreps}
+            if len(muls) != 1 or next(iter(muls)) % 2:
+                raise ValueError(f"update='bilinear' needs one even multiplicity, got {output_irreps}")
+            self.bl_mul = muls.pop()
+            self.bl_irreps_1 = e3nn.Irreps([(1, ir) for _, ir in output_irreps])
+            bl_irreps_1 = e3nn.tensor_product(self.bl_irreps_1, self.bl_irreps_1, filter_ir_out=self.bl_irreps_1)
+            bl_irreps = e3nn.Irreps([(self.bl_mul // 2 * mul, ir) for mul, ir in bl_irreps_1])
+            self.linear_bl = e3nn_nnx_Linear(irreps_in=bl_irreps, irreps_out=output_irreps,
+                                             force_irreps_out=True, rngs=rngs)
+            self.bl_gain = nnx.Param(jnp.full((1,), 0.1, dtype=jnp.float32))
 
         if self.x_equivariant:
             # tp_irreps -> output_irreps (one path per channel), then the channelwise
@@ -919,6 +934,14 @@ class RACEConvolution(nnx.Module):
             # Follow equiformer: gated activation (see _gated_activation; identical to
             # e3nn.gate for natural-parity irreps, parity-safe for full-parity irreps)
             delta = _gated_activation(delta, self.output_irreps)
+        elif self.update == "bilinear":
+            h = self.bl_mul // 2
+            zn = _rms_normalize(delta).mul_to_axis(self.bl_mul)          # (n, C, dim of the mul-1 irreps)
+            a, b = zn[:, :h], zn[:, h:]
+            q = e3nn.tensor_product(a, b, filter_ir_out=self.bl_irreps_1).axis_to_mul()
+            bl = _dense(self.linear_bl(q))
+            assert bl.irreps == delta.irreps, (bl.irreps, delta.irreps)
+            delta = e3nn.IrrepsArray(delta.irreps, delta.array + self.bl_gain[...].astype(delta.array.dtype) * bl.array)
         # update "linear": delta = z stays linear in (m, h); the stratum readout below is the
         # only non-linearity (readout_mode "gated")
         if self.gamma is not None:
@@ -1075,7 +1098,9 @@ class RACE(nnx.Module):
         """
         update        : "gate" (original: next-layer features = gated layer output) or "linear"
                         (review §11 A, BOTNet-style body-ordered update: next-layer features are the
-                        ungated z = W_2 m + S_z h; needs readout_mode="gated", the only non-linearity).
+                        ungated z = W_2 m + S_z h; needs readout_mode="gated", the only non-linearity)
+                        or "bilinear" (z + g Linear(a (x) b), a / b the channel halves of the
+                        RMS-normalised z: a quadratic equivariant non-linearity; see RACELayer).
         message_norm  : "layer" (original: separated layer norm of h_j before the message TP and
                         sum / sqrt(avg_n_neighbors)) or "avg" (review §11 B: no feature normalisation,
                         sum / avg_n_neighbors, as BOTNet/MACE; keeps the features body-ordered).

@@ -13,6 +13,7 @@ Config keys (in addition to the model hyper-parameters, see README):
     x_mode           : "species" | "node_scalar" | "node_irreps" | "basis" (default "species");
                        "basis": x_i = Linear_t(A_i), A_i = layer-0 atomic basis, channelwise m (x) x per layer (review §11 C)
     update           : "gate" (default) | "linear"  (ungated body-ordered features, needs readout_mode "gated"; review §11 A)
+                       | "bilinear" (linear update + channelwise bilinear term of the two channel halves, gain init 0.1)
     message_norm     : "layer" (default, layer norm + 1/sqrt(avg_n_neighbors)) | "avg" (no norm, 1/avg_n_neighbors; §11 B)
     x64              : bool, train/evaluate in float64 (params and data cast; MACE/BOTNet 3BPA protocol)  (default false)
     energy_loss_per  : "atom" (default) | "structure" (energy loss on the total-energy residual, MACE Eq. 15)

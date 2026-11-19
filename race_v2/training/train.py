@@ -20,6 +20,8 @@ Config keys (in addition to the model hyper-parameters, see README):
                        "max_structures": N and "subset_seed": s for a fixed seeded subset of that part
     linear_rank      : null (default) | r: channel-mixing linears of every layer (linear_1/_m/_2) as rank-r products U V
     stress_split     : null (default, Huber per Voigt component) | {"w_p": 3, "w_s": 1}: w_p Huber(dp) + w_s Huber(|ds|_F)
+    core_exclusion   : null (default) | {"table": [mindist JSONs] or {"Z1-Z2": A}, "cap": 0.5, "width": 0.1}: ML edges off inside
+                       min(training min distance, cap (R_i+R_j)), unscaled ZBL beneath (no parameters)
     sobolev_decay    : null (default) | {"base": b, "s": s}: decoupled decay b (n/N)^(2s) of radial-MLP first-layer row n
     envelope_q       : null (default, C2 polynomial envelope) | q: edge envelopes (1 - (r/r_c)^p)^q, C^(q-1) at r_c
     short_repulsion  : null (default) | {"c": 1.0, "p": 6}: fixed ZBL stratum inside c (R_i + R_j) covalent radii,
@@ -803,6 +805,34 @@ def _sobolev_decay(cfg, params, fout):
         return jax.tree.unflatten(tdef, out), state
     return [optax.GradientTransformation(lambda p: optax.EmptyState(), update)]
 
+
+def _core_exclusion(cfg):
+    """core_exclusion {"table": {"Z1-Z2": r_min A, ...} or [paths to mindist JSON], "cap": 0.5, "width": 0.1} ->
+    {"r_in": n_species x n_species, "width"}: r_in = min(training minimum distance, cap (R_i + R_j)), pairs absent from
+    the table get cap (R_i + R_j) (pre-registered rule, 2026-11-20).  Returns None when the key is absent."""
+    ce = _get(cfg, 'core_exclusion', None)
+    if not ce:
+        return None
+    table = ce.get('table', {})
+    if isinstance(table, (list, tuple)):
+        merged = {}
+        for path in table:
+            d = json.load(open(path))
+            for k, v in d['merged'].items():
+                merged[k] = min(merged.get(k, 1e9), float(v[0]))
+        table = merged
+    cap = float(ce.get('cap', 0.5))
+    zs = [int(z) for z in cfg['atomic_numbers']]
+    r_in = []
+    for za in zs:
+        row = []
+        for zb in zs:
+            key = f"{min(za, zb)}-{max(za, zb)}"
+            c = cap * (COVALENT_RADII[za] + COVALENT_RADII[zb])
+            row.append(min(float(table[key]), c) if key in table else c)
+        r_in.append(row)
+    return {'r_in': r_in, 'width': float(ce.get('width', 0.1))}
+
 def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Dict, fout, n_devices: int = 1):
     seed = int(_get(cfg, 'seed', 42))
     model_rngs = nnx.Rngs(seed)
@@ -906,6 +936,7 @@ def build_model(cfg: Dict, n_species: int, atom_energies: List[float], stats: Di
                      short_repulsion=_get(cfg, 'short_repulsion', None),
                      linear_rank=_get(cfg, 'linear_rank', None),
                      envelope_q=_get(cfg, 'envelope_q', None),
+                     core_exclusion=_core_exclusion(cfg),
                      shell_sk_gate=bool(_get(cfg, 'shell_sk_gate', False)),
                      strata_resum=_get(cfg, 'strata_resum', None),
                      species_shell_radii=(element_shell_radii(cfg['atomic_numbers'])

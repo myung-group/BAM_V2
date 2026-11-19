@@ -50,6 +50,11 @@ class Predictor:
         if config is None:
             raise ValueError('the checkpoint has no config; pass config=')
         cfg = self.cfg = dict(config)
+        # BAM_CORE_EXCLUSION (JSON, 2026-11-20): switch on the parameter-free core exclusion for any checkpoint, e.g.
+        # '{"table": ["mindist_mp_salex.json", "mindist_omat24_every20.json"], "cap": 0.5, "width": 0.1}'
+        if os.environ.get('BAM_CORE_EXCLUSION'):
+            cfg['core_exclusion'] = json.loads(os.environ['BAM_CORE_EXCLUSION'])
+            print(f"[predict] core exclusion on: {cfg['core_exclusion']}", flush=True)
         # BAM_PREDICT_X64=1: run a float32-trained model in float64 (parameters cast to float64).  Needed where
         # forces must be precise to ~1e-5 eV/A: relaxations to fmax 1e-4 and the finite-difference force constants
         # of the thermal conductivity (kappa SRME 0.86 in float32, 0.22 in float64; docs/inference_precision.md).

@@ -238,6 +238,19 @@ def _hill_normalize(x: e3nn.IrrepsArray, ab: jax.Array, species: jax.Array,
     return e3nn.IrrepsArray(x.irreps, arr * jax.lax.rsqrt(ms) * g)
 
 
+def _smoothstep_c4(t):
+    """Degree-9 smoothstep: 0 for t <= 0, 1 for t >= 1, first four derivatives zero at both ends (C4)."""
+    t = jnp.clip(t, 0.0, 1.0)
+    return t ** 5 * (126.0 - 420.0 * t + 540.0 * t ** 2 - 315.0 * t ** 3 + 70.0 * t ** 4)
+
+
+def _zbl(zi, zj, rs):
+    """ZBL universal screened Coulomb repulsion (eV), rs in A (> 0)."""
+    x = rs / (0.46850 / (zi ** 0.23 + zj ** 0.23))
+    phi = (0.18175 * jnp.exp(-3.19980 * x) + 0.50986 * jnp.exp(-0.94229 * x)
+           + 0.28022 * jnp.exp(-0.40290 * x) + 0.02817 * jnp.exp(-0.20162 * x))
+    return 14.399645 * zi * zj / rs * phi
+
 def _bigate_paths(ls):
     """CG paths (l1, l2, l3) of the EquFlashV2-style bilinear gate for natural-parity irreps of degrees ls:
     l1 >= 1 (a), 0 <= l2 <= l1 (b, l2 = 0 is the constant slot: the classical gate), l3 in ls, l1 + l2 + l3 even."""
@@ -1187,10 +1200,17 @@ class RACE(nnx.Module):
         short_repulsion: Optional[Dict] = None,
         linear_rank: Optional[int] = None,
         envelope_q: Optional[float] = None,
+        core_exclusion: Optional[Dict] = None,
         *,
         rngs: nnx.Rngs,
     ):
         """
+        core_exclusion : None (original) or {"r_in": (n_species x n_species) inner radii in A, "width": w}
+                        (2026-11-20, pre-registered rule /appsdata/t589a02/race_v2_oam6/core_exclusion_prereg_20261120.md):
+                        every ML edge is multiplied by s(r) = smoothstep_C4((r - r_in + w) / w), so edges inside
+                        r_in - w do not exist for the ML part, and sum over pairs of (1 - s(r)) ZBL(r) is added to the
+                        energy AFTER the learned global scale / shift (unscaled).  No parameters: can be switched on
+                        for an already trained checkpoint.
         envelope_q    : None (original C2 polynomial envelope of order radial_polynomial_p) or q: every edge envelope
                         (radial basis, layer cutoffs, pair terms) is (1 - (r / r_c)^p)^q, C^(q-1) at the cutoff
                         (q = 5: C4).  The short_repulsion switch keeps its own polynomial.
@@ -1490,6 +1510,15 @@ class RACE(nnx.Module):
         self.species_z = None if species_z is None else tuple(int(z) for z in species_z)
         self.species_radii_t = None if species_radii is None else tuple(float(r) for r in species_radii)
         self.envelope_q = None if envelope_q is None else float(envelope_q)
+        self.core_r_in = None
+        if core_exclusion is not None:
+            rin = core_exclusion['r_in']
+            if len(rin) != n_species or any(len(row) != n_species for row in rin):
+                raise ValueError(f"core_exclusion r_in must be {n_species} x {n_species}")
+            self.core_r_in = tuple(tuple(float(v) for v in row) for row in rin)
+            self.core_width = float(core_exclusion.get('width', 0.1))
+            if species_z is None:
+                raise ValueError("core_exclusion needs species_z (atomic numbers) for the ZBL term")
         self.short_repulsion = None
         if short_repulsion:
             if species_radii is None or species_z is None:
@@ -1906,7 +1935,7 @@ class RACE(nnx.Module):
         species = data.nodes["species"]
         need_r = (self.layer_cutoff is not None or self.radial_species_scale or self.radial_slater
                   or self.radial_shells or self.radial_gaussians is not None or self.pair_repulsion
-                  or self.bond_order is not None)
+                  or self.bond_order is not None or self.core_r_in is not None)
         if need_r:
             # edge distances (non-periodic): same convention as compute_node_edge_features;
             # the inner where keeps the gradient of sqrt finite on padded r = 0 edges
@@ -1974,6 +2003,14 @@ class RACE(nnx.Module):
         sh = e3nn.IrrepsArray(sh.irreps, sh.array * edge_ok[:, None].astype(sh.array.dtype))
         if shell_env is not None:
             shell_env = shell_env * edge_ok[:, None]
+        s_core = None
+        if self.core_r_in is not None:
+            # core exclusion: the ML part does not see edges inside the training-data minimum distance
+            r_in = jnp.asarray(self.core_r_in, dtype=radial_basis.dtype)[species[data.receivers], species[data.senders]]
+            s_core = _smoothstep_c4((r_norm - r_in + self.core_width) / self.core_width).astype(radial_basis.dtype)
+            radial_basis = radial_basis * s_core[:, None]
+            if shell_env is not None:
+                shell_env = shell_env * s_core[:, None]
         # stochastic depth: per-graph keep factors (n_graphs, n_layers) -> per node
         keep = None
         if isinstance(data.globals, dict) and 'stratum_keep' in data.globals:
@@ -2090,7 +2127,7 @@ class RACE(nnx.Module):
         return dict(features=features, radial_basis=radial_basis, sh=sh, species=species, data=data,
                     r_norm=locals().get("r_norm"), r_c=locals().get("r_c"), shell_env=shell_env, keep=keep,
                     x_feats=x_feats, x_species=x_species, atomic_basis=atomic_basis, outputs=outputs,
-                    layer_parts=layer_parts, dens_force=dens_force, bo_q=bo_q)
+                    layer_parts=layer_parts, dens_force=dens_force, bo_q=bo_q, s_core=s_core)
 
     def _condition(self, ctx: Dict, i: int, features):
         """Hook: the node features entering interaction layer i (subclasses add per-structure conditioning, e.g.
@@ -2214,6 +2251,7 @@ class RACE(nnx.Module):
         data, species = ctx["data"], ctx["species"]
         r_norm, r_c = ctx["r_norm"], ctx["r_c"]
         outputs, layer_parts, bo_q = ctx["outputs"], ctx["layer_parts"], ctx["bo_q"]
+        s_core = ctx.get("s_core")
         if self.strata_resum == "aitken":
             # geometric-tail (Aitken / Shanks e1) estimate of the body-order series from the last two
             # layer strata: rho = e_L / e_{L-1} (saturated to |rho| < 0.5), tail = e_L rho / (1 - rho);
@@ -2256,6 +2294,15 @@ class RACE(nnx.Module):
 
         # Scale and shift energies
         node_energies = node_energies * self.scale[...] + self.shift[...]
+        if s_core is not None:
+            # core exclusion: (1 - s) ZBL per pair, unscaled (each pair twice in the edge list -> 1/2)
+            z = jnp.asarray(self.species_z, dtype=r_norm.dtype)
+            zi, zj = z[species[data.receivers]], z[species[data.senders]]
+            rs = jnp.where(r_norm > 0.0, r_norm, 1.0)
+            e_core = jnp.where(r_norm > 0.0, (1.0 - s_core.astype(r_norm.dtype)) * _zbl(zi, zj, rs), 0.0)
+            e_core = 0.5 * jax.ops.segment_sum(e_core, data.receivers, num_segments=node_energies.shape[0])
+            node_energies = e3nn.IrrepsArray(node_energies.irreps,
+                                             node_energies.array + e_core[:, None].astype(node_energies.array.dtype))
 
         frc_logvar = self.frc_logvar(features)
         if self.cov_mode == "scalar6":

@@ -528,6 +528,9 @@ def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool
     and land in the same block, i.e. a structure was seen `repeat` times within a few steps (racev2 8922d40)."""
     cols = {'n_atoms': [], 'n_edges': [], 'file': [], 'key': [], 'cell': []}
     files, kinds, sources, src_meta, file_source, dirs, part_meta = [], [], [], [], [], [], []
+    # "energy_loss": false on a part (2026-11-22, OMat24 replay): its structures train forces and stress only; every
+    # training source then carries the source option energy_w (0 or 1) -> globals['energy_w'] (stream_io.graph_arrays)
+    e_off = [i for i, p in enumerate(parts) if isinstance(p, dict) and p.get('energy_loss', True) is False]
     for i, p in enumerate(parts):
         spec = _stream_split(p)
         rep = int(spec.get('repeat', 1))
@@ -551,7 +554,13 @@ def _stream_parts(parts, cutoff: float, workers: int, log_dir: Path, rank0: bool
         soff = len(src_meta)
         # per-file source options (stream_io.file_opts): keep each part's sources once and point its files at them
         fs = m.get('file_source')
-        src_meta += list(m['sources']) if fs is not None else [{'spec': s} for s in spec['sources']][:1]
+        part_src = list(m['sources']) if fs is not None else [{'spec': s} for s in spec['sources']][:1]
+        if e_off:
+            part_src = [{**s, 'opts': {**(s.get('opts') or {}), 'energy_w': 0.0 if i in e_off else 1.0}}
+                        for s in part_src]
+            print(f"stream train part {i}: energy loss {'OFF (forces and stress only)' if i in e_off else 'on'}",
+                  file=fout)
+        src_meta += part_src
         for _ in range(rep):
             off = len(files)
             for k in ('n_atoms', 'n_edges', 'key'):

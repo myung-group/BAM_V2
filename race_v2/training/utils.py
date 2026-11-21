@@ -300,6 +300,13 @@ def _loss_terms(
 
     # raw residuals (for metrics)
     energy_diff_total_raw = (energy - batch.globals["energy"]) * graph_mask
+    # per-graph energy-loss weight (stream part "energy_loss": false -> globals['energy_w'] = 0, e.g. OMat24 replay in
+    # an MPtrj + sAlex fine-tuning: forces and stress only); the energy loss is then normalised by the number of
+    # energy-labelled graphs (n_energy) instead of all graphs, so the labelled graphs keep their weight
+    ew = batch.globals.get("energy_w") if isinstance(batch.globals, dict) else None
+    if ew is not None:
+        ew = ew.reshape(-1).astype(energy_diff_total_raw.dtype) * graph_mask
+        energy_diff_total_raw = energy_diff_total_raw * ew
     energy_diff_raw = energy_diff_total_raw / n_node          # per atom
     if energy_loss_per not in ("atom", "structure"):
         raise ValueError(f"energy_loss_per must be 'atom' or 'structure', got {energy_loss_per!r}")
@@ -447,6 +454,8 @@ def _loss_terms(
         **_charge_dipole_sums(results, batch, node_mask, graph_mask),
         # graphs with a stress label (= real graphs unless the batch carries globals['stress_w'])
         'n_stress': (jnp.sum(sw) if (periodic and sw is not None) else graph_mask.sum()),
+        # graphs with an energy label (= real graphs unless the batch carries globals['energy_w'])
+        'n_energy': (jnp.sum(ew) if ew is not None else graph_mask.sum()),
     })
     return out
 
@@ -528,6 +537,7 @@ def compute_loss(
                     energy_loss_per=energy_loss_per)
 
     n_graphs, n_atoms = t['n_graphs'], t['n_atoms']
+    n_energy = jnp.maximum(t['n_energy'], 1.0)
     n_rep = 1
     dens_on = dens is not None and isinstance(batch.nodes, dict) and 'dens_mask' in batch.nodes
     if dens_on:
@@ -536,11 +546,12 @@ def compute_loss(
         n_dens = jnp.maximum(jnp.sum(batch.nodes['dens_mask']), 1.0)
     if norm is not None:
         n_graphs, n_atoms, n_rep = norm['n_graphs'], norm['n_atoms'], norm['n_rep']
+        n_energy = norm.get('n_energy', n_graphs)
         if dens_on:
             n_atoms_f, n_dens = norm['n_atoms_f'], norm['n_dens']
     # forces of the corrupted atoms are not supervised in the single DeNS pass
     n_atoms_force = n_atoms_f if (dens_on and dens['noisy_ef']) else n_atoms
-    energy_loss = t['energy_loss'] / n_graphs
+    energy_loss = t['energy_loss'] / n_energy
     force_loss = t['force_loss'] / (3 * n_atoms_force)
     stress_loss = t['stress_loss'] / n_graphs
 
@@ -907,6 +918,10 @@ def make_sharded_train_step(
         nmask = jraph.get_node_padding_mask(batch).astype(jnp.float32)
         norm = {'n_graphs': jax.lax.psum(jraph.get_graph_padding_mask(batch).astype(jnp.float32).sum(), 'dp'),
                 'n_atoms': jax.lax.psum(nmask.sum(), 'dp'), 'n_rep': n_replicas}
+        if isinstance(batch.globals, dict) and 'energy_w' in batch.globals:
+            gm = jraph.get_graph_padding_mask(batch).astype(jnp.float32)
+            norm['n_energy'] = jnp.maximum(
+                jax.lax.psum(jnp.sum(batch.globals['energy_w'].reshape(-1).astype(jnp.float32) * gm), 'dp'), 1.0)
         if dens is not None:
             md = batch.nodes['dens_mask'].astype(jnp.float32)
             norm['n_atoms_f'] = jnp.maximum(jax.lax.psum(jnp.sum(nmask * (1.0 - md)), 'dp'), 1.0)

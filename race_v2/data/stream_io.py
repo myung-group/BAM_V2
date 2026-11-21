@@ -303,6 +303,11 @@ def graph_arrays(st: dict, atom_indices: dict, atom_energies, cutoff: float, fie
         if mixed:
             out['g:pbc'] = np.array([1.0 if periodic else 0.0], np.float32)
             out['g:stress_w'] = np.array([1.0 if has_stress else 0.0], np.float32)
+    if 'energy_w' in opts:
+        # per-source energy-loss weight (stream.train.parts[i].energy_loss, training.train._stream_parts): 0 for a
+        # source whose energies are on another reference (OMat24 replay in an MPtrj + sAlex fine-tuning), 1 otherwise;
+        # set on every training source as soon as one part turns its energy loss off, so all packs carry the field
+        out['g:energy_w'] = np.array([float(opts['energy_w'])], np.float32)
     label_key = opts.get('charge_label_key')
     if want_quad:
         # traceless quadrupole label (e A^2, about the centre of mass, xx yy zz xy xz yz) from the ORCA multipoles

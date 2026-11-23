@@ -6,6 +6,9 @@
 > The previous `main` (BAM_V2 up to April 2026, with `bam_torch`, `bam_torch_cue` and `bam_3bpa`) was moved to the
 > [`deprecated`](https://github.com/myung-group/BAM_V2/tree/deprecated) branch. Use that branch if you depend on the
 > old code.
+>
+> **Branch `race-v2.1-final` (2026-11-23).** Code of the RACE v2.1 models (`main` + the v2.1 architecture, training
+> and core-exclusion commits). What changed and why: [RACE v2.1](#race-v21-branch-race-v21-final-changes-with-respect-to-race-v20).
 
 RACE v2 is an E(3)-equivariant message-passing interatomic potential, an improved version of RACE. The code is written
 in JAX (Flax NNX); symmetry operations use e3nn-jax, and the edge tensor product runs on the CUDA kernels of NVIDIA
@@ -148,6 +151,69 @@ One component at a time is reverted to RACE V1. Each cell: energy RMSE (meV/mole
 
 Apart from the gate update, reverting any single component worsens energies and forces at 600 K and 1200 K. The gate
 update is equal or better except for the 1200 K energy, so the linear update shows no gain in this setting.
+
+## RACE v2.1 (branch `race-v2.1-final`): changes with respect to RACE v2.0
+
+This branch holds the code of **RACE-V2.1-9M-OAM** and **RACE-V2.1-9M-OAM-Replay** (2026-11-20 to 2026-11-22).
+The backbone of RACE v2 is kept: the layer-wise cluster expansion with per-layer energy strata, linear (Chebyshev)
+paths between layers, physical priors (UFF repulsion, element shell-radius channels) and forces as energy
+derivatives. Every change below is either a new parameterisation of an existing operation, an added polynomial term
+that keeps the expansion, or a smoothness / loss / prior change outside the architecture. Cutoff, width, depth, data
+and precision are those of RACE v2.0: 7 Å, 128 channels, lmax 3, 5 layers, float32 model with float64 SOAP state.
+
+### Architecture
+
+| Component | RACE v2.0 | RACE v2.1 | Config key |
+|---|---|---|---|
+| Layer update | linear update z | z + g · Linear(a ⊗ b): a, b are the two channel halves of RMS-normalised z, ⊗ every Clebsch-Gordan path into the hidden irreps, g a learned gain (init 0.1). A smooth quadratic equivariant term that raises the body order inside the layer without a general non-linearity between layers | `"update": "bilinear"` |
+| Edge tensor product | on all 128 channels | neighbour features contracted to 64 channels per irrep before the edge product; radial weights, product and `linear_2` act on 64 channels, `linear_2` expands back to 128 | `"tp_channels": 64` |
+| Channel-mixing linears | full matrices | `linear_1`, `linear_m`, `linear_2` of every layer as rank-32 products W = r^(-1/2) U V for every block with min(mul_in, mul_out) > 32 | `"linear_rank": 32` |
+| Element contraction | species rank 32 (+ prune) | species rank 16 (+ prune) | `"species_rank": 16` |
+| Cutoff envelope | polynomial envelope, p = 6 (C2 at r_c, jump of the third derivative) | (1 − (r/r_c)^p)^q with p = 4, q = 5: C4 at r_c | `"envelope_q": 5`, `"radial_polynomial_p": 4.0` |
+| Parameters | 17.8M | 9.0M (9,017,332) | |
+
+### Training
+
+| Component | RACE v2.0 | RACE v2.1 | Config key |
+|---|---|---|---|
+| Radial smoothness | Gaussian radial prior only | plus a decoupled decay b (n/N)^(2s) of row n of the first layer of every radial MLP (rows ordered by radial basis index), b = 0.01, s = 2: high-order radial functions are damped (Sobolev-type penalty) | `"sobolev_decay": {"base": 0.01, "s": 2}` |
+| Stress loss | Huber on each Voigt component | w_p Huber(Δp) + w_s Huber(‖Δs‖_F) with pressure p = tr σ / 3 and deviatoric stress s = σ − p I, w_p = 3, w_s = 1: invariant under rotations of the cell | `"stress_split": {"w_p": 3, "w_s": 1}` |
+| Replay stage (Replay model only) | none | after the fine-tuning, 3 virtual epochs (~1 data epoch) on the fine-tuning stream plus 20 % of the OMat24 training rows (5,600,145 rows, seeded subsets) with forces and stress only; LR 0.001, linear decay to 5e-5, weights 1/1/1. The energy loss is masked per structure and normalised by the number of energy-labelled structures | stream part option `"energy_loss": false` |
+| Schedule | OMat24 2 data epochs, then MPtrj ×8 + sAlex ×1 for 6.2 data epochs | the same (2 + 6.2), pretraining from scratch; Replay: + 1 | configs in `configs/race_v2.1_oam/` |
+
+### Inference: core exclusion (pre-registered 2026-11-20, no parameters)
+
+Below the shortest distance seen in training the learned part is switched off and replaced by ZBL:
+r_in = min(training minimum distance of the element pair, 0.5 (R_i + R_j)) with covalent radii R; every ML edge is
+multiplied by s(r) = C4 smoothstep((r − r_in + w) / w), w = 0.1 Å, and Σ_pairs (1 − s(r)) ZBL(r) is added after the
+learned scale and shift. The minimum distances are in
+`configs/race_v2.1_oam/mindist_train_mptrj_salex_omat24.json` (3,609 pairs; O–O 0.553 Å). Switch it on for any
+checkpoint with
+
+```bash
+export BAM_CORE_EXCLUSION='{"table": ["configs/race_v2.1_oam/mindist_train_mptrj_salex_omat24.json"], "cap": 0.5, "width": 0.1}'
+```
+
+It was on for the molecular dynamics and diatomic results below and off for the WBM and κ results. Whether any pair of
+the WBM / κ structures falls below r_in (which would make the two settings differ) has not been counted yet.
+
+### Effect (Matbench Discovery, unique prototypes, float64, no energy corrections, last epoch of a fixed schedule)
+
+| Model | Params | F1 | MAE (eV/atom) | R² | RMSD (Å) | κ SRME | CPS | CMDS | CDS |
+|---|---|---|---|---|---|---|---|---|---|
+| RACE-V2.0-18M-OAM, 2 + 6.2 (submitted) | 17.8M | 0.893 | 0.0214 | 0.872 | 0.0643 | 0.229 | 0.858 | 0.721 | 0.376 |
+| RACE-V2.1-9M-OAM, 2 + 6.2 | 9.0M | 0.895 | 0.0208 | 0.870 | 0.0637 | 0.177 | 0.870 | 0.740 | 0.492 |
+| RACE-V2.1-9M-OAM-Replay, 2 + 6.2 + 1 | 9.0M | 0.899 | 0.0206 | 0.871 | 0.0632 | 0.162 | 0.875 | 0.766 | 0.509 |
+
+CPS rank among the 63 models with a CPS in the leaderboard data (janosh/matbench-discovery commit 6d587c1): 22 → 19
+→ 16. MPtrj validation (EMA) energy / force MAE: 10.6 / 35.7 (v2.0), 10.04 / 30.36 (v2.1), 9.72 / 30.21 (Replay)
+meV/atom and meV/Å. CMDS and CDS of v2.1 are with core exclusion; those of v2.0 are without.
+
+Limits: the v2.0 → v2.1 step changes all components at once with the same schedule, so it measures the architecture
+change as a whole; the components were not ablated one by one at full scale (a 50k-structure screen predicted the
+opposite sign for κ). The replay stage has no control run with the same extra epoch without OMat24. The
+EquiformerV2-style gated update (`"update": "bigate"`) and the trained short-range ZBL stratum (`short_repulsion`)
+are in the code but were not used.
 
 ## Changes with respect to RACE V1
 

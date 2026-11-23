@@ -10,6 +10,37 @@
 > **Branch `race-v2.1-final` (2026-11-23).** Code of the RACE v2.1 models (`main` + the v2.1 architecture, training
 > and core-exclusion commits). What changed and why: [RACE v2.1](#race-v21-branch-race-v21-final-changes-with-respect-to-race-v20).
 
+## Upgraded: RACE v2.1 (2026-11-23)
+
+RACE v2.1 halves the parameters of RACE v2.0 (17.8M → 9.0M) and improves Matbench Discovery (unique prototypes,
+float64, no energy corrections, last epoch of a schedule fixed before the evaluation):
+
+| Model | Params | F1 | MAE (eV/atom) | RMSD (Å) | κ SRME | CPS | CPS rank* | CMDS | CDS |
+|---|---|---|---|---|---|---|---|---|---|
+| RACE-V2.0-18M-OAM (submitted) | 17.8M | 0.893 | 0.0214 | 0.0643 | 0.229 | 0.858 | 22 | 0.721 | 0.376 |
+| RACE-V2.1-9M-OAM | 9.0M | 0.895 | 0.0208 | 0.0637 | 0.177 | 0.870 | 19 | 0.740 | 0.492 |
+| **RACE-V2.1-9M-OAM-Replay** | 9.0M | **0.899** | **0.0206** | **0.0632** | **0.162** | **0.875** | **16** | **0.766** | **0.509** |
+| change v2.0 → Replay | −49 % | +0.006 | −0.0008 | −0.0011 | −29 % | +0.017 | +6 | +0.045 | +0.133 |
+
+\* among the 63 models with a CPS in the leaderboard data (janosh/matbench-discovery commit 6d587c1). Both v2.0 and
+v2.1 use the same schedule (OMat24 2 data epochs, then MPtrj ×8 + sAlex ×1 for 6.2); Replay adds one data epoch with
+20 % OMat24 (forces and stress only). CMDS / CDS of v2.1 with core exclusion, of v2.0 without.
+
+**Where the gain comes from.** Of the +0.017 CPS, +0.012 comes with the v2.1 architecture and training changes
+(same schedule as v2.0) and +0.005 with the replay stage. The architecture gain is almost entirely in κ (−23 %;
+F1 +0.002), and κ depends on the third derivatives of the energy. Our reading, not yet tested by ablation at full
+scale:
+- the smoothness changes are the most likely main cause: the C4 cutoff envelope (the v2.0 envelope has a jump of the
+  third derivative at the cutoff) and the Sobolev-type decay of the high-order radial functions;
+- the bilinear layer update is the likely cause of the lower validation force error (MPtrj force MAE 35.7 → 30.4
+  meV/Å), since it is the only change that adds expressiveness;
+- the tensor-product bottleneck, the low-rank linears and species rank 16 reduce the size; they are not a source of
+  the gain, the point is that halving the parameters did not cost accuracy.
+
+A 50k-structure screen gave the opposite sign for κ (0.932 → 1.007), so small screens do not predict this. The planned
+check is one full-schedule run with `envelope_q` and `sobolev_decay` off and one with `"update": "linear"`. Details of
+every change: [RACE v2.1](#race-v21-branch-race-v21-final-changes-with-respect-to-race-v20).
+
 RACE v2 is an E(3)-equivariant message-passing interatomic potential, an improved version of RACE. The code is written
 in JAX (Flax NNX); symmetry operations use e3nn-jax, and the edge tensor product runs on the CUDA kernels of NVIDIA
 cuEquivariance. This repository (distribution name `BAM_V2`) holds the model, the training, inference, evaluation and

@@ -13,16 +13,23 @@ everything a torch re-implementation needs to be checked layer by layer:
   <out>/frames.extxyz    the same structures (positions, cell, numbers) for the torch side
 
     python -I race_v2_torch/tools/dump_jax_reference.py --ckpt <ckpt.pkl> --out <dir> --val <aselmdb dir> [--n 12]
+    python -I race_v2_torch/tools/dump_jax_reference.py --ckpt <ckpt.pkl> --out <dir> --xyz frames.extxyz
+
+--xyz (2026-11-24): the structures are read from an ASE-readable file instead of a validation split.
+A float32-trained checkpoint is dumped in float64 with BAM_PREDICT_X64=1 (parameters and graphs cast, as predict.py).
 """
 import argparse, json, os, sys
 from pathlib import Path
 import numpy as np
 
 ap = argparse.ArgumentParser()
-ap.add_argument('--ckpt', required=True); ap.add_argument('--out', required=True); ap.add_argument('--val', required=True)
+ap.add_argument('--ckpt', required=True); ap.add_argument('--out', required=True)
+ap.add_argument('--val', default=None); ap.add_argument('--xyz', default=None)
 ap.add_argument('--n', type=int, default=12); ap.add_argument('--seed', type=int, default=0)
 ap.add_argument('--repo', default=str(Path(__file__).resolve().parents[2]))
 a = ap.parse_args()
+if (a.val is None) == (a.xyz is None):
+    ap.error('give exactly one of --val / --xyz')
 sys.path.insert(0, a.repo); sys.path.insert(0, os.path.join(a.repo, 'race_v2', 'data'))
 import jax
 jax.config.update('jax_enable_x64', True)
@@ -98,22 +105,27 @@ const['tp_example_out_irreps'] = np.asarray(str(tp.irreps))
 np.savez(out / 'constants.npz', **const)
 
 # ---------------------------------------------------------------- structures from the validation split
-files = sorted(str(q) for q in Path(a.val).glob('*.aselmdb'))
-src = S.AselmdbSource(files, lru=len(files))
-ids = [(f, r) for f in range(len(files)) for r in src.row_ids(f)]
-order = np.random.RandomState(a.seed).permutation(len(ids))
-frames, big = [], 0
-for k in order:
-    if len(frames) >= a.n:
-        break
-    st = src.read_block(*ids[k][:1], [ids[k][1]])[0]
-    n = len(st['numbers'])
-    if n > 160 or (len(frames) >= a.n - 2 and big < 2 and n < 40):
-        continue                                   # keep them small, but at least two with >= 40 atoms
-    big += n >= 40
-    at = ase.Atoms(numbers=st['numbers'], positions=st['positions'], cell=st['cell'], pbc=True)
-    at.info['source'] = f'val{ids[k][0]:02d}_{ids[k][1]}'
-    frames.append(at)
+if a.xyz is not None:
+    frames = ase.io.read(a.xyz, ':')
+    for k, at in enumerate(frames):
+        at.info.setdefault('source', f'xyz_{k}')
+else:
+    files = sorted(str(q) for q in Path(a.val).glob('*.aselmdb'))
+    src = S.AselmdbSource(files, lru=len(files))
+    ids = [(f, r) for f in range(len(files)) for r in src.row_ids(f)]
+    order = np.random.RandomState(a.seed).permutation(len(ids))
+    frames, big = [], 0
+    for k in order:
+        if len(frames) >= a.n:
+            break
+        st = src.read_block(*ids[k][:1], [ids[k][1]])[0]
+        n = len(st['numbers'])
+        if n > 160 or (len(frames) >= a.n - 2 and big < 2 and n < 40):
+            continue                                   # keep them small, but at least two with >= 40 atoms
+        big += n >= 40
+        at = ase.Atoms(numbers=st['numbers'], positions=st['positions'], cell=st['cell'], pbc=True)
+        at.info['source'] = f'val{ids[k][0]:02d}_{ids[k][1]}'
+        frames.append(at)
 ase.io.write(out / 'frames.extxyz', frames, format='extxyz')
 
 def arr(x):

@@ -154,7 +154,7 @@ def build_from_params(params: Dict[tuple, np.ndarray], cfg: Dict, strict: bool =
     return model.eval(), report
 
 
-def convert(out, ckpt=None, npz=None, config=None, which='ema_params') -> Tuple[RACEv2, Dict]:
+def convert(out, ckpt=None, npz=None, config=None, which='ema_params', core_exclusion=None) -> Tuple[RACEv2, Dict]:
     if ckpt is not None:
         params, cfg = load_pickled_checkpoint(ckpt, which)
         source = dict(kind='pickle', path=str(ckpt), which=which)
@@ -166,6 +166,9 @@ def convert(out, ckpt=None, npz=None, config=None, which='ema_params') -> Tuple[
     if cfg is None:
         raise ValueError("no config: the checkpoint has none, pass --config")
     model, report = build_from_params(params, cfg)
+    if core_exclusion is not None:
+        model.set_core_exclusion(core_exclusion)
+        source['core_exclusion'] = {k: v for k, v in core_exclusion.items()}
     if out is not None:
         model.save(out, config=cfg, extra=dict(source=source, report=report))
     return model, report
@@ -178,9 +181,19 @@ def main():
     g.add_argument('--npz', help='params.npz of tools/dump_jax_reference.py')
     ap.add_argument('--config', help='config.json (required with --npz; overrides the checkpoint config)')
     ap.add_argument('--which', default='ema_params', help="checkpoint entry: ema_params (default, as predict.py) or params")
+    ap.add_argument('--core-exclusion', nargs='+', default=None, metavar='MINDIST_JSON',
+                    help="store the core exclusion in the model file: mindist JSON table(s) (cap 0.5, width 0.1), or "
+                         "'default' for the table of the RACE v2.1 training data.  Without it the model file carries "
+                         "the checkpoint config's own core_exclusion, if any; the calculator switches the default "
+                         "table on for a file without one")
     ap.add_argument('--out', required=True)
     a = ap.parse_args()
-    model, report = convert(a.out, ckpt=a.ckpt, npz=a.npz, config=a.config, which=a.which)
+    ce = None
+    if a.core_exclusion:
+        from .calculator import DEFAULT_CORE_EXCLUSION
+        ce = (dict(DEFAULT_CORE_EXCLUSION) if a.core_exclusion == ['default']
+              else {'table': list(a.core_exclusion), 'cap': 0.5, 'width': 0.1})
+    model, report = convert(a.out, ckpt=a.ckpt, npz=a.npz, config=a.config, which=a.which, core_exclusion=ce)
     n_t = sum(p.numel() for p in model.parameters())
     print(f"converted {report['n_converted']} arrays ({report['n_values']:,} values; torch model {n_t:,} parameters), "
           f"ignored {report['n_ignored']} arrays of {report['ignored']}, source dtypes {report['source_dtypes']} "

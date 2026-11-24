@@ -2,7 +2,9 @@
 
 Faithful port in float64 of the configuration family of the MPtrj runs (x_mode basis, x_norm hill, residual chebyshev,
 LayerScale, linear update, message_norm avg, gated stratum readouts, x / f readouts, radial prior, shell-radius radial
-channels, UFF repulsion with switch, periodic cells with stress).  Features use the e3nn-jax ``mul_ir`` layout
+channels, UFF repulsion with switch, periodic cells with stress), and of the options of the 'nx1' architecture chain
+(2026-11-20): update bilinear, tp_channels (channel bottleneck of the edge product), linear_rank (low-rank channel
+mixing linears), envelope_q (C^(q-1) cutoff envelope) and the parameter-free core exclusion (set_core_exclusion).  Features use the e3nn-jax ``mul_ir`` layout
 (per irrep block ``(mul, 2l+1)``), so every weight matrix of the JAX checkpoint maps one-to-one onto a parameter of the
 same name here (``layers.3.linear_2.weight_w_0_0_512x0e_128x0e`` <-> ``layers/3/linear_2/weight_w_0_0_512x0e_128x0e``).
 
@@ -25,7 +27,7 @@ from . import o3
 from .o3 import Irreps, NormalizedSiLU, silu
 
 FORMAT = 'racev2_torch'
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2          # 2: update bilinear / tp_channels / linear_rank / envelope_q (files without them stay 1)
 
 
 # ===================================================================================================== config
@@ -40,7 +42,7 @@ _FIXED_OPTIONS = [
     ('x_mode', 'species', ('basis',)),
     ('x_norm', None, ('hill',)),
     ('residual', 'none', ('chebyshev',)),
-    ('update', 'gate', ('linear',)),
+    ('update', 'gate', ('linear', 'bilinear')),
     ('message_norm', 'layer', ('avg',)),
     ('readout_mode', 'linear', ('gated',)),
     ('embed_mode', 'onehot', ('onehot',)),
@@ -72,7 +74,51 @@ _FIXED_OPTIONS = [
     ('force_encoding', False, (False,)),
     ('dens', False, (False,)),
     ('noisy_nodes', False, (False,)),
+    ('short_repulsion', None, (None,)),
 ]
+
+
+def core_exclusion_r_in(spec: Dict, atomic_numbers: Sequence[int]) -> Tuple[List[List[float]], float]:
+    """training.train._core_exclusion: {"table": {"Z1-Z2": r_min A} or [paths of mindist JSON files], "cap": 0.5,
+    "width": 0.1} -> (r_in n_species x n_species, width): r_in = min(training minimum distance of the pair,
+    cap (R_i + R_j)) with the covalent radii R; pairs absent from the table get cap (R_i + R_j)."""
+    import json
+    from . import constants as C
+    table = spec.get('table', {})
+    if isinstance(table, (list, tuple)):
+        merged: Dict[str, float] = {}
+        for path in table:
+            with open(path) as fh:
+                d = json.load(fh)
+            for k, v in d['merged'].items():
+                merged[k] = min(merged.get(k, 1e9), float(v[0]))
+        table = merged
+    cap = float(spec.get('cap', 0.5))
+    zs = [int(z) for z in atomic_numbers]
+    rad = C.covalent_radii(zs)
+    r_in = []
+    for a, za in enumerate(zs):
+        row = []
+        for b, zb in enumerate(zs):
+            key = f"{min(za, zb)}-{max(za, zb)}"
+            c = cap * (rad[a] + rad[b])
+            row.append(min(float(table[key]), c) if key in table else c)
+        r_in.append(row)
+    return r_in, float(spec.get('width', 0.1))
+
+
+def _smoothstep_c4(t: torch.Tensor) -> torch.Tensor:
+    """models.race._smoothstep_c4: 0 for t <= 0, 1 for t >= 1, four derivatives zero at both ends."""
+    t = torch.clamp(t, 0.0, 1.0)
+    return t ** 5 * (126.0 - 420.0 * t + 540.0 * t ** 2 - 315.0 * t ** 3 + 70.0 * t ** 4)
+
+
+def _zbl(zi: torch.Tensor, zj: torch.Tensor, rs: torch.Tensor) -> torch.Tensor:
+    """models.race._zbl: ZBL universal screened Coulomb repulsion (eV), rs in A (> 0)."""
+    x = rs / (0.46850 / (zi ** 0.23 + zj ** 0.23))
+    phi = (0.18175 * torch.exp(-3.19980 * x) + 0.50986 * torch.exp(-0.94229 * x)
+           + 0.28022 * torch.exp(-0.40290 * x) + 0.02817 * torch.exp(-0.20162 * x))
+    return 14.399645 * zi * zj / rs * phi
 
 
 def resolve_config(cfg: Dict) -> Dict:
@@ -112,6 +158,15 @@ def resolve_config(cfg: Dict) -> Dict:
         atom_energies = [0.0] * len(atomic_numbers)
     sr = _get(cfg, 'species_rank', None)
     switch = _get(cfg, 'pair_repulsion_switch', None)
+    update = str(_get(cfg, 'update', 'gate'))
+    tpc = _get(cfg, 'tp_channels', None)
+    lrank = _get(cfg, 'linear_rank', None)
+    env_q = _get(cfg, 'envelope_q', None)
+    ce = _get(cfg, 'core_exclusion', None)
+    core_r_in, core_width = core_exclusion_r_in(ce, atomic_numbers) if ce else (None, 0.1)
+    mul = hidden[0][0]
+    if update == 'bilinear' and mul % 2:
+        raise NotImplementedError(f"update='bilinear' needs an even multiplicity, got {hidden}")
     return dict(
         atomic_numbers=atomic_numbers,
         atom_energies=[float(e) for e in atom_energies],
@@ -134,6 +189,12 @@ def resolve_config(cfg: Dict) -> Dict:
         pair_repulsion_switch_width=float(_get(cfg, 'pair_repulsion_switch_width', 0.1)),
         species_rank=(None if sr is None else int(sr)),
         species_rank_prune=bool(_get(cfg, 'species_rank_prune', False)) and sr is not None,
+        update=update,
+        tp_channels=(None if tpc is None else int(tpc)),
+        linear_rank=(None if lrank is None else int(lrank)),
+        envelope_q=(None if env_q is None else float(env_q)),
+        core_r_in=core_r_in,
+        core_width=core_width,
     )
 
 
@@ -165,12 +226,18 @@ class EquivariantLinear(nn.Module):
     fan_in = sum of the input multiplicities feeding the output block (path_normalization "element", gradient
     normalization "path": e3nn-jax defaults).  Element-indexed (``num_indexed``): one W per species; with
     ``index_rank`` K the table is W[z] = K**-0.5 sum_k coeff[z, k] basis[k] (``index_rank_lpos`` for l > 0 outputs).
+    ``weight_rank`` r (not indexed): every block (mul_in, mul_out) with min(mul_in, mul_out) > r is stored as the
+    product W = r**-0.5 U V, U = ``weight_*`` (mul_in, r), V = ``lowv_*`` (r, mul_out) (models.linear.Linear
+    weight_rank, config linear_rank).
     """
 
     def __init__(self, irreps_in, irreps_out, biases: bool = False, force_irreps_out: bool = False,
                  num_indexed: Optional[int] = None, index_rank: Optional[int] = None,
-                 index_rank_lpos: Optional[int] = None):
+                 index_rank_lpos: Optional[int] = None, weight_rank: Optional[int] = None):
         super().__init__()
+        if weight_rank is not None and num_indexed is not None:
+            raise ValueError("weight_rank needs a linear without species index")
+        self.weight_rank = None if weight_rank is None else int(weight_rank)
         self.irreps_in = Irreps(irreps_in).regroup()
         irreps_out = Irreps(irreps_out)
         if not force_irreps_out:
@@ -183,6 +250,7 @@ class EquivariantLinear(nn.Module):
         ins = [(i, o) for i, (_, li, pi) in enumerate(self.irreps_in) for o, (_, lo, po) in enumerate(irreps_out)
                if (li, pi) == (lo, po)]
         self.instructions = []
+        self._low: Dict[str, bool] = {}
         for i, o in ins:
             x = (self.irreps_in[i][0] ** 0.0) * sum(float(self.irreps_in[i2][0]) ** 1.0 for i2, o2 in ins if o2 == o)
             alpha = 1 / x if x > 0 else 1.0
@@ -192,7 +260,12 @@ class EquivariantLinear(nn.Module):
             rank = None
             if num_indexed is not None and self.index_rank is not None:
                 rank = self.index_rank_lpos if irreps_out[o][1] > 0 else self.index_rank
-            if num_indexed is None:
+            low = self.weight_rank is not None and min(mi, mo) > self.weight_rank
+            if low:
+                shape = (mi, self.weight_rank)
+                self.register_parameter("lowv_" + name[len("weight_"):],
+                                        nn.Parameter(torch.zeros(self.weight_rank, mo, dtype=torch.float64)))
+            elif num_indexed is None:
                 shape = (mi, mo)
             elif rank is None:
                 shape = (num_indexed, mi, mo)
@@ -202,6 +275,7 @@ class EquivariantLinear(nn.Module):
                                         nn.Parameter(torch.zeros(num_indexed, rank, dtype=torch.float64)))
             self.register_parameter(name, nn.Parameter(torch.zeros(shape, dtype=torch.float64)))
             self.instructions.append((i, o, name, path_weight, rank))
+            self._low[name] = low
         self.biases = []
         if biases:
             for o, (mo, lo, po) in enumerate(irreps_out):
@@ -220,6 +294,14 @@ class EquivariantLinear(nn.Module):
         c = getattr(self, "coeff_" + name[len("weight_"):])
         return torch.tensordot(c[z], w, dims=1) * (w.shape[0] ** -0.5)
 
+    def weight(self, name: str) -> torch.Tensor:
+        """W (mul_in, mul_out) of a block without species index (models.linear.Linear._get_weight)."""
+        w = getattr(self, name)
+        if self._low[name]:
+            v = getattr(self, "lowv_" + name[len("weight_"):])
+            w = (w @ v) * (v.shape[0] ** -0.5)
+        return w
+
     def forward(self, x: torch.Tensor, species: Optional[torch.Tensor] = None,
                 groups: Optional[SpeciesGroups] = None) -> torch.Tensor:
         n = x.shape[0]
@@ -234,7 +316,7 @@ class EquivariantLinear(nn.Module):
             mi, li, _ = self.irreps_in[i]
             xb = x[:, a:b].reshape(n, mi, 2 * li + 1)
             if self.num_indexed is None:
-                y = pw * torch.einsum("uw,nui->nwi", getattr(self, name), xb)
+                y = pw * torch.einsum("uw,nui->nwi", self.weight(name), xb)
             else:
                 xs = xb[groups.perm]
                 parts, off = [], 0
@@ -327,6 +409,16 @@ def polynomial_cutoff(x: torch.Tensor, r_max, p: float) -> torch.Tensor:
     return out * torch.where(x < 1.0, 1.0, 0.0)
 
 
+def cutoff_envelope(x: torch.Tensor, r_max, p: float, q: Optional[float] = None) -> torch.Tensor:
+    """blocks.cutoff_envelope: q None -> polynomial_cutoff (C2); q -> (1 - (x / r_max)^p)^q, C^(q-1) at r_max."""
+    if q is None:
+        return polynomial_cutoff(x, r_max, p)
+    d = x / r_max
+    inside = d < 1.0
+    base = torch.where(inside, 1.0 - torch.pow(torch.where(inside, d, torch.zeros_like(d)), p), torch.zeros_like(d))
+    return torch.pow(base, q) * torch.where(inside, 1.0, 0.0)
+
+
 def _safe_norm(r2: torch.Tensor) -> torch.Tensor:
     """sqrt(r2) with value 0 and gradient 0 at r2 = 0 (JAX: where(r2 == 0, 0, sqrt(r2)))."""
     ok = r2 > 0.0
@@ -410,6 +502,50 @@ class EdgeTensorProduct(nn.Module):
         return torch.cat(chunks, dim=-1)
 
 
+class CueEdgeTensorProduct(nn.Module):
+    """The same operation as EdgeTensorProduct by one fused cuEquivariance kernel (gather, tensor product, scatter:
+    models.race.cue_edge_tensor_product), so the per-edge messages are never materialised.  Needs the packages
+    cuequivariance, cuequivariance-torch and cuequivariance-ops-torch-cu12 and a CUDA device.  No parameters: the
+    module can replace an EdgeTensorProduct of a loaded model (RACEv2.use_tp_kernel)."""
+
+    def __init__(self, irreps_in: Irreps, sh_irreps: Irreps, filter_irreps: Irreps):
+        super().__init__()
+        import cuequivariance as cue
+        import cuequivariance_torch as cuet
+        self.irreps_in = Irreps(irreps_in)
+        self.sh_irreps = Irreps(sh_irreps)
+        muls = {m for m, _, _ in self.irreps_in}
+        if len(muls) != 1:
+            raise NotImplementedError(f"cue edge tensor product needs a uniform multiplicity, got {self.irreps_in}")
+        mul = muls.pop()
+        # output filter with the input multiplicity, as models.race.RACEConvolution msg_tp_irreps
+        flt = Irreps([(mul, l, p) for _, l, p in Irreps(filter_irreps)])
+        e = cue.descriptors.channelwise_tensor_product(
+            cue.Irreps(cue.O3, str(self.irreps_in)), cue.Irreps(cue.O3, str(self.sh_irreps)),
+            cue.Irreps(cue.O3, str(flt)))
+        self.irreps_out = Irreps(str(e.outputs[0].irreps))
+        ref = EdgeTensorProduct(self.irreps_in, self.sh_irreps, Irreps(filter_irreps))
+        if ref.irreps_out != self.irreps_out:
+            raise RuntimeError(f"cue output irreps {self.irreps_out} differ from the port's {ref.irreps_out}")
+        self.n_weights = int(e.polynomial.inputs[0].size)
+        assert self.n_weights == self.irreps_out.num_irreps
+        self.out_size = int(e.polynomial.outputs[0].size)
+        self.poly = cuet.SegmentedPolynomial(e.polynomial, method="uniform_1d")
+        self._in_sl = [(a, b, m, 2 * l + 1) for (a, b), (m, l, _) in zip(self.irreps_in.slices(), self.irreps_in)]
+        self._out_sl = [(a, b, m, 2 * l + 1) for (a, b), (m, l, _) in zip(self.irreps_out.slices(), self.irreps_out)]
+
+    def forward(self, x: torch.Tensor, sh: torch.Tensor, w: torch.Tensor, senders: torch.Tensor,
+                receivers: torch.Tensor, n_nodes: int) -> torch.Tensor:
+        n = x.shape[0]
+        # mul_ir (mul, 2l+1) per block -> cue ir_mul (2l+1, mul)
+        xi = torch.cat([x[:, a:b].reshape(n, m, d).transpose(1, 2).reshape(n, m * d) for a, b, m, d in self._in_sl],
+                       dim=-1)
+        shape = torch.empty((n_nodes, 0), device=x.device)
+        (out,) = self.poly([w, xi, sh], {1: senders}, {0: shape}, {0: receivers})
+        return torch.cat([out[:, a:b].reshape(n_nodes, d, m).transpose(1, 2).reshape(n_nodes, m * d)
+                          for a, b, m, d in self._out_sl], dim=-1)
+
+
 class ChannelwiseProduct(nn.Module):
     """Equivariant product m_i (x) x_i of RACEConvolution (x_mode basis): the e3nn-jax tensor product of the
     multiplicity-1 copies (mul_to_axis), all CG paths into the hidden irreps, axis_to_mul (channel-major: block mul
@@ -490,14 +626,25 @@ class RACEXReadout(nn.Module):
 
 
 class RACEConvolution(nn.Module):
-    """models.race.RACEConvolution for x_mode basis, update linear, message_norm avg, readout gated, residual
-    chebyshev (in_layer_order 1, no sym contraction, no msg_lmax)."""
+    """models.race.RACEConvolution for x_mode basis, update linear / bilinear, message_norm avg, readout gated,
+    residual chebyshev (in_layer_order 1, no sym contraction, no msg_lmax).
+
+    tp_channels C_b: linear_1 contracts every irrep of h_j to C_b channels before the edge tensor product (radial
+    weights and edge product on C_b channels; linear_m expands back).  linear_rank r: linear_1, linear_m and
+    linear_2 are low-rank (EquivariantLinear weight_rank).  update bilinear: the linear update z plus
+    bl_gain * linear_bl(a (x) b), a / b the two channel halves of the per-node RMS-normalised z, (x) every CG path
+    into the hidden irreps (channelwise)."""
 
     def __init__(self, input_irreps: Irreps, hidden_irreps: Irreps, sh_irreps: Irreps, n_species: int,
                  n_radial: int, radial_mlp_size: int, radial_mlp_layers: int, avg_n_neighbors: float,
                  layer_scale: Optional[float], radial_scale: Optional[Sequence[float]], species_rank: Optional[int],
-                 species_rank_lpos: Optional[int]):
+                 species_rank_lpos: Optional[int], update: str = 'linear', tp_channels: Optional[int] = None,
+                 linear_rank: Optional[int] = None):
         super().__init__()
+        if update not in ('linear', 'bilinear'):
+            raise NotImplementedError(f"update={update!r}")
+        self.update = update
+        self.tp_channels = None if tp_channels is None else int(tp_channels)
         self.input_irreps = Irreps(input_irreps)
         self.output_irreps = Irreps(hidden_irreps)
         self.avg_n_neighbors = float(avg_n_neighbors)
@@ -505,18 +652,31 @@ class RACEConvolution(nn.Module):
         if self.radial_scale is not None:
             self.register_buffer("radial_scale_t", torch.tensor(self.radial_scale, dtype=torch.float64),
                                  persistent=False)
-        self.tp = EdgeTensorProduct(self.input_irreps, sh_irreps, self.output_irreps)
+        # input of the edge product: h_j itself, or its contraction to tp_channels channels per irrep
+        self.msg_in_irreps = (self.input_irreps if self.tp_channels is None else
+                              Irreps([(self.tp_channels, l, p) for _, l, p in self.input_irreps]).regroup())
+        self.tp = EdgeTensorProduct(self.msg_in_irreps, sh_irreps, self.output_irreps)
         self.tp_irreps = self.tp.irreps_out                      # not regrouped (cue output irreps)
-        self.linear_1 = EquivariantLinear(self.input_irreps, self.input_irreps)
+        self.linear_1 = EquivariantLinear(self.input_irreps, self.msg_in_irreps,
+                                          force_irreps_out=self.tp_channels is not None, weight_rank=linear_rank)
         self.radial_mlp = RadialMLP([n_radial] + [radial_mlp_size] * radial_mlp_layers + [self.tp.n_weights])
         if layer_scale is not None:
             self.gamma = nn.Parameter(torch.full((self.output_irreps.num_irreps,), float(layer_scale),
                                                  dtype=torch.float64))
         else:
             self.gamma = None
-        self.linear_m = EquivariantLinear(self.tp_irreps, self.output_irreps, force_irreps_out=True)
+        self.linear_m = EquivariantLinear(self.tp_irreps, self.output_irreps, force_irreps_out=True,
+                                          weight_rank=linear_rank)
         self.xprod = ChannelwiseProduct(self.output_irreps)
-        self.linear_2 = EquivariantLinear(self.xprod.irreps_out, self.output_irreps, force_irreps_out=True)
+        self.linear_2 = EquivariantLinear(self.xprod.irreps_out, self.output_irreps, force_irreps_out=True,
+                                          weight_rank=linear_rank)
+        if update == 'bilinear':
+            mul = self.output_irreps[0][0]
+            self.bl_half = mul // 2
+            self.blprod = ChannelwiseProduct(Irreps([(self.bl_half, l, p) for _, l, p in self.output_irreps]))
+            self.linear_bl = EquivariantLinear(self.blprod.irreps_out, self.output_irreps, force_irreps_out=True)
+            self.bl_gain = nn.Parameter(torch.full((1,), 0.1, dtype=torch.float64))
+            self._out_slices = self.output_irreps.slices()
         self.skip = EquivariantLinear(self.input_irreps, self.output_irreps, force_irreps_out=True,
                                       num_indexed=n_species, index_rank=species_rank,
                                       index_rank_lpos=species_rank_lpos)
@@ -537,7 +697,7 @@ class RACEConvolution(nn.Module):
             return self.tp(h, y, self.radial_mlp(rb), s, r, n)
 
         e = senders.shape[0]
-        if edge_chunk and e > edge_chunk:
+        if edge_chunk and e > edge_chunk and not isinstance(self.tp, CueEdgeTensorProduct):
             from torch.utils.checkpoint import checkpoint
             agg = None
             for a in range(0, e, edge_chunk):
@@ -555,6 +715,13 @@ class RACEConvolution(nn.Module):
         m = self.linear_m(m)
         prod = self.xprod(m, x_feats)
         delta = self.linear_2(prod) + self.skip(features, species, groups)
+        if self.update == 'bilinear':
+            n, h = delta.shape[0], self.bl_half
+            zn = delta * torch.rsqrt(torch.mean(delta * delta, dim=-1, keepdim=True) + 1e-6)     # _rms_normalize
+            blocks = [zn[:, a:b].reshape(n, 2 * h, (b - a) // (2 * h)) for a, b in self._out_slices]
+            za = torch.cat([blk[:, :h].reshape(n, -1) for blk in blocks], dim=-1)
+            zb = torch.cat([blk[:, h:].reshape(n, -1) for blk in blocks], dim=-1)
+            delta = delta + self.bl_gain * self.linear_bl(self.blprod(za, zb))
         if self.gamma is not None:
             delta = delta * _expand_per_irrep(self.gamma, self.output_irreps)[None, :]
         if prev_features is not None and self.input_irreps == self.output_irreps:
@@ -582,6 +749,7 @@ class RACEv2(nn.Module):
         self.periodic = bool(hp['periodic'])
         self.radial_basis_size = int(hp['radial_basis_size'])
         self.radial_polynomial_p = float(hp['radial_polynomial_p'])
+        self.envelope_q = None if hp.get('envelope_q') is None else float(hp['envelope_q'])
         self.avg_n_neighbors = float(hp['avg_n_neighbors'])
         self.n_layers = int(hp['n_layers'])
         self.hidden_irreps = Irreps(hp['hidden_irreps'])
@@ -639,7 +807,9 @@ class RACEv2(nn.Module):
                 inp, self.hidden_irreps, self.sh_irreps, n_species, self.radial_basis_size + n_extra,
                 int(hp['radial_mlp_size']), int(hp['radial_mlp_layers']), self.avg_n_neighbors,
                 layer_scale=(hp.get('layer_scale') if i >= 1 else None), radial_scale=radial_scales[i],
-                species_rank=species_rank, species_rank_lpos=(1 if (prune and i == self.n_layers - 1) else None)))
+                species_rank=species_rank, species_rank_lpos=(1 if (prune and i == self.n_layers - 1) else None),
+                update=str(hp.get('update') or 'linear'), tp_channels=hp.get('tp_channels'),
+                linear_rank=hp.get('linear_rank')))
             x_readouts.append(RACEXReadout(ro_hidden, self.hidden_irreps, n_species, self.avg_n_neighbors,
                                            species_rank))
             f_readouts.append(RACEXReadout(ro_hidden, inp, n_species, self.avg_n_neighbors, species_rank))
@@ -652,7 +822,13 @@ class RACEv2(nn.Module):
         self.x_hill = nn.Parameter(torch.zeros(self.n_layers, 2, n_species, dtype=torch.float64))
         self.shift = nn.Parameter(torch.zeros((), dtype=torch.float64))
         self.scale = nn.Parameter(torch.ones((), dtype=torch.float64))
+        self.register_buffer("core_r_in", None, persistent=False)
+        self.register_buffer("species_z_f", torch.tensor([float(v) for v in z], dtype=torch.float64), persistent=False)
+        self.core_width = 0.1
+        if hp.get('core_r_in') is not None:
+            self.set_core_exclusion(hp['core_r_in'], float(hp.get('core_width', 0.1)))
         self.edge_chunk = 0                     # > 0: edge tensor products in chunks with recomputation (memory)
+        self.tp_kernel = 'torch'                # use_tp_kernel('cue'): fused cuEquivariance edge kernel
 
     # ----------------------------------------------------------------------------------------------- I/O
     @classmethod
@@ -660,7 +836,11 @@ class RACEv2(nn.Module):
         return cls(resolve_config(cfg))
 
     def save(self, path, config: Optional[Dict] = None, extra: Optional[Dict] = None):
-        torch.save({'format': FORMAT, 'format_version': FORMAT_VERSION, 'hyperparameters': self.hp,
+        hp = self.hp
+        v2 = (str(hp.get('update') or 'linear') != 'linear' or hp.get('tp_channels') is not None
+              or hp.get('linear_rank') is not None or hp.get('envelope_q') is not None
+              or hp.get('core_r_in') is not None)
+        torch.save({'format': FORMAT, 'format_version': (FORMAT_VERSION if v2 else 1), 'hyperparameters': self.hp,
                     'config': config, 'state_dict': {k: v.detach().cpu() for k, v in self.state_dict().items()},
                     'extra': extra or {}}, path)
 
@@ -676,6 +856,40 @@ class RACEv2(nn.Module):
         model.source_config = d.get('config')
         model.extra = d.get('extra', {})
         return model.eval()
+
+    def set_core_exclusion(self, r_in=None, width: float = 0.1) -> "RACEv2":
+        """Core exclusion (models.race.RACE core_exclusion, no parameters, so it can be switched for a loaded model):
+        every ML edge is multiplied by s(r) = smoothstep_C4((r - r_in + w) / w) and sum over pairs of (1 - s) ZBL(r) is
+        added to the energy after scale / shift.  r_in: n_species x n_species (A) from core_exclusion_r_in, or a
+        specification dict, or None = off."""
+        if isinstance(r_in, dict):
+            r_in, width = core_exclusion_r_in(r_in, self.atomic_numbers)
+        if r_in is None:
+            self.core_r_in = None
+            self.hp['core_r_in'] = None
+            return self
+        t = torch.as_tensor(r_in, dtype=torch.float64)
+        if tuple(t.shape) != (self.n_species, self.n_species):
+            raise ValueError(f"core exclusion r_in must be {self.n_species} x {self.n_species}, got {tuple(t.shape)}")
+        self.core_r_in = t.to(self.species_z_f.device)
+        self.core_width = float(width)
+        self.hp['core_r_in'] = [[float(v) for v in row] for row in t.tolist()]
+        self.hp['core_width'] = self.core_width
+        return self
+
+    def use_tp_kernel(self, kind: str = 'torch') -> "RACEv2":
+        """Kernel of the edge tensor products: 'torch' (plain PyTorch, any device, the default) or 'cue' (one fused
+        cuEquivariance kernel per layer, CUDA only; the same numbers to rounding, much less device memory and time).
+        The weights are untouched: the kernels have no parameters."""
+        if kind not in ('torch', 'cue'):
+            raise ValueError(f"tp kernel must be 'torch' or 'cue', got {kind!r}")
+        cls = CueEdgeTensorProduct if kind == 'cue' else EdgeTensorProduct
+        p = next(self.parameters())
+        for layer in self.layers:
+            if not isinstance(layer.tp, cls):
+                layer.tp = cls(layer.msg_in_irreps, self.sh_irreps, layer.output_irreps).to(p.device)
+        self.tp_kernel = kind
+        return self
 
     # ----------------------------------------------------------------------------------------------- forward pieces
     def edge_vectors(self, positions, senders, receivers, shifts=None, cell=None, n_edge=None):
@@ -705,7 +919,7 @@ class RACEv2(nn.Module):
         cutoff_e = torch.where(cutoff_e > 1.0, cutoff_e, torch.ones_like(cutoff_e))
         r_norm_f = _safe_norm(torch.sum(r_feat ** 2, dim=-1))
         radial_basis = (bessel_basis(r_norm_f, self.radial_basis_size, cutoff_e)
-                        * polynomial_cutoff(r_norm_f, cutoff_e, self.radial_polynomial_p)[:, None])
+                        * cutoff_envelope(r_norm_f, cutoff_e, self.radial_polynomial_p, self.envelope_q)[:, None])
         sh = self.sph(r_feat)
         r2 = torch.sum(r_dist ** 2, dim=-1)
         r_norm = _safe_norm(r2)
@@ -721,7 +935,7 @@ class RACEv2(nn.Module):
                                                                                      torch.ones_like(denom))),
                               torch.zeros_like(denom))
             env = env.reshape(e, self.n_shells ** 2)
-            env = env * polynomial_cutoff(r_norm, r_c, self.radial_polynomial_p)[:, None]
+            env = env * cutoff_envelope(r_norm, r_c, self.radial_polynomial_p, self.envelope_q)[:, None]
             shell_env = env
             radial_basis = torch.cat([radial_basis, env], dim=-1)
         edge_ok = (r2 > 0.0).to(dtype)
@@ -729,12 +943,20 @@ class RACEv2(nn.Module):
         sh = sh * edge_ok[:, None]
         if shell_env is not None:
             shell_env = shell_env * edge_ok[:, None]
+        s_core = None
+        if self.core_r_in is not None:
+            # core exclusion: the ML part does not see edges inside the training-data minimum distance
+            r_in = self.core_r_in.to(dtype)[species[receivers], species[senders]]
+            s_core = _smoothstep_c4((r_norm - r_in + self.core_width) / self.core_width)
+            radial_basis = radial_basis * s_core[:, None]
+            if shell_env is not None:
+                shell_env = shell_env * s_core[:, None]
         onehot = torch.nn.functional.one_hot(species.long(), self.n_species).to(dtype)
         features = self.species_embedding(onehot)
         outputs = []
         if self.pair_repulsion:
             sp_i, sp_j = species[receivers], species[senders]
-            f_cut = polynomial_cutoff(r_norm, r_c, self.radial_polynomial_p)
+            f_cut = cutoff_envelope(r_norm, r_c, self.radial_polynomial_p, self.envelope_q)
             tab = self.uff_table.to(dtype)
             xi, xj = tab[sp_i, 0], tab[sp_j, 0]
             di, dj = tab[sp_i, 1], tab[sp_j, 1]
@@ -755,7 +977,7 @@ class RACEv2(nn.Module):
         atomic_basis = self.layers[0].aggregate(features, sh, radial_basis, senders, receivers, self.edge_chunk)
         return dict(features=features, radial_basis=radial_basis, sh=sh, species=species, groups=groups,
                     senders=senders, receivers=receivers, r_norm=r_norm, shell_env=shell_env,
-                    atomic_basis=atomic_basis, outputs=outputs, x_feats=None,
+                    atomic_basis=atomic_basis, outputs=outputs, x_feats=None, s_core=s_core,
                     layer_parts={"node": [], "x": [], "f": []})
 
     def x_features(self, ctx: Dict, i: int) -> torch.Tensor:
@@ -791,6 +1013,17 @@ class RACEv2(nn.Module):
         strata = torch.stack(outputs, dim=0) * self.scale
         node_energies = torch.sum(torch.stack(outputs, dim=1), dim=-1, keepdim=True)
         node_energies = node_energies * self.scale + self.shift
+        s_core = ctx.get('s_core')
+        if s_core is not None:
+            # core exclusion: (1 - s) ZBL per pair, unscaled (each pair twice in the edge list -> 1/2)
+            sp, r_norm = ctx['species'], ctx['r_norm']
+            z = self.species_z_f.to(r_norm.dtype)
+            zi, zj = z[sp[ctx['receivers']]], z[sp[ctx['senders']]]
+            rs = torch.where(r_norm > 0.0, r_norm, torch.ones_like(r_norm))
+            e_core = torch.where(r_norm > 0.0, (1.0 - s_core) * _zbl(zi, zj, rs), torch.zeros_like(r_norm))
+            e_core = 0.5 * torch.zeros(node_energies.shape[0], dtype=r_norm.dtype,
+                                       device=r_norm.device).index_add(0, ctx['receivers'], e_core)
+            node_energies = node_energies + e_core[:, None]
         return {'node_energies': node_energies, 'node_features': features, 'strata': strata,
                 'strata_parts': {k: torch.stack(v, dim=0) * self.scale for k, v in ctx['layer_parts'].items()}}
 

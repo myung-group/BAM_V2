@@ -46,6 +46,24 @@ atoms.calc = RACEv2Calculator('model.pt')            # device='cuda' possible (u
 atoms.get_potential_energy(), atoms.get_forces(), atoms.get_stress()
 ```
 
+**Fast path (2026-11-24).** `RACEv2Calculator('model.pt', device='cuda', tp_kernel='cue', dtype='float32')`:
+- `tp_kernel='cue'` (`RACEv2.use_tp_kernel('cue')`) evaluates the edge tensor product of every layer with one fused
+  cuEquivariance kernel (gather, product, scatter), as the JAX model does with `tp_backend: cue`. CUDA only; needs
+  `cuequivariance`, `cuequivariance-torch` and `cuequivariance-ops-torch-cu12` (0.9.1 is the last release that
+  installs with torch 2.9; 0.13 asks for a newer torch). The kernels have no parameters, so the model file is the same.
+- `dtype='float32'` runs the model in float32; the E0 of every atom is added in float64 on the host.
+
+**Calculator defaults (2026-11-24).** `RACEv2Calculator(model)` runs in float64 with the core exclusion on, the same
+defaults as `race_v2.inference.predict.ase_calculator`, and returns energy, forces and stress.
+- `core_exclusion=True`: the r_in table stored in the model file when it has one (`convert --core-exclusion ...`, or a
+  checkpoint config with `core_exclusion`), else the table of the RACE v2.1 training data
+  (`configs/race_v2.1_oam/mindist_train_mptrj_salex_omat24.json`, cap 0.5, width 0.1 Å). `False`: off. A dict: that
+  specification. `RACEv2.set_core_exclusion` does the same for a model used without the calculator; a model loaded
+  with `RACEv2.load` has only what its file stores.
+- Against the JAX calculator on `nx1r_ft_final` (float64, 37 structures, 25 of them with pairs near or inside r_in):
+  energy, forces and stress agree to 1.2e-14 / 1.6e-14 / 4.2e-15 relative with the core exclusion on, and to
+  3.6e-15 / 1.8e-14 / 1.0e-14 with it off.
+
 **Calculator energies.** Calculator energies are **total** energies: the model output plus Σ E0 (`atom_energies`
 of the config).
 - By default the E0 values are added in float64, as `race_v2/inference/predict.py:155` does.
@@ -87,10 +105,14 @@ graphs.
 **Supported options.** Only the option family of the MPtrj configs is implemented, and `resolve_config` raises
 `NotImplementedError` for anything else:
 - x_mode basis, x_norm hill
-- residual chebyshev, update linear, message_norm avg, readout_mode gated
+- residual chebyshev, update linear or bilinear, message_norm avg, readout_mode gated
+- tp_channels (channel bottleneck of the edge product), linear_rank (low-rank linear_1 / linear_m / linear_2),
+  envelope_q (C^(q-1) cutoff envelope): the options of the nx1 chain, added 2026-11-24. Model files that use
+  them are written with format version 2; files without them stay version 1
 - x/f readouts on, layer_scale
 - radial_prior, radial_shells, pair_repulsion uff (with switch)
 - species_rank (with or without prune), periodic or not
+- core_exclusion (parameter-free; stored in the model file as the r_in matrix, or set after loading)
 
 Not converted:
 - the variance heads: `frc_logvar`, `energy_logvar`, `stress_logvar`
@@ -129,6 +151,47 @@ graphs only:
   change, not of the model.
 - `compare_reference.py` uses `edge_chunk=1024`, so the chunked path is checked on the frames with more than 1,024
   edges, and the unchunked path on the others.
+
+### nx1 options (2026-11-24, RTX 4060 Ti workstation)
+
+Checkpoint `nx1r_ft_final` (update bilinear, tp_channels 64, linear_rank 32, envelope_q 5, species_rank 16 + prune,
+float32-trained, tp_backend cue). The JAX reference was dumped in float64 (`BAM_PREDICT_X64=1`,
+`tools/dump_jax_reference.py --xyz`) for 12 rattled and sheared periodic cells of 4-32 atoms (Si, Cu, NaCl, MgO,
+LiH, PbTe, GaN, Fe, compressed Cu, expanded Ar, SrTiO3, UO2; 48-4,948 edges).
+
+- Pickle converter: 301 arrays, every name and shape matched (8,999,195 values).
+- `tests/compare_reference.py`: all 59 quantities within 1e-10; worst layer feature 1.6e-12, energy 1.8e-14 eV,
+  forces 1.5e-14 eV/A, stress 4.4e-15 eV/A^3, ASE calculator E 4.3e-14 / F 1.3e-14 / S 4.0e-15.
+- `tests/selfcheck.py`: 15 checks, 0 failed.
+- CUDA (float64, torch 2.9.1): energy and forces of a 32-atom Cu cell equal the CPU values to the printed digits.
+  Peak GPU memory, rattled fcc Cu, cutoff 7 A:
+
+| atoms | edges | edge_chunk 0 | edge_chunk 4096 |
+|---|---|---|---|
+| 32 | 4,288 | 3.25 GB | 0.96 GB |
+| 108 | 14,470 | 10.75 GB | 1.20 GB |
+| 500 | 66,970 | out of memory (16 GB) | 2.46 GB |
+
+Kernels and precision (same workstation; rattled fcc Cu, cutoff 7 A; warm time per force call; differences from
+the plain float64 model; JAX is `race_v2` with tp_backend cue on the same GPU):
+
+| atoms | kernel, dtype | time | peak memory | max dE (eV), dF (eV/A) |
+|---|---|---|---|---|
+| 108 | torch float64, edge_chunk 4096 | 1388 ms | 1.20 GB | reference |
+| 108 | cue float64 | 423 ms | 1.67 GB | 1.1e-13, 5.0e-16 |
+| 108 | torch float32, edge_chunk 4096 | 609 ms | 0.68 GB | 4.2e-06, 5.2e-06 |
+| 108 | cue float32 | 262 ms | 0.95 GB | 5.8e-06, 5.3e-06 |
+| 108 | JAX float64 / float32 | 302 / 93 ms | 1.37 / 0.63 GB | |
+| 500 | torch float64, edge_chunk 4096 | 5944 ms | 2.47 GB | reference |
+| 500 | cue float64 | 1385 ms | 7.40 GB | 1.1e-12, 6.7e-16 |
+| 500 | torch float32, edge_chunk 4096 | 2238 ms | 1.39 GB | 5.1e-05, 1.0e-05 |
+| 500 | cue float32 | 353 ms | 3.72 GB | 4.9e-05, 1.0e-05 |
+| 500 | JAX float64 / float32 | 1099 / 207 ms | 5.98 / 2.74 GB | |
+
+On the 12 multi-element reference frames, cue float64 on CUDA equals the plain float64 model on CPU to
+2.0e-14 eV / 2.2e-14 eV/A / 3.1e-15 eV/A^3, and cue float32 to 4.2e-06 eV / 1.7e-05 eV/A / 3.1e-06 eV/A^3.
+Profile of the plain float64 model at 108 atoms: forward 351 ms (edge tensor product 235, radial MLP 51, linears 30,
+node products 26), backward 702 ms.
 
 ### Self-checks
 

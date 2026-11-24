@@ -47,7 +47,8 @@ class RACEv2Calculator(Calculator):
     implemented_properties = ['energy', 'free_energy', 'forces', 'stress', 'energies']
 
     def __init__(self, model, device: str = 'cpu', jax_compat: bool = False, e0: str = 'float64',
-                 edge_chunk: int = 0, dtype: str = 'float64', tp_kernel: str = 'torch', core_exclusion=True, **kw):
+                 edge_chunk: int = 0, dtype: str = 'float64', tp_kernel: str = 'torch', core_exclusion=True,
+                 remat_layers: bool = False, **kw):
         """dtype: 'float64' (default; the thermal conductivity needs it, kappa SRME 0.229 in float64 and 0.861 in
         float32 for RACE v2.0) or 'float32'.
         core_exclusion: True (default) = on, with the r_in table stored in the model file when it has one, else the
@@ -70,6 +71,7 @@ class RACEv2Calculator(Calculator):
             self.model.set_core_exclusion(DEFAULT_CORE_EXCLUSION)
         self.model.use_tp_kernel(tp_kernel)
         self.model.edge_chunk = int(edge_chunk)
+        self.model.remat_layers = bool(remat_layers)     # less device memory, one more forward pass per layer
         self.device = device
         self.jax_compat = bool(jax_compat)
         self.e0 = e0

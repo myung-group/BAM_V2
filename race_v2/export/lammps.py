@@ -40,7 +40,7 @@ def parse_buckets(items):
     return [tuple(int(v) for v in s.split(':')) for s in items]
 
 
-def build(cfg_path, ckpt, backend, dtype='float64'):
+def build(cfg_path, ckpt, backend, dtype='float64', core_exclusion=True):
     import jax
     import jax.numpy as jnp
     from flax import nnx
@@ -51,7 +51,18 @@ def build(cfg_path, ckpt, backend, dtype='float64'):
     cfg['periodic'] = True                       # the weights do not depend on it; periodic path takes Sij / cell
     cfg['tp_backend'] = backend
     jax.config.update('jax_enable_x64', True)
-    (zs, e0, tr, va, te, stats) = T.build_datasets(cfg, sys.stderr)
+    # core exclusion as the ASE calculators (inference.predict.resolve_core_exclusion): on by default
+    from race_v2.inference.predict import resolve_core_exclusion
+    cfg['core_exclusion'], ce_source = resolve_core_exclusion(cfg, core_exclusion)
+    print(f"core exclusion: {'on' if cfg['core_exclusion'] else 'off'} ({ce_source})", file=sys.stderr)
+    if cfg.get('atom_energies') is not None:
+        # the config lists the elements and E0 (as inference.predict.Predictor): no data set is read
+        zs, e0 = [int(z) for z in cfg['atomic_numbers']], [float(x) for x in cfg['atom_energies']]
+        stats = {'shift_raw': 0.0, 'scale': 1.0, 'avg_n_neighbors': float(cfg.get('avg_n_neighbors', 25.0)),
+                 'n_graphs': 1, 'n_atoms': 1}
+        cfg.setdefault('learning_rate', 1e-3)
+    else:
+        (zs, e0, tr, va, te, stats) = T.build_datasets(cfg, sys.stderr)
     graphdef, _p, *_ = T.build_model(cfg, len(zs), e0, stats, sys.stderr)
     fdt = jnp.dtype(dtype)
     params = jax.tree.map(lambda x: jnp.asarray(x, fdt) if jnp.issubdtype(jnp.asarray(x).dtype, jnp.floating)
@@ -137,7 +148,8 @@ def export(args):
     import jax
     import jax.numpy as jnp
     recorder = CueRecorder() if args.backend == 'cue' else None
-    cfg, model, zs, e0 = build(args.config, args.ckpt, args.backend, args.dtype)
+    cfg, model, zs, e0 = build(args.config, args.ckpt, args.backend, args.dtype,
+                               core_exclusion=not args.no_core_exclusion)
     fdt = jnp.dtype(args.dtype)
     cutoff = float(cfg.get('cutoff', 5.0))
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
@@ -313,6 +325,8 @@ def main():
     ap.add_argument('--staged-buckets', nargs='*', default=None,
                     help='n_pad:e_pad[:k_pad] buckets of the per-layer (halo exchange) functions for multi-rank LAMMPS; '
                          'k_pad = owned-row bucket (node-wise work on k_pad rows only, needs n_local <= k_pad)')
+    ap.add_argument('--no-core-exclusion', action='store_true',
+                    help='export without the core exclusion (default: on, as the ASE calculators)')
     ap.add_argument('--staged-residuals', action='store_true',
                     help='also export forward-with-residuals / backward-from-residuals layer functions (no recompute '
                          'in the backward pass; more device memory)')

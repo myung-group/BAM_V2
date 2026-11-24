@@ -52,6 +52,9 @@ atoms.get_potential_energy(), atoms.get_forces(), atoms.get_stress()
   `cuequivariance`, `cuequivariance-torch` and `cuequivariance-ops-torch-cu12` (0.9.1 is the last release that
   installs with torch 2.9; 0.13 asks for a newer torch). The kernels have no parameters, so the model file is the same.
 - `dtype='float32'` runs the model in float32; the E0 of every atom is added in float64 on the host.
+- `remat_layers=True` (`model.remat_layers`) computes every layer again in the backward pass instead of keeping its
+  intermediate arrays, as `BAM_REMAT_LAYERS=1` of the JAX model. 500 Cu atoms, cue kernel: float64 7.36 -> 2.75 GB and
+  1463 -> 1912 ms per force call, float32 3.77 -> 1.45 GB and 341 -> 388 ms; forces equal to 3e-16 eV/A (float64).
 
 **Calculator defaults (2026-11-24).** `RACEv2Calculator(model)` runs in float64 with the core exclusion on, the same
 defaults as `race_v2.inference.predict.ase_calculator`, and returns energy, forces and stress.

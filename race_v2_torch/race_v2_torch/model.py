@@ -829,6 +829,7 @@ class RACEv2(nn.Module):
             self.set_core_exclusion(hp['core_r_in'], float(hp.get('core_width', 0.1)))
         self.edge_chunk = 0                     # > 0: edge tensor products in chunks with recomputation (memory)
         self.tp_kernel = 'torch'                # use_tp_kernel('cue'): fused cuEquivariance edge kernel
+        self.remat_layers = False               # True: every layer is recomputed in the backward pass (memory)
 
     # ----------------------------------------------------------------------------------------------- I/O
     @classmethod
@@ -996,8 +997,19 @@ class RACEv2(nn.Module):
         sp, groups = ctx['species'], ctx['groups']
         x_feats = self.x_features(ctx, i)
         e_f = self.f_readouts[i](sp, features, groups)[:, 0]
-        e_node, features = layer(features, x_feats, sp, groups, ctx['sh'], ctx['radial_basis'], ctx['senders'],
-                                 ctx['receivers'], prev_features=prev_features, edge_chunk=self.edge_chunk)
+        if self.remat_layers and features.requires_grad:
+            # the layer is computed without keeping its intermediate arrays and computed again in the backward pass
+            # (as BAM_REMAT_LAYERS=1 of the JAX model): about half the device memory, one more forward pass per layer
+            from torch.utils.checkpoint import checkpoint
+            snd, rcv, chunk = ctx['senders'], ctx['receivers'], self.edge_chunk
+
+            def run(f, x, y, rb, pf):
+                return layer(f, x, sp, groups, y, rb, snd, rcv, prev_features=pf, edge_chunk=chunk)
+            e_node, features = checkpoint(run, features, x_feats, ctx['sh'], ctx['radial_basis'], prev_features,
+                                          use_reentrant=False)
+        else:
+            e_node, features = layer(features, x_feats, sp, groups, ctx['sh'], ctx['radial_basis'], ctx['senders'],
+                                     ctx['receivers'], prev_features=prev_features, edge_chunk=self.edge_chunk)
         e_x = self.x_readouts[i](sp, x_feats, groups)[:, 0]
         e_node = e_node[:, 0]
         gain = 1.0

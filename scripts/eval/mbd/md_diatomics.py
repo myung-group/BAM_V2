@@ -3,8 +3,9 @@
 The rollouts, the diatomic sweep and all metrics are the benchmark's own code (janosh/matbench-discovery, read at
 commit 6d587c1 of 2026-11): matbench_discovery.md.run_md_benchmark, predict_curves / write_results of
 models/run_diatomics.py and matbench_discovery.metrics.{md,diatomics}.  This file adds only
-  * an ASE calculator around relax_batched.RaceEvaluator (energy, forces and stress; the calculator of
-    race_v2.inference.predict has no stress, and the MD pressure metric needs it), and
+  * an ASE calculator around relax_batched.RaceEvaluator (energy, forces and stress; when this was written the
+    calculator of race_v2.inference.predict had no stress, and the MD pressure metric needs it; it has one since
+    2026-11-24), and
   * the two combined scores, which the benchmark computes on its web site and not in the package: the formulas and
     constants below are copied from site/src/lib/combined-scores.svelte.ts and site/src/lib/labels.ts.
 The model is not registered in the benchmark, so its curated per-model diatomic exclusions do not exist: curves the

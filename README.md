@@ -228,6 +228,32 @@ export BAM_CORE_EXCLUSION='{"table": ["configs/race_v2.1_oam/mindist_train_mptrj
 It was on for the molecular dynamics and diatomic results below and off for the WBM and κ results. Whether any pair of
 the WBM / κ structures falls below r_in (which would make the two settings differ) has not been counted yet.
 
+**ASE calculators (2026-11-24): one definition of the model for every task.** A benchmark script that only calls the
+calculator gets float64 and the core exclusion without any environment variable:
+
+```python
+from race_v2.inference.predict import ase_calculator        # JAX
+atoms.calc = ase_calculator('ckpt.pkl')                      # x64=True, core_exclusion=True
+from race_v2_torch.calculator import RACEv2Calculator       # PyTorch port (PYTHONPATH=<repo>/race_v2_torch)
+atoms.calc = RACEv2Calculator('model.pt', device='cuda')    # dtype='float64', core_exclusion=True
+```
+
+- Both return energy, forces and stress (Voigt, eV/Å³, ASE sign), so variable-cell relaxations and NPT run with either.
+- float64 is the default because the thermal conductivity needs it (κ SRME of v2.0: 0.229 in float64, 0.861 in
+  float32). `x64=False` / `dtype='float32'` give the training precision.
+- `core_exclusion=True` uses the checkpoint's own specification when its config has one, else `BAM_CORE_EXCLUSION`,
+  else the table above (RACE checkpoints only; a RACE_LR / RACE_POLAR checkpoint stays as its config says).
+  `core_exclusion=False` switches it off; a dict gives another table.
+- `Predictor` / `load` called directly are unchanged (training precision, `BAM_PREDICT_X64`, `BAM_CORE_EXCLUSION`);
+  `predict(frames, stress=True)` returns the stress too.
+- Checked on the `nx1r_ft_final` checkpoint (RTX 4060 Ti, float64): the two calculators agree to 1e-14 relative in
+  energy, forces and stress on 37 structures with the core exclusion on and off (12 rattled crystals of 4-32 atoms
+  and 25 dimers / compressed crystals with pairs near or inside r_in). On the 12 crystals the core exclusion changes
+  nothing (|ΔE| < 1e-14 eV); it changes 7 of the 25 close-contact structures.
+- The WBM and κ numbers in the table below were computed with the core exclusion off. With the calculator default
+  they are now evaluated with it on; the count of WBM / κ structures with a pair inside r_in is still open, so
+  equality of the two settings on those sets is expected but not verified.
+
 ### Effect (Matbench Discovery, unique prototypes, float64, no energy corrections, last epoch of a fixed schedule)
 
 | Model | Params | F1 | MAE (eV/atom) | R² | RMSD (Å) | κ SRME | CPS | CMDS | CDS |
@@ -303,6 +329,8 @@ Tested with Python 3.12, jax 0.12, flax 0.12, optax 0.2.8, e3nn-jax 0.21, cuequi
 python -m race_v2.training.train configs/base/race_v2_base_recipe.json
 # prediction (float64 inference of a float32-trained model: BAM_PREDICT_X64=1)
 python -m race_v2.inference.predict --help
+# ASE calculator (energy, forces, stress; float64 and core exclusion on by default):
+#   from race_v2.inference.predict import ase_calculator; atoms.calc = ase_calculator('ckpt.pkl')
 # molecular dynamics
 python -m race_v2.inference.md_run --help
 # unit tests

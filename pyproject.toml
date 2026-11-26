@@ -67,8 +67,29 @@ all = [
 Homepage = "https://github.com/myung-group/BAM_V2"
 Repository = "https://github.com/myung-group/BAM_V2"
 
-[tool.setuptools.packages.find]
-include = ["race_v2*", "bam_omat24*"]
+# Packages listed explicitly (2026-11-24): race_v2_torch lives in race_v2_torch/race_v2_torch (its own project folder),
+# and the mapping below installs it as the top-level package race_v2_torch, so that `from race_v2_torch.calculator
+# import RACEv2Calculator` works in a pip install as it does with PYTHONPATH=<repo>/race_v2_torch.  (The previous
+# packages.find installed it as race_v2_torch.race_v2_torch, plus race_v2_torch/tests and tools.)  Add a new
+# subpackage of race_v2 here.
+[tool.setuptools]
+packages = [
+    "bam_omat24",
+    "race_v2",
+    "race_v2.data",
+    "race_v2.eval",
+    "race_v2.export",
+    "race_v2.inference",
+    "race_v2.models",
+    "race_v2.training",
+    "race_v2_torch",
+]
 
+[tool.setuptools.package-dir]
+race_v2_torch = "race_v2_torch/race_v2_torch"
+
+# Data files read at run time: the core exclusion table of the ASE calculators' default (race_v2/resources) and the
+# element tables of the PyTorch port.
 [tool.setuptools.package-data]
-race_v2 = ["models/atomic_shells.json"]
+race_v2 = ["models/atomic_shells.json", "resources/*.json"]
+race_v2_torch = ["data/*.json"]

@@ -15,7 +15,7 @@ still carry the original run names).  Run with `python -m race_v2.training.train
 | `race_v2.1_oam/race_v2.1_omat24_pretrain.json` | RACE-V2.1-9M-OAM: OMat24 pretraining from scratch, 28 virtual epochs at 48 GPUs (2 data epochs) | `work_next/runs/omat_stream/nx1_pre.json` |
 | `race_v2.1_oam/race_v2.1_oam_finetune.json` | RACE-V2.1-9M-OAM: MPtrj ×8 + sAlex ×1 fine-tuning, 19 virtual epochs (6.2 data epochs) | `work_next/runs/omat_stream/nx1_ft.json` |
 | `race_v2.1_oam/race_v2.1_oam_replay.json` | RACE-V2.1-9M-OAM-Replay: replay stage with 20 % OMat24 (forces and stress only), 3 virtual epochs | `work_nx1r/runs/omat_stream/nx1r.json` |
-| `race_v2.1_oam/mindist_train_mptrj_salex_omat24.json` | minimum distance per element pair in the training data (core exclusion table) | merged from `mindist_mp_salex.json`, `mindist_omat24_every20.json` |
+| `../race_v2/resources/mindist_train_mptrj_salex_omat24.json` (moved there 2026-11-24: package data, read by the ASE calculators' default) | minimum distance per element pair in the training data (core exclusion table) | merged from `mindist_mp_salex.json`, `mindist_omat24_every20.json` |
 | `base/race_v2_base_recipe.json` | recipe template read by the config generators `scripts/train/make_*_configs.py` | `input/input_3bpa_omat24_abl3_full_s42_cue.json` |
 | `smoke/oam_finetune_stream_parts_smoke.json` | smoke of the stream `parts` fine-tuning (2 epochs, 4 GPUs) | `runs/omat_stream/oam_ft_smoke2.json` |
 | `smoke/cpu_race_smoke.json`, `smoke/cpu_race_lr_smoke.json` | CPU smokes of RACE and RACE_LR | `input/input_local_race_smoke.json`, `input/input_local_racelr_smoke.json` |

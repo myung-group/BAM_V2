@@ -35,19 +35,20 @@ import numpy as np
 
 
 # Core exclusion of the RACE v2.1 materials models (README "Inference: core exclusion", pre-registered 2026-11-20): the
-# minimum distances of the MPtrj + sAlex + OMat24 training data, cap 0.5 (R_i + R_j), width 0.1 A.
+# minimum distances of the MPtrj + sAlex + OMat24 training data, cap 0.5 (R_i + R_j), width 0.1 A.  The table is
+# package data (race_v2/resources, pyproject package-data), so it is also found in a non-editable pip install.
 DEFAULT_CORE_EXCLUSION = {
-    'table': [str(Path(__file__).resolve().parents[2] / 'configs' / 'race_v2.1_oam'
-                  / 'mindist_train_mptrj_salex_omat24.json')],
+    'table': [str(Path(__file__).resolve().parents[1] / 'resources' / 'mindist_train_mptrj_salex_omat24.json')],
     'cap': 0.5, 'width': 0.1}
 
 
 def resolve_core_exclusion(cfg, core_exclusion=None):
-    """The core exclusion a Predictor uses: (spec or None, where it comes from).
-    core_exclusion None: as before, the config's own key, else the environment BAM_CORE_EXCLUSION (JSON), else off.
-    True: on -- the config's own, else BAM_CORE_EXCLUSION, else DEFAULT_CORE_EXCLUSION for a model of type RACE (the
-    table is the training data of the v2.1 materials models; a RACE_LR / RACE_POLAR checkpoint stays as its config
-    says).  False: off.  A dict: that specification."""
+    """The core exclusion a Predictor uses: (spec or None, where it comes from).  Order: the argument (a dict, or
+    False = off), then the environment BAM_CORE_EXCLUSION (JSON; it overrides the checkpoint, as it did before), then
+    the checkpoint config's own core_exclusion key, then
+      core_exclusion None (Predictor / load default): off, as before;
+      core_exclusion True (ase_calculator default): DEFAULT_CORE_EXCLUSION for a model of type RACE (the table is the
+      training data of the v2.1 materials models; a RACE_LR / RACE_POLAR checkpoint stays as its config says)."""
     if isinstance(core_exclusion, dict):
         return dict(core_exclusion), 'argument'
     if core_exclusion is False:
@@ -58,8 +59,8 @@ def resolve_core_exclusion(cfg, core_exclusion=None):
         return dict(cfg['core_exclusion']), 'config'
     if core_exclusion is True and str(cfg.get('model') or 'RACE') == 'RACE':
         if not Path(DEFAULT_CORE_EXCLUSION['table'][0]).exists():
-            raise FileNotFoundError(f"core exclusion table {DEFAULT_CORE_EXCLUSION['table'][0]} not found (the "
-                                    "repository's configs/ folder); pass core_exclusion={...} or core_exclusion=False")
+            raise FileNotFoundError(f"core exclusion table {DEFAULT_CORE_EXCLUSION['table'][0]} not found (package "
+                                    "data race_v2/resources); pass core_exclusion={...} or core_exclusion=False")
         return dict(DEFAULT_CORE_EXCLUSION), 'default table (RACE v2.1 training data)'
     return None, 'off'
 
@@ -320,8 +321,9 @@ def ase_calculator(ckpt_path, x64: bool = True, core_exclusion=True, **kw):
     model for every task:
       * x64=True: float64, also for a float32-trained checkpoint (the thermal conductivity needs it: kappa SRME 0.229
         in float64, 0.861 in float32 for RACE v2.0, docs/inference_precision.md).  x64=False: the training precision.
-      * core_exclusion=True: on (resolve_core_exclusion: the checkpoint's own specification, else BAM_CORE_EXCLUSION,
-        else the table of the v2.1 training data for a RACE checkpoint).  False: off; a dict: that specification.
+      * core_exclusion=True: on (resolve_core_exclusion: BAM_CORE_EXCLUSION if set, else the checkpoint's own
+        specification, else the table of the v2.1 training data for a RACE checkpoint).  False: off; a dict: that
+        specification.
     A Predictor given instead of a path is used as it is (both arguments are ignored)."""
     from ase.calculators.calculator import Calculator, PropertyNotImplementedError, all_changes
 

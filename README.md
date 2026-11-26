@@ -218,11 +218,11 @@ Below the shortest distance seen in training the learned part is switched off an
 r_in = min(training minimum distance of the element pair, 0.5 (R_i + R_j)) with covalent radii R; every ML edge is
 multiplied by s(r) = C4 smoothstep((r − r_in + w) / w), w = 0.1 Å, and Σ_pairs (1 − s(r)) ZBL(r) is added after the
 learned scale and shift. The minimum distances are in
-`configs/race_v2.1_oam/mindist_train_mptrj_salex_omat24.json` (3,609 pairs; O–O 0.553 Å). Switch it on for any
-checkpoint with
+`race_v2/resources/mindist_train_mptrj_salex_omat24.json` (3,609 pairs; O–O 0.553 Å; package data, so a pip install
+has it too). Switch it on for any checkpoint with
 
 ```bash
-export BAM_CORE_EXCLUSION='{"table": ["configs/race_v2.1_oam/mindist_train_mptrj_salex_omat24.json"], "cap": 0.5, "width": 0.1}'
+export BAM_CORE_EXCLUSION='{"table": ["race_v2/resources/mindist_train_mptrj_salex_omat24.json"], "cap": 0.5, "width": 0.1}'
 ```
 
 It was on for the molecular dynamics and diatomic results below and off for the WBM and κ results. Whether any pair of
@@ -234,16 +234,18 @@ calculator gets float64 and the core exclusion without any environment variable:
 ```python
 from race_v2.inference.predict import ase_calculator        # JAX
 atoms.calc = ase_calculator('ckpt.pkl')                      # x64=True, core_exclusion=True
-from race_v2_torch.calculator import RACEv2Calculator       # PyTorch port (PYTHONPATH=<repo>/race_v2_torch)
+from race_v2_torch.calculator import RACEv2Calculator       # PyTorch port (pip install, or PYTHONPATH=<repo>/race_v2_torch)
 atoms.calc = RACEv2Calculator('model.pt', device='cuda')    # dtype='float64', core_exclusion=True
 ```
 
 - Both return energy, forces and stress (Voigt, eV/Å³, ASE sign), so variable-cell relaxations and NPT run with either.
 - float64 is the default because the thermal conductivity needs it (κ SRME of v2.0: 0.229 in float64, 0.861 in
   float32). `x64=False` / `dtype='float32'` give the training precision.
-- `core_exclusion=True` uses the checkpoint's own specification when its config has one, else `BAM_CORE_EXCLUSION`,
-  else the table above (RACE checkpoints only; a RACE_LR / RACE_POLAR checkpoint stays as its config says).
-  `core_exclusion=False` switches it off; a dict gives another table.
+- `core_exclusion=True` (JAX) uses `BAM_CORE_EXCLUSION` when it is set (it overrides the checkpoint, as before), else
+  the checkpoint's own specification when its config has one, else the table above (RACE checkpoints only; a
+  RACE_LR / RACE_POLAR checkpoint stays as its config says). The PyTorch calculator does not read the environment: the
+  table stored in the model file, else the table above. `core_exclusion=False` switches it off; a dict gives another
+  table.
 - `Predictor` / `load` called directly are unchanged (training precision, `BAM_PREDICT_X64`, `BAM_CORE_EXCLUSION`);
   `predict(frames, stress=True)` returns the stress too.
 - Checked on the `nx1r_ft_final` checkpoint (RTX 4060 Ti, float64): the two calculators agree to 1e-14 relative in

@@ -57,8 +57,10 @@ atoms.get_potential_energy(), atoms.get_forces(), atoms.get_stress()
 defaults as `race_v2.inference.predict.ase_calculator`, and returns energy, forces and stress.
 - `core_exclusion=True`: the r_in table stored in the model file when it has one (`convert --core-exclusion ...`, or a
   checkpoint config with `core_exclusion`), else the table of the RACE v2.1 training data
-  (`configs/race_v2.1_oam/mindist_train_mptrj_salex_omat24.json`, cap 0.5, width 0.1 Å). `False`: off. A dict: that
-  specification. `RACEv2.set_core_exclusion` does the same for a model used without the calculator; a model loaded
+  (`race_v2/resources/mindist_train_mptrj_salex_omat24.json`, package data of race_v2, cap 0.5, width 0.1 Å).
+  `False`: off. A dict: that specification. Unlike the JAX calculator it does not read `BAM_CORE_EXCLUSION`.
+- Installed with the repository (`pip install <repo>`, not editable), the package is `race_v2_torch` itself (pyproject
+  `package-dir`), so the imports above work without `PYTHONPATH`. `RACEv2.set_core_exclusion` does the same for a model used without the calculator; a model loaded
   with `RACEv2.load` has only what its file stores.
 - Against the JAX calculator on `nx1r_ft_final` (float64, 37 structures, 25 of them with pairs near or inside r_in):
   energy, forces and stress agree to 1.2e-14 / 1.6e-14 / 4.2e-15 relative with the core exclusion on, and to

@@ -26,10 +26,25 @@ from .model import RACEv2
 
 # Core exclusion of the RACE v2.1 materials models (repository README, "Inference: core exclusion"): minimum distances
 # of the MPtrj + sAlex + OMat24 training data, cap 0.5 (R_i + R_j), width 0.1 A.
-DEFAULT_CORE_EXCLUSION = {
-    'table': [os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
-                           'configs', 'race_v2.1_oam', 'mindist_train_mptrj_salex_omat24.json')],
-    'cap': 0.5, 'width': 0.1}
+def _default_table_path() -> str:
+    """The table is package data of race_v2 (race_v2/resources).  It is located without importing race_v2 (that would
+    import JAX): find_spec of a top-level name only searches the path.  Installed (pip, same distribution as race_v2)
+    or in the repository with race_v2 on the path: race_v2's own folder; else the repository layout next to this file."""
+    import importlib.util
+    name = 'mindist_train_mptrj_salex_omat24.json'
+    candidates = []
+    try:
+        spec = importlib.util.find_spec('race_v2')
+    except (ImportError, ValueError):
+        spec = None
+    if spec is not None and spec.submodule_search_locations:
+        candidates += [os.path.join(p, 'resources', name) for p in spec.submodule_search_locations]
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    candidates.append(os.path.join(repo, 'race_v2', 'resources', name))
+    return next((p for p in candidates if os.path.exists(p)), candidates[-1])
+
+
+DEFAULT_CORE_EXCLUSION = {'table': [_default_table_path()], 'cap': 0.5, 'width': 0.1}
 
 
 def neighbor_graph(atoms, cutoff: float):
@@ -65,8 +80,8 @@ class RACEv2Calculator(Calculator):
             self.model.set_core_exclusion(None)
         elif core_exclusion is True and self.model.core_r_in is None:
             if not os.path.exists(DEFAULT_CORE_EXCLUSION['table'][0]):
-                raise FileNotFoundError(f"core exclusion table {DEFAULT_CORE_EXCLUSION['table'][0]} not found (the "
-                                        "repository's configs/ folder); pass core_exclusion={...} or core_exclusion=False")
+                raise FileNotFoundError(f"core exclusion table {DEFAULT_CORE_EXCLUSION['table'][0]} not found (package "
+                                        "data race_v2/resources); pass core_exclusion={...} or core_exclusion=False")
             self.model.set_core_exclusion(DEFAULT_CORE_EXCLUSION)
         self.model.use_tp_kernel(tp_kernel)
         self.model.edge_chunk = int(edge_chunk)
